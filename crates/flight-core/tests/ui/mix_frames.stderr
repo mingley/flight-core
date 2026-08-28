@@ -1,0 +1,8 @@
+error[E0308]: mismatched types
+ --> tests/ui/mix_frames.rs:4:17
+  |
+4 |     let _ = a + b;
+  |                 ^ expected `Vector3<Meter, Ned>`, found `Vector3<Meter, Enu>`
+  |
+  = note: expected struct `Vector3<Meter, flight_core::frames::Ned>`
+             found struct `Vector3<Meter, flight_core::frames::Enu>`

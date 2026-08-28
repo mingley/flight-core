@@ -1,0 +1,8 @@
+error[E0308]: mismatched types
+ --> tests/ui/mix_units.rs:7:17
+  |
+7 |     let _ = a + b;
+  |                 ^ expected `Vector3<RadianPerSecond, Body>`, found `Vector3<DegreePerSecond, Body>`
+  |
+  = note: expected struct `Vector3<flight_core::units::RadianPerSecond, flight_core::frames::Body>`
+             found struct `Vector3<flight_core::units::DegreePerSecond, flight_core::frames::Body>`

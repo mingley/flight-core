@@ -1,0 +1,18 @@
+error[E0599]: the method `set_motor_thrust` exists for struct `Vehicle<Disarmed, B>`, but its trait bounds were not satisfied
+ --> tests/ui/disarmed_thrust.rs:5:21
+  |
+5 |     let _ = vehicle.set_motor_thrust(thrust);
+  |                     ^^^^^^^^^^^^^^^^ method cannot be called on `Vehicle<Disarmed, B>` due to unsatisfied trait bounds
+  |
+ ::: src/vehicle/typestate.rs
+  |
+  | state!(Disarmed, "disarmed");
+  | ---------------------------- doesn't satisfy `flight_core::vehicle::Disarmed: MotorsEnabled`
+  |
+  = note: the following trait bounds were not satisfied:
+          `flight_core::vehicle::Disarmed: MotorsEnabled`
+          `B: VehicleBackend`
+help: consider restricting the type parameter to satisfy the trait bound
+  |
+4 | fn boom<B>(mut vehicle: Vehicle<Disarmed, B>, thrust: MotorThrust) where B: VehicleBackend {
+  |                                                                    +++++++++++++++++++++++
