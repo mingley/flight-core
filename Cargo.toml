@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/flight-core",
+    "crates/flight-sim",
+    "crates/flight-mavlink",
+    "crates/flight-px4",
+    "crates/flight-ros2",
+    "crates/flight-verify",
+    "crates/flight-demo",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mingley/flight-core"
+rust-version = "1.85"
+description = "Strongly typed Rust SDK for autonomous vehicle control"
+
+[workspace.dependencies]
+flight-core = { path = "crates/flight-core", version = "0.1.0" }
+flight-sim = { path = "crates/flight-sim", version = "0.1.0" }
+flight-mavlink = { path = "crates/flight-mavlink", version = "0.1.0" }
+flight-px4 = { path = "crates/flight-px4", version = "0.1.0" }
+flight-ros2 = { path = "crates/flight-ros2", version = "0.1.0" }
+tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "net", "time", "sync", "io-util"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+mavlink = { version = "0.17", default-features = false, features = ["std", "udp", "common"] }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+trybuild = "=1.0.104"

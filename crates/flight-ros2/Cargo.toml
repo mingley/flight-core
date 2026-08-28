@@ -1,0 +1,11 @@
+[package]
+name = "flight-ros2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ROS 2 external-mode interface sketched in flight-core types (no rclrs dependency)"
+
+[dependencies]
+flight-core = { workspace = true }

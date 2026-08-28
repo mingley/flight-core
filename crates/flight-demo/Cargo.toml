@@ -1,0 +1,17 @@
+[package]
+name = "flight-demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Live telemetry dashboard for a deterministic flight-core mission"
+
+[dependencies]
+axum = { workspace = true }
+flight-core = { workspace = true }
+flight-sim = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }

@@ -1,0 +1,26 @@
+[package]
+name = "flight-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Typed units, frames, vehicle typestate, and verified safety state machines for autonomous vehicles"
+keywords = ["robotics", "px4", "uav", "typestate", "no-std"]
+categories = ["science::robotics", "embedded", "no-std"]
+
+[features]
+default = ["std"]
+std = ["serde"]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+trybuild = { workspace = true }
+tokio = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

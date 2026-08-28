@@ -1,0 +1,19 @@
+[package]
+name = "flight-px4"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "PX4 external-mode / offboard backend for flight-core (MAVLink SITL first)"
+
+[dependencies]
+flight-core = { workspace = true }
+flight-mavlink = { workspace = true }
+mavlink = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[[example]]
+name = "sitl_hover"
