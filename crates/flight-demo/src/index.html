@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>flight-core · mission console</title>
+  <style>
+    :root {
+      --bg: #07080b;
+      --panel: #10141c;
+      --ink: #e8edf5;
+      --muted: #8b97ab;
+      --line: #1d2633;
+      --ok: #3ee0a0;
+      --warn: #f5c518;
+      --bad: #ff5c5c;
+      --ice: #7ad7ff;
+      --mono: "IBM Plex Mono", "ui-monospace", "SFMono-Regular", Menlo, monospace;
+      --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+    body { min-height: 100vh; }
+    header {
+      display: flex; justify-content: space-between; align-items: flex-end;
+      padding: 20px 24px 12px; border-bottom: 1px solid var(--line);
+    }
+    .brand { font-family: var(--mono); letter-spacing: 0.14em; font-size: 13px; color: var(--ice); }
+    .brand span { color: var(--muted); letter-spacing: 0.08em; }
+    h1 { margin: 4px 0 0; font-size: 22px; font-weight: 550; }
+    .meta { text-align: right; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: 220px 1fr 280px;
+      gap: 16px;
+      padding: 16px 24px 24px;
+    }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .phase {
+      list-style: none; margin: 0; padding: 0;
+      font-family: var(--mono); font-size: 12px;
+    }
+    .phase li {
+      padding: 6px 8px;
+      border-left: 2px solid var(--line);
+      color: var(--muted);
+    }
+    .phase li.on {
+      border-left-color: var(--ok);
+      color: var(--ink);
+      background: #13251c;
+    }
+    .phase li.fail {
+      border-left-color: var(--bad);
+      color: var(--bad);
+      background: #2a1212;
+    }
+    canvas { width: 100%; height: 360px; background: #0a0d13; border-radius: 8px; display: block; }
+    .readouts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+      font-family: var(--mono); font-size: 12px;
+    }
+    .kv { background: #0a0d13; padding: 8px 10px; border-radius: 6px; }
+    .kv b { display: block; color: var(--muted); font-weight: 400; font-size: 10px; letter-spacing: 0.12em; }
+    .flags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .flag {
+      font-family: var(--mono); font-size: 11px;
+      padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
+    }
+    .flag.hot { border-color: var(--ok); color: var(--ok); }
+    .flag.cold { border-color: var(--bad); color: var(--bad); }
+    button {
+      width: 100%; margin-top: 14px; padding: 10px;
+      background: transparent; color: var(--bad);
+      border: 1px solid var(--bad); border-radius: 8px;
+      font-family: var(--mono); letter-spacing: 0.08em; cursor: pointer;
+    }
+    button:hover { background: #2a1212; }
+    .msg { margin-top: 12px; font-family: var(--mono); font-size: 12px; color: var(--ice); min-height: 2.4em; }
+    footer { padding: 0 24px 20px; color: var(--muted); font-size: 12px; }
+    code { color: var(--warn); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="brand">FLIGHT-CORE <span>PX4-RS</span></div>
+      <h1>Typed vehicle console</h1>
+    </div>
+    <div class="meta">
+      <div id="clock">t = 0.00 s</div>
+      <div>frames: NED · units: SI</div>
+    </div>
+  </header>
+  <div class="grid">
+    <section class="panel">
+      <h2>Safety machine</h2>
+      <ul class="phase" id="phases"></ul>
+    </section>
+    <section class="panel">
+      <h2>Local NED</h2>
+      <canvas id="map" width="800" height="360"></canvas>
+      <div class="readouts">
+        <div class="kv"><b>NORTH m</b><span id="n">0.00</span></div>
+        <div class="kv"><b>EAST m</b><span id="e">0.00</span></div>
+        <div class="kv"><b>ALT AGL m</b><span id="alt">0.00</span></div>
+        <div class="kv"><b>VDOWN m/s</b><span id="vd">0.00</span></div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Invariants</h2>
+      <div class="flags">
+        <span class="flag" id="f-armed">ARMED</span>
+        <span class="flag" id="f-act">ACTUATORS</span>
+        <span class="flag" id="f-off">OFFBOARD</span>
+        <span class="flag" id="f-imu">IMU</span>
+        <span class="flag" id="f-est">ESTIMATOR</span>
+        <span class="flag" id="f-fs">FAILSAFE</span>
+      </div>
+      <p class="msg" id="msg">connecting…</p>
+      <button type="button" id="fail">TRIP FAILSAFE</button>
+      <p class="msg" style="color: var(--muted)">Illegal mixes never reach this console: <code>Position&lt;NED&gt; + Position&lt;ENU&gt;</code> and <code>Vehicle&lt;Disarmed&gt;.set_motor_thrust</code> are type errors.</p>
+    </section>
+  </div>
+  <footer>
+    Same controller loop against sim IMU. Swap the backend for PX4 SITL, recorded jsonl, or Kani.
+  </footer>
+  <script>
+    const PHASES = ["disconnected","connected","initializing","preflight","ready","armed","takeoff","airborne","landing","failsafe","recovery"];
+    const ul = document.getElementById("phases");
+    PHASES.forEach(p => {
+      const li = document.createElement("li");
+      li.dataset.phase = p;
+      li.textContent = p;
+      ul.appendChild(li);
+    });
+    const trail = [];
+    const canvas = document.getElementById("map");
+    const ctx = canvas.getContext("2d");
+
+    function flag(id, on, invert) {
+      const el = document.getElementById(id);
+      el.classList.toggle("hot", invert ? !on : on);
+      el.classList.toggle("cold", invert ? on : !on);
+    }
+
+    function draw(s) {
+      const w = canvas.width, h = canvas.height;
+      ctx.fillStyle = "#0a0d13";
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = "#1d2633";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 8; i++) {
+        ctx.beginPath();
+        ctx.moveTo((w/8)*i, 0); ctx.lineTo((w/8)*i, h); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, (h/6)*i); ctx.lineTo(w, (h/6)*i); ctx.stroke();
+      }
+      trail.push([s.n, s.e]);
+      if (trail.length > 400) trail.shift();
+      const scale = 12;
+      const cx = w * 0.35, cy = h * 0.7;
+      ctx.strokeStyle = "#7ad7ff";
+      ctx.beginPath();
+      trail.forEach(([n,e], i) => {
+        const x = cx + e * scale, y = cy - n * scale;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      const x = cx + s.e * scale, y = cy - s.n * scale;
+      ctx.fillStyle = s.failsafe ? "#ff5c5c" : "#3ee0a0";
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f5c518";
+      const barH = Math.min(h - 20, Math.max(4, s.alt * 18));
+      ctx.fillRect(w - 28, h - 16 - barH, 12, barH);
+      ctx.fillStyle = "#8b97ab";
+      ctx.font = "11px monospace";
+      ctx.fillText("N", cx - 8, 16);
+      ctx.fillText("E", w - 48, cy + 4);
+      ctx.fillText("alt", w - 52, 16);
+    }
+
+    async function tick() {
+      try {
+        const s = await (await fetch("/api/telemetry")).json();
+        document.getElementById("clock").textContent = `t = ${s.t.toFixed(2)} s`;
+        document.getElementById("n").textContent = s.n.toFixed(2);
+        document.getElementById("e").textContent = s.e.toFixed(2);
+        document.getElementById("alt").textContent = s.alt.toFixed(2);
+        document.getElementById("vd").textContent = s.vd.toFixed(2);
+        document.getElementById("msg").textContent = s.message + " · " + s.last_command;
+        document.querySelectorAll(".phase li").forEach(li => {
+          li.classList.toggle("on", li.dataset.phase === s.phase);
+          li.classList.toggle("fail", s.failsafe && li.dataset.phase === "failsafe");
+        });
+        flag("f-armed", s.armed);
+        flag("f-act", s.actuators);
+        flag("f-off", s.offboard);
+        flag("f-imu", s.imu_healthy);
+        flag("f-est", s.estimator_valid);
+        flag("f-fs", s.failsafe, true);
+        draw(s);
+      } catch (e) { /* server coming up */ }
+    }
+    setInterval(tick, 80);
+    tick();
+    document.getElementById("fail").onclick = () => fetch("/api/failsafe", { method: "POST" });
+  </script>
+</body>
+</html>
