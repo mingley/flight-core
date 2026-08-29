@@ -8,4 +8,4 @@ rust-version.workspace = true
 description = "Kani proofs and property checks for the flight-core safety machine"
 
 [dependencies]
-flight-core = { workspace = true }
+flight-core = { workspace = true, features = ["creusot"] }
