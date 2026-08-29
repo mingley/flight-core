@@ -1,218 +1,452 @@
-//! Vehicle backends: the hardware / simulation boundary.
-//!
-//! A [`Backend`] is the thing a [`super::typestate::Vehicle`] talks to. The
-//! simulated backend lives in `flight-sim`; PX4, ROS 2, and MAVLink backends
-//! live in their own crates. All of them implement this trait so the vehicle
-//! state machine does not care which one is plugged in.
-//!
-//! ## Capability flags
-//!
-//! [`BackendCapabilities`] is a bag of booleans the vehicle inspects before
-//! issuing a command. A simulated backend claims everything; a real PX4
-//! companion may not support optical flow or actuator-direct mode. The
-//! vehicle refuses commands the backend cannot honour rather than sending
-//! them and hoping.
-//!
-//! ## Telemetry
-//!
-//! [`BackendTelemetry`] is the snapshot the vehicle reads after each step:
-//! NED position and velocity, attitude, angular velocity, acceleration,
-//! armed state, and battery remaining. Units are the crate's newtype units,
-//! not raw floats.
+//! Vehicle backend trait, telemetry, and command types.
 
-use crate::error::CoreError;
-use crate::imu::ImuSample;
-use crate::units::{
-    Acceleration, AngularVelocity, Force, Length, LinearVelocity, Mass, Power, Torque,
-};
-use crate::vector::Attitude;
+use crate::frames::{Body, Ned};
+use crate::ground::GroundState;
+use crate::marine::MarineState;
+use crate::safety::Phase;
+use crate::sensors::{ActuatorCommand, ImuSample, SensorHealth};
+use crate::time::MonotonicInstant;
+use crate::units::{Meter, Qty};
+use crate::vector::{Position, Velocity};
+use core::fmt;
+use core::future::Future;
+use core::pin::pin;
+use core::task::{Context, Poll, Waker};
 
-/// Kind of backend, used in logs and capability checks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackendKind {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ConnectionInfo {
+    pub system_id: u8,
+    pub component_id: u8,
+    pub autopilot: AutopilotKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AutopilotKind {
     Simulated,
     Px4,
-    Ros2,
-    Mavlink,
+    Unknown,
 }
 
-/// Capability flags. Defaults are conservative (everything `false`); each
-/// backend fills in what it actually supports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct BackendCapabilities {
-    pub offboard: bool,
-    pub gps: bool,
-    pub rangefinder: bool,
-    pub optical_flow: bool,
-    pub rc_override: bool,
-    pub actuator_direct: bool,
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PreflightReport {
+    pub imu_healthy: bool,
+    pub estimator_valid: bool,
+    pub battery_ok: bool,
+    pub gps_ok: bool,
+    pub notes: PreflightNotes,
 }
 
-impl BackendCapabilities {
-    /// Simulated backend: every flag true.
-    pub fn simulated() -> Self {
+#[derive(Clone, Copy, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PreflightNotes {
+    pub imu_std_accel: f32,
+    pub imu_std_gyro: f32,
+    pub samples: u32,
+}
+
+impl PreflightReport {
+    pub fn ready(&self) -> bool {
+        self.imu_healthy && self.estimator_valid && self.battery_ok
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MotorThrust {
+    /// Normalized `[0, 1]` per motor.
+    pub motors: [f32; 8],
+    pub count: u8,
+}
+
+impl MotorThrust {
+    pub fn hover(count: u8, fraction: f32) -> Self {
+        let mut motors = [0.0; 8];
+        let n = count.min(8) as usize;
+        for m in motors.iter_mut().take(n) {
+            *m = fraction.clamp(0.0, 1.0);
+        }
         Self {
-            offboard: true,
-            gps: true,
-            rangefinder: true,
-            optical_flow: true,
-            rc_override: true,
-            actuator_direct: true,
+            motors,
+            count: n as u8,
+        }
+    }
+
+    pub fn to_actuator(self) -> ActuatorCommand {
+        let mut motors = [0u16; 8];
+        for (slot, frac) in motors.iter_mut().zip(self.motors.iter()) {
+            *slot = (frac.clamp(0.0, 1.0) * 65535.0) as u16;
+        }
+        ActuatorCommand {
+            motors,
+            count: self.count,
+            collective_n: None,
         }
     }
 }
 
-/// Snapshot produced by [`Backend::snapshot`]. All linear quantities are NED.
-#[derive(Debug, Clone)]
-pub struct BackendTelemetry {
-    pub position_ned: [Length; 3],
-    pub velocity_ned: [LinearVelocity; 3],
-    pub attitude: Attitude,
-    pub angular_velocity: AngularVelocity,
-    pub acceleration: Acceleration,
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Telemetry {
+    pub timestamp: MonotonicInstant,
+    pub phase: Phase,
+    pub position: Position<Ned>,
+    pub velocity: Velocity<Ned>,
+    pub yaw_rad: f32,
+    pub imu: Option<ImuSample<Body>>,
+    pub imu_health: SensorHealth,
+    pub imu_healthy: bool,
+    pub estimator_valid: bool,
     pub armed: bool,
-    pub battery_remaining: f64,
+    pub actuators_enabled: bool,
+    pub offboard: bool,
+    pub failsafe: bool,
+    pub heartbeat_age_secs: f32,
+    pub last_command: &'static str,
 }
 
-/// Error type returned by backend operations. Carries a human-readable
-/// `detail` string so logs can say *why* without the caller matching on
-/// twenty variants.
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Telemetry {
+    pub fn altitude_agl(&self) -> Qty<Meter> {
+        self.position.altitude_agl()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackendError {
-    Unavailable { detail: String },
-    Timeout { detail: String },
-    Rejected { detail: String },
-    Protocol { detail: String },
+    Disconnected,
+    Timeout,
+    Protocol,
+    Rejected(&'static str),
+    Io,
 }
 
-impl std::fmt::Display for BackendError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for BackendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unavailable { detail } => write!(f, "backend unavailable: {detail}"),
-            Self::Timeout { detail } => write!(f, "backend timeout: {detail}"),
-            Self::Rejected { detail } => write!(f, "backend rejected: {detail}"),
-            Self::Protocol { detail } => write!(f, "backend protocol: {detail}"),
+            Self::Disconnected => write!(f, "backend disconnected"),
+            Self::Timeout => write!(f, "backend timeout"),
+            Self::Protocol => write!(f, "backend protocol error"),
+            Self::Rejected(r) => write!(f, "backend rejected: {r}"),
+            Self::Io => write!(f, "backend I/O error"),
         }
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for BackendError {}
 
-impl From<BackendError> for CoreError {
-    fn from(err: BackendError) -> Self {
-        CoreError::Backend(err.to_string())
+/// Poll a backend future that completes without parking (world / null).
+fn poll_ready<F: Future>(fut: F) -> Option<F::Output> {
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    let mut fut = pin!(fut);
+    match fut.as_mut().poll(&mut cx) {
+        Poll::Ready(v) => Some(v),
+        Poll::Pending => None,
     }
 }
 
-/// The hardware / simulation boundary.
+/// Hardware / SITL / replay / symbolic vehicle.
 ///
-/// Implementors own the connection to the vehicle (or the in-process world)
-/// and translate the vehicle's requests into whatever the underlying system
-/// understands. The vehicle never talks to PX4 or Gazebo directly.
-pub trait Backend {
-    fn kind(&self) -> BackendKind;
-    fn capabilities(&self) -> BackendCapabilities;
+/// The controller talks only to this trait. It does not know whether the IMU
+/// is a BMI088, an MCAP recording, a physics sim, or a Kani nondet value.
+pub trait VehicleBackend: Send {
+    fn connect(&mut self) -> impl Future<Output = Result<ConnectionInfo, BackendError>> + Send;
+    fn preflight(&mut self) -> impl Future<Output = Result<PreflightReport, BackendError>> + Send;
+    fn arm(&mut self) -> impl Future<Output = Result<(), BackendError>> + Send;
+    fn disarm(&mut self) -> impl Future<Output = Result<(), BackendError>> + Send;
+    fn enter_offboard(&mut self) -> impl Future<Output = Result<(), BackendError>> + Send;
+    fn set_velocity_ned(
+        &mut self,
+        velocity: Velocity<Ned>,
+    ) -> impl Future<Output = Result<(), BackendError>> + Send;
+    fn set_position_ned(
+        &mut self,
+        position: Position<Ned>,
+    ) -> impl Future<Output = Result<(), BackendError>> + Send;
+    fn set_motor_thrust(
+        &mut self,
+        thrust: MotorThrust,
+    ) -> impl Future<Output = Result<(), BackendError>> + Send;
+    fn enable_actuators(&mut self) -> impl Future<Output = Result<(), BackendError>> + Send;
+    fn disable_actuators(&mut self) -> impl Future<Output = Result<(), BackendError>> + Send;
+    fn tick(
+        &mut self,
+        dt_secs: f32,
+    ) -> impl Future<Output = Result<Telemetry, BackendError>> + Send;
+    fn telemetry(&mut self) -> impl Future<Output = Result<Telemetry, BackendError>> + Send;
+    fn trigger_failsafe(&mut self) -> impl Future<Output = Result<(), BackendError>> + Send;
 
-    /// Advance the backend by `dt`. For the simulated backend this steps the
-    /// physics world; for a hardware backend this is typically a no-op that
-    /// drains telemetry.
-    fn step(&mut self, dt: std::time::Duration) -> Result<(), BackendError>;
+    /// Arm without an async runtime. Default polls [`Self::arm`] when it is
+    /// already complete (world / null backends). A pending PX4 handshake is
+    /// [`BackendError::Timeout`].
+    fn arm_now(&mut self) -> Result<(), BackendError> {
+        match poll_ready(self.arm()) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
 
-    /// Current telemetry snapshot. May fail if the backend has not produced
-    /// a sample yet (e.g. first step of a simulated world).
-    fn snapshot(&self) -> Result<BackendTelemetry, BackendError>;
+    /// Disarm without an async runtime. See [`Self::arm_now`].
+    fn disarm_now(&mut self) -> Result<(), BackendError> {
+        match poll_ready(self.disarm()) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
 
-    /// Last successful snapshot, if any. Used by the vehicle to keep a
-    /// stale-but-usable reading when the latest `snapshot()` fails.
-    fn last_telemetry(&self) -> Option<BackendTelemetry>;
+    /// Enter offboard without an async runtime. See [`Self::arm_now`].
+    fn enter_offboard_now(&mut self) -> Result<(), BackendError> {
+        match poll_ready(self.enter_offboard()) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
 
-    /// Apply a body-frame force and torque. Simulated backends apply this to
-    /// the rigid body; hardware backends may map it onto actuator setpoints.
-    fn send_force_torque(&mut self, force: Force, torque: Torque) -> Result<(), BackendError>;
+    /// Enable actuators without an async runtime. See [`Self::arm_now`].
+    fn enable_actuators_now(&mut self) -> Result<(), BackendError> {
+        match poll_ready(self.enable_actuators()) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
 
-    /// Override the vehicle mass (payload attach / detach). Hardware backends
-    /// that cannot change mass at runtime return [`BackendError::Rejected`].
-    fn set_mass(&mut self, mass: Mass) -> Result<(), BackendError>;
+    /// NED velocity without an async runtime. See [`Self::arm_now`].
+    fn set_velocity_ned_now(&mut self, velocity: Velocity<Ned>) -> Result<(), BackendError> {
+        match poll_ready(self.set_velocity_ned(velocity)) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
 
-    fn last_error(&self) -> Option<&BackendError>;
+    /// NED position without an async runtime. See [`Self::arm_now`].
+    fn set_position_ned_now(&mut self, position: Position<Ned>) -> Result<(), BackendError> {
+        match poll_ready(self.set_position_ned(position)) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
 
-    /// Latest IMU sample, or an error if the backend has no IMU yet.
-    fn imu(&self) -> Result<ImuSample, BackendError>;
+    /// Hold at the current NED pose without an async runtime.
+    /// Default reads [`Self::telemetry_now`] and writes [`Self::set_position_ned_now`].
+    /// PX4 companion backends stream a position `SET_POSITION_TARGET_LOCAL_NED`
+    /// at the last estimated pose (disconnected send is [`BackendError::Disconnected`]).
+    fn hold_now(&mut self) -> Result<(), BackendError> {
+        let position = self.telemetry_now()?.position;
+        self.set_position_ned_now(position)
+    }
 
-    fn dropped_frames(&self) -> u64;
-    fn last_step_us(&self) -> u64;
-    fn estimated_power(&self) -> Option<Power>;
+    /// Telemetry without an async runtime. See [`Self::arm_now`].
+    fn telemetry_now(&mut self) -> Result<Telemetry, BackendError> {
+        match poll_ready(self.telemetry()) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
+
+    /// Trip failsafe without an async runtime. See [`Self::arm_now`].
+    fn trigger_failsafe_now(&mut self) -> Result<(), BackendError> {
+        match poll_ready(self.trigger_failsafe()) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
+
+    /// Takeoff without an async runtime. Default is a no-op so point-mass
+    /// backends keep using [`Vehicle::start_takeoff_now`]'s local `Takeoff`
+    /// event. World backends fire the live event so `Land` is legal on the
+    /// plant. PX4 companion backends send `NAV_TAKEOFF`.
+    fn takeoff_now(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    /// Record that the climb completed without an async runtime. Default is a
+    /// no-op so point-mass backends keep using
+    /// [`Vehicle::declare_airborne_now`]'s local `ReachedAltitude` event.
+    /// World backends fire the live event so attach binds Airborne. PX4
+    /// companion backends send `NAV_LOITER_UNLIM`.
+    fn reached_altitude_now(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    /// Enter landing without an async runtime. Default is a no-op so
+    /// point-mass backends keep using [`Vehicle::land`]. World backends fire
+    /// the live `Land` event. PX4 companion backends send `NAV_LAND`.
+    fn land_now(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    /// Touchdown without an async runtime. Default is a no-op; world backends
+    /// fire `Touchdown` and clear the command.
+    fn touchdown_now(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    /// Recover from aerial Recovery to Ready without an async runtime.
+    /// Default is a no-op so PX4 / point-mass backends keep using the local
+    /// `Recover` event. World backends fire the live event so attach binds
+    /// PreflightReady.
+    fn recover_now(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    /// Halt a moving chassis without an async runtime. Default is a no-op so
+    /// aerial backends stay valid. World ground backends fire `Halt` and
+    /// clear the handle setpoint so a later flush cannot revive drive.
+    fn halt_now(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    /// Mirror a ground safety machine onto a plant that has a chassis.
+    ///
+    /// Default is a no-op so PX4 / point-mass aerial backends stay valid.
+    fn sync_ground(&mut self, safety: GroundState) -> Result<(), BackendError> {
+        let _ = safety;
+        Ok(())
+    }
+
+    /// Mirror a marine safety machine onto a plant that has a hull.
+    fn sync_marine(&mut self, safety: MarineState) -> Result<(), BackendError> {
+        let _ = safety;
+        Ok(())
+    }
+
+    /// Body-frame yaw-rate command (rad/s). Ground and surface plants use this.
+    fn set_yaw_rate(&mut self, yaw_rate: f32) -> Result<(), BackendError> {
+        let _ = yaw_rate;
+        Ok(())
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::vector::Attitude;
+/// Backend that succeeds every call. Used to unit-test typestate wiring.
+#[derive(Clone, Debug, Default)]
+pub struct NullBackend {
+    pub armed: bool,
+    pub offboard: bool,
+    pub actuators: bool,
+    pub velocity: Option<Velocity<Ned>>,
+    pub position: Option<Position<Ned>>,
+    pub ticks: u32,
+    /// Heading used when a ground vehicle rotates a body twist into NED.
+    pub yaw_rad: f32,
+    pub yaw_rate: f32,
+    pub ground: Option<GroundState>,
+    pub marine: Option<MarineState>,
+}
 
-    struct NullBackend;
-
-    impl Backend for NullBackend {
-        fn kind(&self) -> BackendKind {
-            BackendKind::Simulated
-        }
-        fn capabilities(&self) -> BackendCapabilities {
-            BackendCapabilities::simulated()
-        }
-        fn step(&mut self, _dt: std::time::Duration) -> Result<(), BackendError> {
-            Ok(())
-        }
-        fn snapshot(&self) -> Result<BackendTelemetry, BackendError> {
-            Ok(BackendTelemetry {
-                position_ned: [Length::ZERO; 3],
-                velocity_ned: [LinearVelocity::ZERO; 3],
-                attitude: Attitude::IDENTITY,
-                angular_velocity: AngularVelocity::ZERO,
-                acceleration: Acceleration::ZERO,
-                armed: false,
-                battery_remaining: 1.0,
-            })
-        }
-        fn last_telemetry(&self) -> Option<BackendTelemetry> {
-            None
-        }
-        fn send_force_torque(
-            &mut self,
-            _force: Force,
-            _torque: Torque,
-        ) -> Result<(), BackendError> {
-            Ok(())
-        }
-        fn set_mass(&mut self, _mass: Mass) -> Result<(), BackendError> {
-            Ok(())
-        }
-        fn last_error(&self) -> Option<&BackendError> {
-            None
-        }
-        fn imu(&self) -> Result<ImuSample, BackendError> {
-            Err(BackendError::Unavailable {
-                detail: "null backend has no IMU".into(),
-            })
-        }
-        fn dropped_frames(&self) -> u64 {
-            0
-        }
-        fn last_step_us(&self) -> u64 {
-            0
-        }
-        fn estimated_power(&self) -> Option<Power> {
-            None
-        }
+impl VehicleBackend for NullBackend {
+    async fn connect(&mut self) -> Result<ConnectionInfo, BackendError> {
+        Ok(ConnectionInfo {
+            system_id: 1,
+            component_id: 1,
+            autopilot: AutopilotKind::Simulated,
+        })
     }
 
-    #[test]
-    fn null_backend_step_succeeds() {
-        let mut b = NullBackend;
-        assert!(b.step(std::time::Duration::from_millis(10)).is_ok());
+    async fn preflight(&mut self) -> Result<PreflightReport, BackendError> {
+        Ok(PreflightReport {
+            imu_healthy: true,
+            estimator_valid: true,
+            battery_ok: true,
+            gps_ok: true,
+            notes: PreflightNotes {
+                imu_std_accel: 0.01,
+                imu_std_gyro: 0.001,
+                samples: 50,
+            },
+        })
     }
 
-    #[test]
-    fn capabilities_simulated_all_true() {
-        let c = BackendCapabilities::simulated();
-        assert!(c.offboard && c.gps && c.rangefinder && c.optical_flow);
+    async fn arm(&mut self) -> Result<(), BackendError> {
+        self.armed = true;
+        Ok(())
+    }
+
+    async fn disarm(&mut self) -> Result<(), BackendError> {
+        self.armed = false;
+        self.actuators = false;
+        self.offboard = false;
+        Ok(())
+    }
+
+    async fn enter_offboard(&mut self) -> Result<(), BackendError> {
+        self.offboard = true;
+        Ok(())
+    }
+
+    async fn set_velocity_ned(&mut self, velocity: Velocity<Ned>) -> Result<(), BackendError> {
+        self.velocity = Some(velocity);
+        Ok(())
+    }
+
+    async fn set_position_ned(&mut self, position: Position<Ned>) -> Result<(), BackendError> {
+        self.position = Some(position);
+        Ok(())
+    }
+
+    async fn set_motor_thrust(&mut self, _thrust: MotorThrust) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    async fn enable_actuators(&mut self) -> Result<(), BackendError> {
+        self.actuators = true;
+        Ok(())
+    }
+
+    async fn disable_actuators(&mut self) -> Result<(), BackendError> {
+        self.actuators = false;
+        Ok(())
+    }
+
+    async fn tick(&mut self, _dt_secs: f32) -> Result<Telemetry, BackendError> {
+        self.ticks += 1;
+        self.telemetry().await
+    }
+
+    async fn telemetry(&mut self) -> Result<Telemetry, BackendError> {
+        Ok(Telemetry {
+            timestamp: MonotonicInstant::from_millis(u64::from(self.ticks) * 10),
+            phase: Phase::Ready,
+            position: self.position.unwrap_or_else(Position::zero),
+            velocity: self.velocity.unwrap_or_else(Velocity::zero),
+            yaw_rad: self.yaw_rad,
+            imu: None,
+            imu_health: SensorHealth::Ok,
+            imu_healthy: true,
+            estimator_valid: true,
+            armed: self.armed,
+            actuators_enabled: self.actuators,
+            offboard: self.offboard,
+            failsafe: false,
+            heartbeat_age_secs: 0.0,
+            last_command: "null",
+        })
+    }
+
+    async fn trigger_failsafe(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    fn sync_ground(&mut self, safety: GroundState) -> Result<(), BackendError> {
+        self.ground = Some(safety);
+        if !safety.drive_enabled {
+            self.velocity = None;
+        }
+        Ok(())
+    }
+
+    fn sync_marine(&mut self, safety: MarineState) -> Result<(), BackendError> {
+        self.marine = Some(safety);
+        if !safety.thrust_enabled {
+            self.velocity = None;
+        }
+        Ok(())
+    }
+
+    fn set_yaw_rate(&mut self, yaw_rate: f32) -> Result<(), BackendError> {
+        self.yaw_rate = yaw_rate;
+        Ok(())
     }
 }
