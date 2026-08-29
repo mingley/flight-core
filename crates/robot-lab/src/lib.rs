@@ -13,7 +13,10 @@
 //! Foxglove-compatible MCAP. [`Observation::tools`] / [`LegalTools`] list the
 //! only `(robot, cmd)` pairs plus `env_cmds` an agent may call; [`Lab::act`]
 //! and [`Lab::act_through_attach`] reject anything else as [`LabError::NotLegal`]
-//! or [`LabError::UnknownRobot`] before domain attach.
+//! or [`LabError::UnknownRobot`] before domain attach. Failed acts record a
+//! [`RejectTrace`] (`Lab::last_reject`, `ProbeReport::illegal_traces`,
+//! `ResearchRun::rejects`) with domain, phase/kind, attempted event, reject
+//! display, and remaining-spec id when the bounce is one of P1–P13.
 //!
 //! Observe / act / research share the same [`WorldSession`] plant as the
 //! typestate fleet APIs. [`Lab::world`] is a snapshot; [`Lab::session`] is live.
@@ -42,6 +45,7 @@ mod apply;
 mod cmd;
 mod lab;
 mod observe;
+mod reject;
 mod schema;
 mod script;
 
@@ -57,6 +61,7 @@ pub use observe::{
     RobotView,
 };
 pub use probe::ProbeReport;
+pub use reject::RejectTrace;
 pub use research::{
     CoastalFleet, CollisionSweep, PadLanding, ResearchAgent, ResearchRun, RoverProbe,
     ScriptedCoastal, TypedAerialAirborne, TypedAerialDisarm, TypedAerialFailsafe, TypedAttachFleet,

@@ -1,6 +1,6 @@
 //! Adversarial observe/act catalog: illegal commands must bounce, properties must hold.
 
-use crate::{AgentAction, Lab, LabCmd};
+use crate::{AgentAction, Lab, LabCmd, RejectTrace};
 use serde::Serialize;
 
 /// Outcome of [`Lab::research_probe`].
@@ -14,6 +14,8 @@ pub struct ProbeReport {
     pub steps: u32,
     pub all_hold: bool,
     pub broken: Vec<String>,
+    /// Structured bounce for each illegal probe that rejected (NEXT A4).
+    pub illegal_traces: Vec<RejectTrace>,
 }
 
 impl ProbeReport {
@@ -50,14 +52,25 @@ impl Lab {
     pub fn research_probe(&mut self, dt: f32, steps: u32) -> ProbeReport {
         let mut illegal_rejected = 0usize;
         let mut illegal_leaked = Vec::new();
+        let mut illegal_traces = Vec::new();
         for a in illegal_catalog() {
             let label = format!("{} {}", a.robot, a.cmd);
             match self.act(a) {
-                Err(_) => illegal_rejected += 1,
+                Err(_) => {
+                    illegal_rejected += 1;
+                    if let Some(t) = self.last_reject() {
+                        illegal_traces.push(t.clone());
+                    }
+                }
                 Ok(()) => illegal_leaked.push(label),
             }
         }
-        probe_failsafe_hold(self, &mut illegal_rejected, &mut illegal_leaked);
+        probe_failsafe_hold(
+            self,
+            &mut illegal_rejected,
+            &mut illegal_leaked,
+            &mut illegal_traces,
+        );
 
         let mut legal_applied = 0usize;
         for a in legal_abuse() {
@@ -87,6 +100,7 @@ impl Lab {
             steps,
             all_hold: world.all_hold(),
             broken,
+            illegal_traces,
         }
     }
 }
@@ -94,7 +108,12 @@ impl Lab {
 /// Failsafe Hold is illegal on the JSON machine. Probe it on a clone so the
 /// main lab stays Ready for the legal-abuse sequence. Illegal phase stays
 /// [`Lab::act`] — [`Lab::act_through_attach`] would grant Ready Takeoff.
-fn probe_failsafe_hold(lab: &Lab, rejected: &mut usize, leaked: &mut Vec<String>) {
+fn probe_failsafe_hold(
+    lab: &Lab,
+    rejected: &mut usize,
+    leaked: &mut Vec<String>,
+    traces: &mut Vec<RejectTrace>,
+) {
     let mut scratch = lab.clone();
     if scratch
         .act(action("drone", LabCmd::Failsafe, 0.0, 0.0, 0.0))
@@ -103,7 +122,12 @@ fn probe_failsafe_hold(lab: &Lab, rejected: &mut usize, leaked: &mut Vec<String>
         return;
     }
     match scratch.act(action("drone", LabCmd::Hold, 0.0, 0.0, 0.0)) {
-        Err(_) => *rejected += 1,
+        Err(_) => {
+            *rejected += 1;
+            if let Some(t) = scratch.last_reject() {
+                traces.push(t.clone());
+            }
+        }
         Ok(()) => leaked.push("drone hold (failsafe)".into()),
     }
 }

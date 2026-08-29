@@ -16,6 +16,10 @@ fn rover_probe_bounces_then_drives() {
     let run = lab.research(&mut agent, 0.02, 80);
     assert!(run.ok(), "{run} broken={:?}", run.broken);
     assert!(run.actions_rejected >= 1, "parked drive must bounce");
+    assert_eq!(run.rejects.len(), run.actions_rejected);
+    assert!(run.rejects.iter().any(|t| t.cmd == "drive"
+        && t.code == "not_legal"
+        && t.from_kind.as_deref() == Some("parked")));
     assert!(run.actions_applied >= 2, "release + drive");
     assert!(run.holds("no_terrain_penetration"));
     assert!(run.holds("ground_drive_only_on_contact"));

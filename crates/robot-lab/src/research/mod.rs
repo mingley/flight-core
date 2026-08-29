@@ -23,7 +23,7 @@ pub use typed_marine::{
     TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
 };
 
-use crate::{AgentAction, Lab, Observation};
+use crate::{AgentAction, Lab, Observation, RejectTrace};
 use robot_world::{Property, SphereHit};
 use serde::Serialize;
 
@@ -57,6 +57,8 @@ pub struct ResearchRun {
     pub properties: Vec<Property>,
     /// Pairwise sphere contacts on the last committed step.
     pub sphere_hits: Vec<SphereHit>,
+    /// Structured bounce for each `act_through_attach` that rejected (NEXT A4).
+    pub rejects: Vec<RejectTrace>,
 }
 
 impl ResearchRun {
@@ -103,6 +105,7 @@ impl Lab {
     pub fn research(&mut self, agent: &mut impl ResearchAgent, dt: f32, steps: u32) -> ResearchRun {
         let mut actions_applied = 0usize;
         let mut actions_rejected = 0usize;
+        let mut rejects = Vec::new();
         let mut ran = 0u32;
         for _ in 0..steps {
             let obs = self.observe();
@@ -110,7 +113,12 @@ impl Lab {
             for a in actions {
                 match self.act_through_attach(a) {
                     Ok(()) => actions_applied += 1,
-                    Err(_) => actions_rejected += 1,
+                    Err(_) => {
+                        actions_rejected += 1;
+                        if let Some(t) = self.last_reject() {
+                            rejects.push(t.clone());
+                        }
+                    }
                 }
             }
             self.step(dt);
@@ -138,6 +146,7 @@ impl Lab {
             broken,
             properties: world.last_properties.clone(),
             sphere_hits: world.last_sphere_hits.clone(),
+            rejects,
         }
     }
 }

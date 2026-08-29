@@ -23,6 +23,8 @@ pub struct Lab {
     pub message: String,
     /// Successful `act` calls, timestamped, for replay.
     pub log: Vec<TimedAction>,
+    /// Last failed `act` / `act_through_attach` (NEXT A4). Cleared on success.
+    pub(crate) reject_trace: Option<crate::RejectTrace>,
 }
 
 impl Clone for Lab {
@@ -31,6 +33,7 @@ impl Clone for Lab {
             session: WorldSession::from_world(self.world()),
             message: self.message.clone(),
             log: self.log.clone(),
+            reject_trace: self.reject_trace.clone(),
         }
     }
 }
@@ -70,6 +73,7 @@ impl Lab {
             message: format!("{} world ready", world.scenario),
             session: WorldSession::from_world(world),
             log: Vec::new(),
+            reject_trace: None,
         }
     }
 
@@ -267,9 +271,14 @@ impl Lab {
     }
 
     pub fn act(&mut self, action: AgentAction) -> Result<(), LabError> {
-        self.ensure_tool(&action)?;
+        if let Err(e) = self.ensure_tool(&action) {
+            return Err(self.note_reject(&action, e));
+        }
         let t = self.with_world(|w| w.t);
-        self.apply_action(&action)?;
+        if let Err(e) = self.apply_action(&action) {
+            return Err(self.note_reject(&action, e));
+        }
+        self.clear_reject();
         self.log.push(TimedAction { t, action });
         Ok(())
     }
@@ -282,14 +291,25 @@ impl Lab {
     /// back to JSON `act`. Replay walks the same helpers without pushing to
     /// [`Self::log`].
     pub fn act_through_attach(&mut self, action: AgentAction) -> Result<(), LabError> {
-        self.ensure_tool_or_attach_grant(&action)?;
-        let t = self.with_world(|w| w.t);
-        if self.try_attach(t, &action, true)? {
-            return Ok(());
+        if let Err(e) = self.ensure_tool_or_attach_grant(&action) {
+            return Err(self.note_reject(&action, e));
         }
-        self.apply_action(&action)?;
-        self.log.push(TimedAction { t, action });
-        Ok(())
+        let t = self.with_world(|w| w.t);
+        match self.try_attach(t, &action, true) {
+            Ok(true) => {
+                self.clear_reject();
+                Ok(())
+            }
+            Ok(false) => {
+                if let Err(e) = self.apply_action(&action) {
+                    return Err(self.note_reject(&action, e));
+                }
+                self.clear_reject();
+                self.log.push(TimedAction { t, action });
+                Ok(())
+            }
+            Err(e) => Err(self.note_reject(&action, e)),
+        }
     }
 
     fn try_attach(&mut self, t: f32, action: &AgentAction, log: bool) -> Result<bool, LabError> {
@@ -637,9 +657,19 @@ impl Lab {
         let mut i = 0;
         while self.with_world(|w| w.t) + 1e-6 < t_end {
             while i < log.len() && log[i].t <= self.with_world(|w| w.t) + 1e-6 {
-                self.ensure_tool_or_attach_grant(&log[i].action)?;
-                if !self.try_attach(log[i].t, &log[i].action, false)? {
-                    self.apply_action(&log[i].action)?;
+                let action = log[i].action.clone();
+                if let Err(e) = self.ensure_tool_or_attach_grant(&action) {
+                    return Err(self.note_reject(&action, e));
+                }
+                match self.try_attach(log[i].t, &action, false) {
+                    Ok(false) => {
+                        if let Err(e) = self.apply_action(&action) {
+                            return Err(self.note_reject(&action, e));
+                        }
+                        self.clear_reject();
+                    }
+                    Ok(true) => self.clear_reject(),
+                    Err(e) => return Err(self.note_reject(&action, e)),
                 }
                 i += 1;
             }

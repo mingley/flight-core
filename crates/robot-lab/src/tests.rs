@@ -422,6 +422,10 @@ fn json_disarm_from_failsafe_is_recovery_not_ready() {
         "P6: JSON Failsafe Disarm → Recovery"
     );
     assert!(!s.armed);
+    assert!(
+        lab.last_reject().is_none(),
+        "P6 success must not leave a reject trace"
+    );
 }
 
 #[test]
@@ -1233,6 +1237,87 @@ fn research_probe_rejects_pad_illegal_cmds() {
         "pad + failsafe hold, rejected={}",
         report.illegal_rejected
     );
+}
+
+#[test]
+fn reject_trace_serializes_parked_drive() {
+    let mut lab = Lab::coastal(1);
+    let _ = lab
+        .act(AgentAction::new("rover", LabCmd::Drive).ned(-1.0, 0.0, 0.0))
+        .unwrap_err();
+    let t = lab.last_reject().expect("trace");
+    assert_eq!(t.robot, "rover");
+    assert_eq!(t.cmd, "drive");
+    assert_eq!(t.domain.as_deref(), Some("ground"));
+    assert_eq!(t.from_phase.as_deref(), Some("parked"));
+    assert_eq!(t.from_kind.as_deref(), Some("parked"));
+    assert_eq!(t.attempted.as_deref(), Some("DriveCommand"));
+    assert_eq!(t.code, "not_legal");
+    assert!(t.reject.contains("not legal now"));
+    assert!(t.invariant.is_none());
+    assert!(lab.observe().message.contains("agent rejected"));
+    let v = serde_json::to_value(t).unwrap();
+    assert_eq!(v["cmd"], "drive");
+    assert_eq!(v["attempted"], "DriveCommand");
+    assert_eq!(v["from_kind"], "parked");
+}
+
+#[test]
+fn reject_trace_unknown_hull_carries_p11() {
+    let mut lab = Lab::inland(1);
+    let _ = lab
+        .act(AgentAction::new("skiff", LabCmd::Undock))
+        .unwrap_err();
+    let t = lab.last_reject().unwrap();
+    assert_eq!(t.code, "unknown_robot");
+    assert_eq!(t.invariant.as_deref(), Some("P11"));
+    assert_eq!(t.robot, "skiff");
+}
+
+#[test]
+fn reject_trace_pad_takeoff_via_act_is_p2() {
+    let mut lab = Lab::coastal(1);
+    let _ = lab
+        .act(AgentAction::new("drone", LabCmd::Takeoff))
+        .unwrap_err();
+    let t = lab.last_reject().unwrap();
+    assert_eq!(t.cmd, "takeoff");
+    assert_eq!(t.attempted.as_deref(), Some("Takeoff"));
+    assert_eq!(t.from_kind.as_deref(), Some("preflight_ready"));
+    assert_eq!(t.invariant.as_deref(), Some("P2"));
+    assert_eq!(t.code, "not_legal");
+}
+
+#[test]
+fn reject_trace_ready_offboard_is_p1() {
+    let mut lab = Lab::coastal(1);
+    let _ = lab
+        .act(AgentAction::new("drone", LabCmd::Offboard))
+        .unwrap_err();
+    let t = lab.last_reject().unwrap();
+    assert_eq!(t.attempted.as_deref(), Some("EnterOffboard"));
+    assert_eq!(t.invariant.as_deref(), Some("P1"));
+}
+
+#[test]
+fn research_probe_includes_illegal_traces() {
+    let mut lab = Lab::coastal(3);
+    let report = lab.research_probe(0.02, 8);
+    assert!(report.ok(), "{report} leaked={:?}", report.illegal_leaked);
+    assert_eq!(report.illegal_traces.len(), report.illegal_rejected);
+    assert!(report
+        .illegal_traces
+        .iter()
+        .any(|t| t.robot == "rover" && t.cmd == "drive" && t.code == "not_legal"));
+    assert!(report
+        .illegal_traces
+        .iter()
+        .any(|t| t.cmd == "takeoff" && t.invariant.as_deref() == Some("P2")));
+    let inland = Lab::inland(3).research_probe(0.02, 8);
+    assert!(inland
+        .illegal_traces
+        .iter()
+        .any(|t| t.robot == "skiff" && t.invariant.as_deref() == Some("P11")));
 }
 
 #[test]

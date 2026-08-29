@@ -63,6 +63,8 @@ Goal: an agent can experiment and understand **without** reading kernel source, 
 
 ### A4. Structured rejection traces
 
+**Status: landed.** `RejectTrace` serializes domain, robot, cmd, from phase/kind, attempted kernel event, reject display, code, and remaining-spec id when the bounce is P1–P13. `Lab::last_reject` holds the latest failed act (cleared on success); observation `message` is `agent rejected: …`. `research_probe` fills `illegal_traces`; typed/JSON research fills `ResearchRun.rejects`. Observation schema is unchanged (`additionalProperties: false`). P6 JSON Failsafe Disarm → Recovery is unchanged.
+
 **Why:** understanding is “why did that fail,” not `Protocol`.
 
 **Acceptance:**
