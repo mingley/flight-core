@@ -24,3 +24,123 @@ jobs:
         run: cargo test --workspace
       - name: no_std check
         run: cargo check -p flight-core --no-default-features
+
+  gpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Install lavapipe
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+      - name: GPU hydro properties
+        env:
+          FLIGHT_HYDRO_GPU: "1"
+        run: cargo test -p robot-world --lib gpu -- --nocapture
+
+  # kani-verifier 0.67.0 needs rustc ≥ 1.88 to *install*; workspace MSRV stays
+  # 1.85 (rust-toolchain.toml). The action's rustc is the installer only.
+  # Proofs run through cargo kani's bundled toolchain. Pin matches a recorded
+  # `cargo kani -p flight-verify` pass: 42 harnesses, 0 failures.
+  kani:
+    name: kani
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: model-checking/kani-github-action@v1.1
+        with:
+          kani-version: "0.67.0"
+          command: cargo kani
+          args: -p flight-verify -j 2 --output-format terse
+
+  # Jazzy on noble. Default `cargo test --workspace` does not enable rclrs.
+  # PlantNode / FleetPlantNode hold stay on attach_hold (Protocol before grant).
+  rclrs:
+    name: rclrs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: jazzy
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy
+      - name: geometry_msgs and RMW
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ros-jazzy-geometry-msgs \
+            ros-jazzy-rcl \
+            ros-jazzy-rmw-fastrtps-cpp \
+            clang \
+            libclang-dev
+      - name: Test flight-ros2 with rclrs
+        env:
+          ROS_LOCALHOST_ONLY: "1"
+        run: |
+          . /opt/ros/jazzy/setup.bash
+          cargo clippy -p flight-ros2 --all-targets --features rclrs -- -D warnings
+          cargo test -p flight-ros2 --features rclrs
+
+  # Live PX4 SIH SITL (headless, official px4io/px4-sitl image). Default
+  # workspace tests skip `sitl_live` (`#[ignore]`). This job is the required gate.
+  # Pin v1.18.0-beta2: Docker Hub has no v1.17.0 tag (docs mention it; Hub does not).
+  sitl:
+    name: sitl
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: PX4 SIH on UDP 14540
+        run: |
+          docker run --rm -d --name px4-sitl --network host \
+            -e PX4_SIM_MODEL=sihsim_quadx \
+            px4io/px4-sitl:v1.18.0-beta2 \
+            -d
+          for i in $(seq 1 60); do
+            if docker logs px4-sitl 2>&1 | grep -Eiq 'mavlink|Ready to fly|sih'; then
+              echo "PX4 is publishing"
+              docker logs px4-sitl
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "PX4 did not become ready"
+          docker logs px4-sitl || true
+          exit 1
+      - name: Companion takeoff, hold, land
+        run: cargo test -p flight-px4 --test sitl_live -- --ignored --nocapture
+
+  # Creusot 0.5.0. Isolated nightly-2025-01-31; workspace MSRV stays 1.85.
+  # Recorded local pass: 81 libraries, 0 failures (aerial step 191 VCs,
+  # ground_step 6, marine_step 6, HITL deadline + apply-allowed).
+  creusot:
+    name: creusot
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Creusot opam switch
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/creusot/_opam
+          key: creusot-0.5.0-opam-${{ runner.os }}
+      - name: Install Opam
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.3.0
+          opam-pin: false
+      - name: Install Creusot 0.5.0
+        env:
+          OPAMYES: "1"
+        run: |
+          sudo apt-get update
+          rustup toolchain install nightly-2025-01-31 --component rustc-dev,llvm-tools
+          git clone --depth 1 --branch v0.5.0 https://github.com/creusot-rs/creusot.git "$HOME/creusot-0.5.0"
+          cd "$HOME/creusot-0.5.0"
+          ./INSTALL
+      - name: Prove kernel machines
+        run: cargo creusot prove -- -p flight-core --features creusot
