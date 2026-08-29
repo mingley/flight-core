@@ -1,251 +1,310 @@
-//! Live mission-control dashboard for a simulated `flight-core` vehicle.
+//! Live coastal lab: aerial, ground, surface, and underwater bodies
+//! with mechanical properties checked every tick.
+//!
+//! Safety trips and return commands live under the NED map. Drone failsafe /
+//! recover / land / touchdown / disarm and rover E-stop / clear / park are
+//! offered when those bodies are in the scene. Skiff and AUV failsafe /
+//! recover / dock appear on coastal, harbor, and open water (hidden inland).
+//! Station / resume on each hull and drone airborne / hold sit under return.
+//! POST `/api/hold` queues [`LabCmd::Hold`], which walks [`Lab::attach_hold`]
+//! on the live plant (current NED pose, OffboardControl). POST `/api/failsafe`
+//! queues [`LabCmd::Failsafe`] on the same [`Lab::act_through_attach`] path as
+//! hold, airborne, and station. Other buttons queue [`LabCmd`] through that
+//! path as well.
 
 use axum::extract::State;
+use axum::http::header::{HeaderMap, HeaderValue, CACHE_CONTROL};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
-use flight_core::prelude::*;
-use flight_core::vehicle::Telemetry;
-use flight_sim::{connect, SimConfig};
-use serde::Serialize;
+use robot_lab::{AgentAction, Lab, LabCmd, Observation};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{watch, Mutex};
 use tokio::time::sleep;
 use tower_http::cors::CorsLayer;
 
 const INDEX: &str = include_str!("index.html");
 
-#[derive(Clone, Debug, Serialize)]
-struct Snapshot {
-    t: f32,
-    phase: String,
-    armed: bool,
-    actuators: bool,
-    offboard: bool,
-    failsafe: bool,
-    imu_healthy: bool,
-    estimator_valid: bool,
-    n: f32,
-    e: f32,
-    d: f32,
-    vn: f32,
-    ve: f32,
-    vd: f32,
-    alt: f32,
-    yaw: f32,
-    last_command: String,
-    message: String,
-}
-
-impl Snapshot {
-    fn from_tel(tel: &Telemetry, message: &str) -> Self {
-        Self {
-            t: tel.timestamp.as_secs_f32(),
-            phase: tel.phase.name().into(),
-            armed: tel.armed,
-            actuators: tel.actuators_enabled,
-            offboard: tel.offboard,
-            failsafe: tel.failsafe,
-            imu_healthy: tel.imu_healthy,
-            estimator_valid: tel.estimator_valid,
-            n: tel.position.x(),
-            e: tel.position.y(),
-            d: tel.position.z(),
-            vn: tel.velocity.x(),
-            ve: tel.velocity.y(),
-            vd: tel.velocity.z(),
-            alt: tel.altitude_agl().get(),
-            yaw: tel.yaw_rad,
-            last_command: tel.last_command.into(),
-            message: message.into(),
-        }
-    }
-}
-
 struct App {
-    tx: watch::Sender<Snapshot>,
-    rx: watch::Receiver<Snapshot>,
-    trip_failsafe: AtomicBool,
+    tx: watch::Sender<Observation>,
+    rx: watch::Receiver<Observation>,
+    pending: Mutex<Vec<AgentAction>>,
+    reset: AtomicBool,
+    scripted: AtomicBool,
+    scenario: Mutex<String>,
+    seed: Mutex<u64>,
+}
+
+#[derive(Deserialize)]
+struct OpenReq {
+    scenario: String,
+    #[serde(default = "default_seed")]
+    seed: u64,
+}
+
+fn default_seed() -> u64 {
+    1
+}
+
+#[derive(Serialize)]
+struct OkMsg {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 #[tokio::main]
 async fn main() {
-    let initial = Snapshot {
-        t: 0.0,
-        phase: "disconnected".into(),
-        armed: false,
-        actuators: false,
-        offboard: false,
-        failsafe: false,
-        imu_healthy: false,
-        estimator_valid: false,
-        n: 0.0,
-        e: 0.0,
-        d: 0.0,
-        vn: 0.0,
-        ve: 0.0,
-        vd: 0.0,
-        alt: 0.0,
-        yaw: 0.0,
-        last_command: "boot".into(),
-        message: "starting simulated vehicle".into(),
-    };
+    if std::env::var_os("FLIGHT_HYDRO_GPU").is_none() {
+        std::env::set_var("FLIGHT_HYDRO_GPU", "1");
+    }
+    let lab = Lab::coastal(1);
+    let initial = lab.observe();
     let (tx, rx) = watch::channel(initial);
     let app = Arc::new(App {
         tx,
         rx,
-        trip_failsafe: AtomicBool::new(false),
+        pending: Mutex::new(Vec::new()),
+        reset: AtomicBool::new(false),
+        scripted: AtomicBool::new(true),
+        scenario: Mutex::new("coastal".into()),
+        seed: Mutex::new(1),
     });
 
     let worker = app.clone();
     tokio::spawn(async move {
         loop {
-            if let Err(e) = run_mission(&worker).await {
-                let mut snap = worker.tx.borrow().clone();
-                snap.message = format!("mission error: {e}");
-                let _ = worker.tx.send(snap);
-            }
-            sleep(Duration::from_secs(2)).await;
+            run_lab(&worker).await;
+            sleep(Duration::from_millis(400)).await;
         }
     });
 
     let router = Router::new()
         .route("/", get(index))
-        .route("/api/telemetry", get(telemetry))
+        .route("/api/telemetry", get(observation))
+        .route("/api/lab/observation", get(observation))
+        .route("/api/lab/action", post(action))
+        .route("/api/lab/reset", post(reset))
+        .route("/api/lab/open", post(open))
+        .route("/api/lab/scenarios", get(scenarios))
         .route("/api/failsafe", post(trip))
+        .route("/api/recover", post(recover))
+        .route("/api/estop", post(estop))
+        .route("/api/clear", post(clear))
+        .route("/api/skiff-failsafe", post(skiff_failsafe))
+        .route("/api/skiff-recover", post(skiff_recover))
+        .route("/api/auv-failsafe", post(auv_failsafe))
+        .route("/api/auv-recover", post(auv_recover))
+        .route("/api/land", post(land))
+        .route("/api/touchdown", post(touchdown))
+        .route("/api/disarm", post(disarm))
+        .route("/api/park", post(park))
+        .route("/api/skiff-dock", post(skiff_dock))
+        .route("/api/auv-dock", post(auv_dock))
+        .route("/api/skiff-station", post(skiff_station))
+        .route("/api/skiff-resume", post(skiff_resume))
+        .route("/api/auv-station", post(auv_station))
+        .route("/api/auv-resume", post(auv_resume))
+        .route("/api/airborne", post(airborne))
+        .route("/api/hold", post(hold))
         .with_state(app)
         .layer(CorsLayer::permissive());
 
     let bind = std::env::var("FLIGHT_DEMO_BIND").unwrap_or_else(|_| "0.0.0.0:47831".into());
     let listener = TcpListener::bind(&bind).await.expect("bind");
-    eprintln!("flight-demo listening on http://{bind}");
+    eprintln!("robot-lab listening on http://{bind}");
     axum::serve(listener, router).await.expect("server");
 }
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX)
+async fn index() -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    (headers, Html(INDEX))
 }
 
-async fn telemetry(State(app): State<Arc<App>>) -> Json<Snapshot> {
+async fn observation(State(app): State<Arc<App>>) -> Json<Observation> {
     Json(app.rx.borrow().clone())
 }
 
-async fn trip(State(app): State<Arc<App>>) -> impl IntoResponse {
-    app.trip_failsafe.store(true, Ordering::SeqCst);
-    Json(serde_json::json!({ "ok": true }))
+async fn action(State(app): State<Arc<App>>, Json(act): Json<AgentAction>) -> impl IntoResponse {
+    app.scripted.store(false, Ordering::SeqCst);
+    let mut q = app.pending.lock().await;
+    let cmd = act.cmd;
+    q.push(act);
+    Json(OkMsg {
+        ok: true,
+        error: None,
+        message: Some(format!("queued {cmd}")),
+    })
 }
 
-fn publish(app: &App, tel: &Telemetry, message: &str) {
-    let _ = app.tx.send(Snapshot::from_tel(tel, message));
+async fn reset(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    app.reset.store(true, Ordering::SeqCst);
+    app.scripted.store(true, Ordering::SeqCst);
+    Json(OkMsg {
+        ok: true,
+        error: None,
+        message: Some("reset".into()),
+    })
 }
 
-async fn maybe_sleep() {
-    sleep(Duration::from_millis(25)).await;
+async fn scenarios() -> Json<&'static [&'static str]> {
+    Json(Lab::scenarios())
 }
 
-async fn run_mission(app: &App) -> Result<(), String> {
-    app.trip_failsafe.store(false, Ordering::SeqCst);
-
-    let mut vehicle = connect(SimConfig::default())
-        .await
-        .map_err(|e| e.to_string())?;
-    if let Ok(t) = vehicle.telemetry().await {
-        publish(app, &t, "connected · Disarmed");
+async fn open(State(app): State<Arc<App>>, Json(req): Json<OpenReq>) -> impl IntoResponse {
+    if Lab::open(&req.scenario, req.seed).is_err() {
+        return Json(OkMsg {
+            ok: false,
+            error: Some(format!("unknown scenario {}", req.scenario)),
+            message: None,
+        });
     }
-    maybe_sleep().await;
+    *app.scenario.lock().await = req.scenario.clone();
+    *app.seed.lock().await = req.seed;
+    app.scripted.store(true, Ordering::SeqCst);
+    app.reset.store(true, Ordering::SeqCst);
+    Json(OkMsg {
+        ok: true,
+        error: None,
+        message: Some(format!("opening {}", req.scenario)),
+    })
+}
 
-    let mut vehicle = vehicle
-        .verify_preflight()
-        .await
-        .map_err(|e| e.error.to_string())?;
-    if let Ok(t) = vehicle.telemetry().await {
-        publish(app, &t, "preflight passed · IMU + estimator valid");
-    }
-    maybe_sleep().await;
+async fn trip(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "drone", LabCmd::Failsafe, "queued drone failsafe").await
+}
 
-    let vehicle = vehicle.arm().await.map_err(|e| e.error.to_string())?;
-    let mut vehicle = vehicle
-        .enter_offboard()
-        .await
-        .map_err(|e| e.error.to_string())?;
-    vehicle.start_takeoff().await.map_err(|e| e.to_string())?;
-    if let Ok(t) = vehicle.telemetry().await {
-        publish(app, &t, "armed · offboard · takeoff");
-    }
+async fn recover(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "drone", LabCmd::Recover, "queued recover").await
+}
+
+async fn estop(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "rover", LabCmd::Estop, "queued rover estop").await
+}
+
+async fn clear(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "rover", LabCmd::Clear, "queued rover clear").await
+}
+
+async fn skiff_failsafe(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "skiff", LabCmd::Failsafe, "queued skiff failsafe").await
+}
+
+async fn skiff_recover(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "skiff", LabCmd::Recover, "queued skiff recover").await
+}
+
+async fn auv_failsafe(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "surveyor", LabCmd::Failsafe, "queued auv failsafe").await
+}
+
+async fn auv_recover(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "surveyor", LabCmd::Recover, "queued auv recover").await
+}
+
+async fn land(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "drone", LabCmd::Land, "queued drone land").await
+}
+
+async fn touchdown(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "drone", LabCmd::Touchdown, "queued drone touchdown").await
+}
+
+async fn disarm(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "drone", LabCmd::Disarm, "queued drone disarm").await
+}
+
+async fn park(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "rover", LabCmd::Park, "queued rover park").await
+}
+
+async fn skiff_dock(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "skiff", LabCmd::Dock, "queued skiff dock").await
+}
+
+async fn auv_dock(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "surveyor", LabCmd::Dock, "queued auv dock").await
+}
+
+async fn skiff_station(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "skiff", LabCmd::Station, "queued skiff station").await
+}
+
+async fn skiff_resume(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "skiff", LabCmd::Resume, "queued skiff resume").await
+}
+
+async fn auv_station(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "surveyor", LabCmd::Station, "queued auv station").await
+}
+
+async fn auv_resume(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "surveyor", LabCmd::Resume, "queued auv resume").await
+}
+
+async fn airborne(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "drone", LabCmd::Airborne, "queued drone airborne").await
+}
+
+async fn hold(State(app): State<Arc<App>>) -> Json<OkMsg> {
+    queue_robot(&app, "drone", LabCmd::Hold, "queued drone hold").await
+}
+
+async fn queue_robot(
+    app: &App,
+    robot: &'static str,
+    cmd: LabCmd,
+    message: &'static str,
+) -> Json<OkMsg> {
+    app.scripted.store(false, Ordering::SeqCst);
+    let mut q = app.pending.lock().await;
+    q.push(AgentAction::new(robot, cmd));
+    Json(OkMsg {
+        ok: true,
+        error: None,
+        message: Some(message.into()),
+    })
+}
+
+async fn run_lab(app: &App) {
+    app.reset.store(false, Ordering::SeqCst);
+    let name = app.scenario.lock().await.clone();
+    let seed = *app.seed.lock().await;
+    let mut lab = Lab::open(&name, seed).unwrap_or_else(|_| Lab::coastal(seed));
+    let _ = app.tx.send(lab.observe());
 
     loop {
-        if app.trip_failsafe.load(Ordering::SeqCst) {
-            let mut fs = vehicle.failsafe().await.map_err(|e| e.error.to_string())?;
-            if let Ok(t) = fs.telemetry().await {
-                publish(app, &t, "FAILSAFE — mission commands rejected");
-            }
-            sleep(Duration::from_secs(2)).await;
-            let mut disarmed = fs.disarm().await.map_err(|e| e.error.to_string())?;
-            if let Ok(t) = disarmed.telemetry().await {
-                publish(app, &t, "disarmed after failsafe");
-            }
-            return Ok(());
+        if app.reset.load(Ordering::SeqCst) {
+            return;
         }
-        vehicle
-            .set_velocity(Velocity::<Ned>::ned(0.0, 0.0, -1.2))
-            .await
-            .map_err(|e| e.to_string())?;
-        let t = vehicle.telemetry().await.map_err(|e| e.to_string())?;
-        publish(app, &t, "climbing");
-        maybe_sleep().await;
-        if t.altitude_agl().get() >= 5.0 {
-            break;
-        }
-    }
-    vehicle.declare_airborne().map_err(|e| e.to_string())?;
 
-    for i in 0..90 {
-        if app.trip_failsafe.load(Ordering::SeqCst) {
-            let mut fs = vehicle.failsafe().await.map_err(|e| e.error.to_string())?;
-            if let Ok(t) = fs.telemetry().await {
-                publish(app, &t, "FAILSAFE — mission commands rejected");
+        let pending: Vec<AgentAction> = {
+            let mut q = app.pending.lock().await;
+            q.drain(..).collect()
+        };
+        if app.scripted.load(Ordering::SeqCst) && lab.with_world(|w| w.t) >= 1.2 {
+            lab.apply_script();
+        }
+        for act in pending {
+            if let Err(e) = lab.act_through_attach(act) {
+                lab.message = format!("agent rejected: {e}");
             }
-            sleep(Duration::from_secs(2)).await;
-            let _ = fs.disarm().await;
-            return Ok(());
         }
-        let east = if i > 40 { 0.8 } else { 0.0 };
-        vehicle
-            .set_velocity(Velocity::<Ned>::ned(1.4, east, 0.0))
-            .await
-            .map_err(|e| e.to_string())?;
-        let t = vehicle.telemetry().await.map_err(|e| e.to_string())?;
-        publish(app, &t, "velocity NED cruise");
-        maybe_sleep().await;
-    }
 
-    // Descend with typed land().
-    let mut ticks = 0u32;
-    loop {
-        if app.trip_failsafe.load(Ordering::SeqCst) {
-            break;
-        }
-        vehicle
-            .set_velocity(Velocity::<Ned>::ned(0.0, 0.0, 0.9))
-            .await
-            .map_err(|e| e.to_string())?;
-        let t = vehicle.telemetry().await.map_err(|e| e.to_string())?;
-        publish(app, &t, "landing");
-        maybe_sleep().await;
-        ticks += 1;
-        if t.altitude_agl().get() <= 0.12 || ticks > 400 {
-            break;
-        }
-    }
+        lab.step(0.02);
+        let _ = app.tx.send(lab.observe());
+        sleep(Duration::from_millis(25)).await;
 
-    let mut landed = vehicle.land().await.map_err(|e| e.error.to_string())?;
-    if let Ok(t) = landed.telemetry().await {
-        publish(app, &t, "landed · disarmed");
+        if lab.world().t > 40.0 && app.scripted.load(Ordering::SeqCst) {
+            return;
+        }
     }
-    sleep(Duration::from_secs(2)).await;
-    Ok(())
 }
