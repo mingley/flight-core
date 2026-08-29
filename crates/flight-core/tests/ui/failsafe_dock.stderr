@@ -1,0 +1,18 @@
+error[E0599]: the method `dock_now` exists for struct `MarineVehicle<MarineFailsafe, B>`, but its trait bounds were not satisfied
+ --> tests/ui/failsafe_dock.rs:5:18
+  |
+5 |     let _ = hull.dock_now();
+  |                  ^^^^^^^^ method cannot be called on `MarineVehicle<MarineFailsafe, B>` due to unsatisfied trait bounds
+  |
+ ::: src/vehicle/marine.rs
+  |
+  | pub struct MarineFailsafe;
+  | ------------------------- doesn't satisfy `flight_core::vehicle::MarineFailsafe: CanDock`
+  |
+  = note: the following trait bounds were not satisfied:
+          `flight_core::vehicle::MarineFailsafe: CanDock`
+          `B: VehicleBackend`
+help: consider restricting the type parameter to satisfy the trait bound
+  |
+4 | fn boom<B>(hull: MarineVehicle<MarineFailsafe, B>) where B: VehicleBackend {
+  |                                                    +++++++++++++++++++++++

@@ -1,0 +1,18 @@
+error[E0599]: the method `emergency_stop_now` exists for struct `GroundVehicle<EStopped, B>`, but its trait bounds were not satisfied
+ --> tests/ui/estopped_estop.rs:5:19
+  |
+5 |     let _ = rover.emergency_stop_now();
+  |                   ^^^^^^^^^^^^^^^^^^ method cannot be called on `GroundVehicle<EStopped, B>` due to unsatisfied trait bounds
+  |
+ ::: src/vehicle/ground.rs
+  |
+  | pub struct EStopped;
+  | ------------------- doesn't satisfy `flight_core::vehicle::EStopped: CanTripEstop`
+  |
+  = note: the following trait bounds were not satisfied:
+          `flight_core::vehicle::EStopped: CanTripEstop`
+          `B: VehicleBackend`
+help: consider restricting the type parameter to satisfy the trait bound
+  |
+4 | fn boom<B>(rover: GroundVehicle<EStopped, B>) where B: VehicleBackend {
+  |                                               +++++++++++++++++++++++

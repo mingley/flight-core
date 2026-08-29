@@ -1,0 +1,18 @@
+error[E0599]: the method `failsafe_now` exists for struct `Vehicle<Recovery, B>`, but its trait bounds were not satisfied
+ --> tests/ui/recovery_failsafe.rs:5:21
+  |
+5 |     let _ = vehicle.failsafe_now();
+  |                     ^^^^^^^^^^^^ method cannot be called on `Vehicle<Recovery, B>` due to unsatisfied trait bounds
+  |
+ ::: src/vehicle/typestate.rs
+  |
+  | state!(Recovery, "recovery");
+  | ---------------------------- doesn't satisfy `flight_core::vehicle::Recovery: CanTripFailsafe`
+  |
+  = note: the following trait bounds were not satisfied:
+          `flight_core::vehicle::Recovery: CanTripFailsafe`
+          `B: VehicleBackend`
+help: consider restricting the type parameter to satisfy the trait bound
+  |
+4 | fn boom<B>(vehicle: Vehicle<Recovery, B>) where B: VehicleBackend {
+  |                                           +++++++++++++++++++++++
