@@ -1,4 +1,4 @@
-//! Typestate ground platform: `Parked` cannot command a twist.
+//! Typestate ground platform: `Parked` cannot command a twist or hold a pose.
 
 use super::backend::{BackendError, NullBackend, Telemetry, VehicleBackend};
 use crate::frames::{Body, Ned};
@@ -248,6 +248,26 @@ impl<B: VehicleBackend> GroundVehicle<Moving, B> {
             .map_err(GroundError::Backend)
     }
 
+    /// Hold at the current NED pose. Same kernel grant as a drive command
+    /// (`DriveCommand`). Compiles only while moving (`tests/ui/parked_hold.rs`,
+    /// `tests/ui/estopped_hold.rs`).
+    pub fn hold_now(&mut self) -> Result<(), GroundError> {
+        self.safety = ground::ground_step(self.safety, GroundEvent::DriveCommand)
+            .map_err(GroundError::Safety)?;
+        self.push_ground()?;
+        self.backend.hold_now().map_err(GroundError::Backend)
+    }
+
+    /// Same grant as [`Self::hold_now`], then tick the plant 20 ms.
+    pub async fn hold(&mut self) -> Result<(), GroundError> {
+        self.hold_now()?;
+        self.backend
+            .tick(0.02)
+            .await
+            .map_err(GroundError::Backend)?;
+        Ok(())
+    }
+
     /// Return to parked without an async runtime. Drive commands cease to exist.
     pub fn park_now(mut self) -> GroundVehicle<Parked, B> {
         self.safety = ground::ground_step(self.safety, GroundEvent::Halt).unwrap_or(GroundState {
@@ -357,6 +377,7 @@ fn wrap_ground<S, B>(backend: B, safety: GroundState) -> GroundVehicle<S, B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vector::Position;
 
     #[tokio::test]
     async fn parked_then_drive() {
@@ -394,6 +415,24 @@ mod tests {
         assert!(stopped.backend().velocity.is_none());
         let parked = stopped.reset().unwrap();
         assert_eq!(parked.phase(), GroundPhase::Parked);
+    }
+
+    #[test]
+    fn hold_now_tracks_telemetry_pose() {
+        let backend = NullBackend {
+            position: Some(Position::<Ned>::ned(1.5, -0.25, 0.0)),
+            ..NullBackend::default()
+        };
+        let mut v = GroundVehicle::<Parked, _>::new(backend)
+            .enable_drive()
+            .unwrap();
+        v.hold_now().unwrap();
+        let p = v.backend().position.unwrap();
+        assert_eq!((p.x(), p.y(), p.z()), (1.5, -0.25, 0.0));
+        assert_eq!(
+            v.backend().ground.map(|s| s.phase),
+            Some(GroundPhase::Moving)
+        );
     }
 
     #[test]

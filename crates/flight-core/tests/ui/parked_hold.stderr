@@ -1,0 +1,8 @@
+error[E0599]: no method named `hold_now` found for struct `GroundVehicle<flight_core::vehicle::Parked, B>` in the current scope
+ --> tests/ui/parked_hold.rs:5:19
+  |
+5 |     let _ = rover.hold_now();
+  |                   ^^^^^^^^ method not found in `GroundVehicle<Parked, B>`
+  |
+  = note: the method was found for
+          - `GroundVehicle<flight_core::vehicle::Moving, B>`
