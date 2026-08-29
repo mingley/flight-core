@@ -48,7 +48,7 @@ impl<'de, U, F> serde::Deserialize<'de> for Vector3<U, F> {
             y: f32,
             z: f32,
         }
-        let raw = Raw.deserialize(deserializer)?;
+        let raw = Raw::deserialize(deserializer)?;
         Ok(Self::new(raw.x, raw.y, raw.z))
     }
 }
