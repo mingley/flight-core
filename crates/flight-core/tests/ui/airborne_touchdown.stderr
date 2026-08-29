@@ -1,0 +1,18 @@
+error[E0599]: the method `touchdown_now` exists for struct `Vehicle<Airborne, B>`, but its trait bounds were not satisfied
+ --> tests/ui/airborne_touchdown.rs:5:21
+  |
+5 |     let _ = vehicle.touchdown_now();
+  |                     ^^^^^^^^^^^^^ method cannot be called on `Vehicle<Airborne, B>` due to unsatisfied trait bounds
+  |
+ ::: src/vehicle/typestate.rs
+  |
+  | state!(Airborne, "airborne");
+  | ---------------------------- doesn't satisfy `flight_core::vehicle::Airborne: CanTouchdown`
+  |
+  = note: the following trait bounds were not satisfied:
+          `flight_core::vehicle::Airborne: CanTouchdown`
+          `B: VehicleBackend`
+help: consider restricting the type parameter to satisfy the trait bound
+  |
+4 | fn boom<B>(vehicle: Vehicle<Airborne, B>) where B: VehicleBackend {
+  |                                           +++++++++++++++++++++++
