@@ -1,0 +1,36 @@
+[package]
+name = "robot-lab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Agent observe/act lab over the same WorldSession plant as the typestate fleet"
+
+[dependencies]
+flight-core = { workspace = true }
+flight-sim = { workspace = true }
+robot-world = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[example]]
+name = "coastal"
+
+[[example]]
+name = "research"
+
+[[example]]
+name = "replay"
+
+[[example]]
+name = "bag"
+
+[[example]]
+name = "probe"
+
+[[example]]
+name = "agent"
+
+[[example]]
+name = "typed"
