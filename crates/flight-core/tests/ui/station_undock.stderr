@@ -1,0 +1,8 @@
+error[E0599]: no method named `undock` found for struct `MarineVehicle<flight_core::vehicle::StationKeep, B>` in the current scope
+ --> tests/ui/station_undock.rs:5:18
+  |
+5 |     let _ = hull.undock();
+  |                  ^^^^^^ method not found in `MarineVehicle<StationKeep, B>`
+  |
+  = note: the method was found for
+          - `MarineVehicle<flight_core::vehicle::Docked, B>`

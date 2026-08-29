@@ -1,0 +1,8 @@
+error[E0599]: no method named `reset` found for struct `GroundVehicle<flight_core::vehicle::Moving, B>` in the current scope
+ --> tests/ui/moving_reset.rs:5:19
+  |
+5 |     let _ = rover.reset();
+  |                   ^^^^^ method not found in `GroundVehicle<Moving, B>`
+  |
+  = note: the method was found for
+          - `GroundVehicle<flight_core::vehicle::EStopped, B>`

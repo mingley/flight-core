@@ -1,0 +1,8 @@
+error[E0599]: no method named `resume` found for struct `MarineVehicle<flight_core::vehicle::Underway, B>` in the current scope
+ --> tests/ui/underway_resume.rs:5:18
+  |
+5 |     let _ = hull.resume();
+  |                  ^^^^^^ method not found in `MarineVehicle<Underway, B>`
+  |
+  = note: the method was found for
+          - `MarineVehicle<flight_core::vehicle::StationKeep, B>`

@@ -1,0 +1,8 @@
+error[E0599]: no method named `park_now` found for struct `GroundVehicle<flight_core::vehicle::EStopped, B>` in the current scope
+ --> tests/ui/estopped_park.rs:5:19
+  |
+5 |     let _ = rover.park_now();
+  |                   ^^^^^^^^ method not found in `GroundVehicle<EStopped, B>`
+  |
+  = note: the method was found for
+          - `GroundVehicle<flight_core::vehicle::Moving, B>`

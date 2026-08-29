@@ -1,0 +1,8 @@
+error[E0599]: no method named `recover_docked` found for struct `MarineVehicle<flight_core::vehicle::Docked, B>` in the current scope
+ --> tests/ui/docked_recover.rs:5:18
+  |
+5 |     let _ = hull.recover_docked();
+  |                  ^^^^^^^^^^^^^^ method not found in `MarineVehicle<Docked, B>`
+  |
+  = note: the method was found for
+          - `MarineVehicle<MarineFailsafe, B>`
