@@ -14,6 +14,7 @@
     "environment",
     "robots",
     "properties",
+    "broken",
     "sphere_hits"
   ],
   "properties": {
@@ -22,6 +23,11 @@
     "seed": { "type": "integer" },
     "message": { "type": "string" },
     "all_hold": { "type": "boolean" },
+    "broken": {
+      "type": "array",
+      "description": "Property ids that failed on the last try_step, in vector order (first entry is the first id that does not hold). Empty when all_hold. Refuse is atomic: pose, hydro, and t stay at the previous legal snapshot; this list is the rejected successor vector. Observation does not take an extra step.",
+      "items": { "type": "string" }
+    },
     "env_cmds": {
       "type": "array",
       "description": "Environment LabCmd values that need no robot id.",
@@ -158,9 +164,13 @@
         "estimator_valid"
       ],
       "properties": {
-        "phase": { "type": "string" },
+        "phase": {
+          "type": "string",
+          "description": "Plant aerial phase string (ready, armed, takeoff, …)."
+        },
         "kind": {
           "type": "string",
+          "description": "Consume-self typestate attach binds — not the plant phase string. After attach_offboard this is offboard while phase stays armed.",
           "enum": [
             "disconnected",
             "disarmed",
@@ -178,8 +188,14 @@
         "actuators_enabled": { "type": "boolean" },
         "offboard": { "type": "boolean" },
         "failsafe": { "type": "boolean" },
-        "imu_healthy": { "type": "boolean" },
-        "estimator_valid": { "type": "boolean" }
+        "imu_healthy": {
+          "type": "boolean",
+          "description": "Kernel IMU health bit. Visible without an extra world step."
+        },
+        "estimator_valid": {
+          "type": "boolean",
+          "description": "Kernel estimator_valid bit. Visible without an extra world step."
+        }
       }
     },
     "ground_machine": {

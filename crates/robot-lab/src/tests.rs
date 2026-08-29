@@ -283,6 +283,9 @@ fn observation_exposes_safety_machines() {
     assert_eq!(a.phase, "ready");
     assert!(!a.armed);
     assert!(!a.actuators_enabled);
+    assert!(a.imu_healthy);
+    assert!(a.estimator_valid);
+    assert!(obs.broken.is_empty());
     assert!(drone.allows(LabCmd::Arm));
     assert!(drone.allows(LabCmd::Failsafe));
     assert!(!drone.allows(LabCmd::Velocity));
@@ -305,6 +308,40 @@ fn observation_exposes_safety_machines() {
     assert!(rover.allows(LabCmd::Drive));
     assert!(rover.allows(LabCmd::Halt));
     assert!(!rover.allows(LabCmd::Release));
+}
+
+#[test]
+fn observation_broken_names_refused_try_step_without_extra_step() {
+    let live = Lab::coastal(1);
+    let t_before = live.world().t;
+    let obs0 = live.observe();
+    assert_eq!(live.world().t, t_before, "observe must not step");
+    assert!(obs0.broken.is_empty());
+    assert!(obs0.all_hold);
+    let drone = obs0.robots.iter().find(|r| r.id == "drone").unwrap();
+    let a = drone.aerial.as_ref().unwrap();
+    assert_eq!(a.kind, AerialKind::PreflightReady);
+    assert_eq!(a.phase, "ready");
+    assert!(a.imu_healthy);
+    assert!(a.estimator_valid);
+
+    let mut scratch = live.clone();
+    let t0 = scratch.world().t;
+    let p0 = body(&scratch, "rover").position_m;
+    scratch.with_world_mut(|w| w.hydro.volume0 = 1.0e9);
+    scratch.step(0.02);
+    let obs = scratch.observe();
+    assert!(!obs.all_hold);
+    assert!(
+        obs.broken.iter().any(|id| id == "hydro_volume_conserved"),
+        "{:?}",
+        obs.broken
+    );
+    assert_eq!(obs.broken, scratch.broken());
+    assert_eq!(scratch.world().t, t0, "refuse is atomic: t stays");
+    assert_eq!(body(&scratch, "rover").position_m, p0);
+    assert!(scratch.message.contains("hydro_volume_conserved"));
+    assert!(live.all_hold(), "induced break stays on the clone");
 }
 
 #[test]

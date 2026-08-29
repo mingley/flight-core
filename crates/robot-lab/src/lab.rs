@@ -254,9 +254,22 @@ impl Lab {
         self.with_world(World::all_hold)
     }
 
+    /// Property ids that failed on the last `try_step` (vector order). Empty
+    /// when [`Self::all_hold`]. Same list as [`Observation::broken`].
+    pub fn broken(&self) -> Vec<String> {
+        self.with_world(|w| {
+            w.last_properties
+                .iter()
+                .filter(|p| !p.holds)
+                .map(|p| p.id.to_string())
+                .collect()
+        })
+    }
+
     pub fn step(&mut self, dt: f32) {
         if self.session.step(dt).is_err() {
-            self.message = "PROPERTY VIOLATION".into();
+            let ids = self.broken();
+            self.message = format!("PROPERTY VIOLATION: {}", ids.join(", "));
         }
     }
 

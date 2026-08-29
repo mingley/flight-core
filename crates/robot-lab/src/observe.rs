@@ -15,6 +15,11 @@ pub struct Observation {
     pub seed: u64,
     pub message: String,
     pub all_hold: bool,
+    /// Property ids that failed on the last `try_step`, in vector order.
+    /// Empty when [`Self::all_hold`]. Refuse is atomic: pose / hydro / `t`
+    /// stay at the previous legal snapshot; this list is the rejected
+    /// successor. Filled from `last_properties` — no extra step.
+    pub broken: Vec<String>,
     /// Wind / waves / current — always legal, no robot id required.
     pub env_cmds: Vec<LabCmd>,
     pub environment: EnvView,
@@ -137,6 +142,12 @@ impl Observation {
             seed: world.seed,
             message: lab.message.clone(),
             all_hold: world.all_hold(),
+            broken: world
+                .last_properties
+                .iter()
+                .filter(|p| !p.holds)
+                .map(|p| p.id.to_string())
+                .collect(),
             env_cmds: LabCmd::ENV.to_vec(),
             environment: EnvView::from_world(world),
             robots: world

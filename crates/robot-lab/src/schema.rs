@@ -169,12 +169,20 @@ mod tests {
         assert!(OBSERVATION_SCHEMA.contains("z-down"));
         assert!(OBSERVATION_SCHEMA.contains("hold_ned"));
         assert!(OBSERVATION_SCHEMA.contains("legal_cmds"));
+        assert!(OBSERVATION_SCHEMA.contains("not the plant phase string"));
+        assert!(OBSERVATION_SCHEMA.contains("Refuse is atomic"));
         let v: Value = serde_json::from_str(OBSERVATION_SCHEMA).unwrap();
         let required = v["required"].as_array().unwrap();
         assert!(!required.iter().any(|k| k == "hold_ned"));
+        assert!(required.iter().any(|k| k == "broken"));
         let robot_required = v["$defs"]["robot_view"]["required"].as_array().unwrap();
         assert!(!robot_required.iter().any(|k| k == "hold_ned"));
         assert!(robot_required.iter().any(|k| k == "legal_cmds"));
+        let aerial_req = v["$defs"]["aerial_machine"]["required"].as_array().unwrap();
+        assert!(aerial_req.iter().any(|k| k == "kind"));
+        assert!(aerial_req.iter().any(|k| k == "phase"));
+        assert!(aerial_req.iter().any(|k| k == "imu_healthy"));
+        assert!(aerial_req.iter().any(|k| k == "estimator_valid"));
     }
 
     #[test]

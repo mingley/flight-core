@@ -77,6 +77,8 @@ Goal: an agent can experiment and understand **without** reading kernel source, 
 
 ### A5. Richer observations for agents
 
+**Status: landed.** `Observation.broken` / `Lab::broken` list the property ids from the last `try_step` in vector order (first failed id first). Refuse is atomic: pose, hydro, and `t` stay; `last_properties` is the rejected vector. Observe does not step. Schema keeps `kind` vs `phase`; aerial `imu_healthy` / `estimator_valid` stay required.
+
 **Why:** plant truth is there; agents still reverse-engineer attach kind vs phase.
 
 **Acceptance:**
