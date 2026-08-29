@@ -1,0 +1,18 @@
+error[E0599]: the method `set_position` exists for struct `Vehicle<PreflightReady, B>`, but its trait bounds were not satisfied
+ --> tests/ui/ready_position.rs:5:21
+  |
+5 |     let _ = vehicle.set_position(p);
+  |                     ^^^^^^^^^^^^ method cannot be called on `Vehicle<PreflightReady, B>` due to unsatisfied trait bounds
+  |
+ ::: src/vehicle/typestate.rs
+  |
+  | state!(PreflightReady, "preflight_ready");
+  | ----------------------------------------- doesn't satisfy `_: OffboardControl`
+  |
+  = note: the following trait bounds were not satisfied:
+          `flight_core::vehicle::PreflightReady: OffboardControl`
+          `B: VehicleBackend`
+help: consider restricting the type parameter to satisfy the trait bound
+  |
+4 | fn boom<B>(mut vehicle: Vehicle<PreflightReady, B>, p: Position<Ned>) where B: VehicleBackend {
+  |                                                                       +++++++++++++++++++++++
