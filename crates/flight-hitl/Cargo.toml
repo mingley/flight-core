@@ -1,0 +1,16 @@
+[package]
+name = "flight-hitl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Hardware-in-the-loop rack: deadline-aware plant I/O over the verified world or UDP"
+
+[dependencies]
+flight-core = { workspace = true }
+flight-sim = { workspace = true }
+robot-world = { workspace = true }
+
+[[example]]
+name = "rack"

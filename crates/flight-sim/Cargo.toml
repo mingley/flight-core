@@ -9,9 +9,16 @@ description = "Deterministic vehicle simulation, IMU replay, and fuzzed sensors 
 
 [dependencies]
 flight-core = { workspace = true }
+robot-world = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 
 [[example]]
 name = "hover"
+
+[[example]]
+name = "fleet"
+
+[[example]]
+name = "fuzzed_world"

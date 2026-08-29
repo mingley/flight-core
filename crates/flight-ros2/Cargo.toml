@@ -5,7 +5,28 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "ROS 2 external-mode interface sketched in flight-core types (no rclrs dependency)"
+description = "PX4 ROS 2 external modes: CDR setpoints, verified WorldSession plant, optional rclrs Twist node"
+
+[features]
+default = []
+# Production rclrs 0.7. Requires sourced ROS 2 Jazzy (AMENT_PREFIX_PATH, ROS_DISTRO).
+rclrs = ["dep:rclrs", "dep:rosidl_runtime_rs"]
 
 [dependencies]
 flight-core = { workspace = true }
+flight-sim = { workspace = true }
+rclrs = { version = "0.7.0", optional = true }
+rosidl_runtime_rs = { version = "0.6.1", optional = true }
+
+[[example]]
+name = "offboard"
+required-features = ["rclrs"]
+
+[[example]]
+name = "plant"
+
+[[example]]
+name = "fleet_plant"
+
+[dev-dependencies]
+robot-lab = { workspace = true }

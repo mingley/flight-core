@@ -10,10 +10,15 @@ description = "PX4 external-mode / offboard backend for flight-core (MAVLink SIT
 [dependencies]
 flight-core = { workspace = true }
 flight-mavlink = { workspace = true }
+flight-sim = { workspace = true }
 mavlink = { workspace = true }
+robot-world = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
 
 [[example]]
 name = "sitl_hover"
+
+[[example]]
+name = "world_plant"
