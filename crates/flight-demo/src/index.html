@@ -241,7 +241,7 @@
           if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         });
         ctx.stroke();
-        const x = cx + r.e * scale, y = cy - n * scale;
+        const x = cx + r.e * scale, y = cy - r.n * scale;
         ctx.fillStyle = r.failsafe ? "#ff5c5c" : (COLORS[r.id] || "#e7f2f6");
         ctx.beginPath();
         ctx.arc(x, y, r.domain === "aerial" ? 5 : 6, 0, Math.PI * 2);
