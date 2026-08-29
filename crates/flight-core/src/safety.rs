@@ -11,10 +11,26 @@
 //! failsafe           ⇒  mission commands rejected
 //! ```
 
+#[cfg(not(creusot))]
 use core::fmt;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg(creusot)]
+use creusot_contracts::{ensures, logic, open};
+
+#[derive(Copy)]
+#[cfg_attr(not(creusot), derive(Clone, Debug, PartialEq, Eq, Hash))]
+#[cfg_attr(
+    creusot,
+    derive(
+        creusot_contracts::DeepModel,
+        creusot_contracts::Clone,
+        creusot_contracts::PartialEq
+    )
+)]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[repr(u8)]
 pub enum Phase {
     Disconnected = 0,
@@ -79,14 +95,27 @@ impl Phase {
     }
 }
 
+#[cfg(not(creusot))]
 impl fmt::Display for Phase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Copy)]
+#[cfg_attr(not(creusot), derive(Clone, Debug, PartialEq, Eq, Hash))]
+#[cfg_attr(
+    creusot,
+    derive(
+        creusot_contracts::DeepModel,
+        creusot_contracts::Clone,
+        creusot_contracts::PartialEq
+    )
+)]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct SafetyState {
     pub phase: Phase,
     pub armed: bool,
@@ -113,14 +142,27 @@ impl SafetyState {
     }
 }
 
+#[cfg(not(creusot))]
 impl Default for SafetyState {
     fn default() -> Self {
         Self::disconnected()
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Copy)]
+#[cfg_attr(not(creusot), derive(Clone, Debug, PartialEq, Eq, Hash))]
+#[cfg_attr(
+    creusot,
+    derive(
+        creusot_contracts::DeepModel,
+        creusot_contracts::Clone,
+        creusot_contracts::PartialEq
+    )
+)]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[repr(u8)]
 pub enum Event {
     Connect = 0,
@@ -208,8 +250,20 @@ impl Event {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Copy)]
+#[cfg_attr(not(creusot), derive(Clone, Debug, PartialEq, Eq))]
+#[cfg_attr(
+    creusot,
+    derive(
+        creusot_contracts::DeepModel,
+        creusot_contracts::Clone,
+        creusot_contracts::PartialEq
+    )
+)]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub enum Reject {
     IllegalPhase,
     ImuUnhealthy,
@@ -220,6 +274,7 @@ pub enum Reject {
     ActuatorsDisabled,
 }
 
+#[cfg(not(creusot))]
 impl fmt::Display for Reject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -271,6 +326,11 @@ pub fn check_invariants(s: &SafetyState) -> bool {
     true
 }
 
+#[cfg_attr(feature = "creusot", creusot_contracts::requires(inv_aerial(n)))]
+#[cfg_attr(
+    feature = "creusot",
+    creusot_contracts::ensures(step_ok(result) && failsafe_latched(result))
+)]
 fn enter_failsafe(mut n: SafetyState) -> SafetyState {
     n.failsafe = true;
     n.phase = Phase::Failsafe;
@@ -278,7 +338,20 @@ fn enter_failsafe(mut n: SafetyState) -> SafetyState {
     n
 }
 
+/// Whether a successful [`step`] successor is still a legal machine.
+pub fn step_preserves(n: SafetyState) -> bool {
+    check_invariants(&n) && (!n.actuators_enabled || n.armed)
+}
+
 /// Single transition function. No panics, no allocation.
+#[cfg_attr(feature = "creusot", creusot_contracts::requires(inv_aerial(s)))]
+#[cfg_attr(
+    feature = "creusot",
+    creusot_contracts::ensures(match result {
+        Ok(n) => step_ok(n),
+        Err(_) => true,
+    })
+)]
 pub fn step(s: SafetyState, e: Event) -> Result<SafetyState, Reject> {
     if s.failsafe {
         match e {
@@ -356,19 +429,23 @@ pub fn step(s: SafetyState, e: Event) -> Result<SafetyState, Reject> {
             n.imu_healthy = true;
         }
         Event::ImuUnhealthy => {
-            n.imu_healthy = false;
+            // Latch failsafe while `armed ∧ ¬failsafe ⇒ imu_healthy` still holds,
+            // then clear the bit. The successor is the same; the intermediate is legal.
             if n.armed {
                 n = enter_failsafe(n);
             }
+            n.imu_healthy = false;
         }
         Event::EstimatorValid => {
             n.estimator_valid = true;
         }
         Event::EstimatorInvalid => {
-            n.estimator_valid = false;
+            // Same order as ImuUnhealthy: latch first so the IMU/estimator
+            // invariant is never broken in an intermediate state.
             if n.armed {
                 n = enter_failsafe(n);
             }
+            n.estimator_valid = false;
         }
         Event::Arm => {
             if n.phase != Phase::Ready {
@@ -398,10 +475,11 @@ pub fn step(s: SafetyState, e: Event) -> Result<SafetyState, Reject> {
             }
         }
         Event::EnterOffboard => {
-            if !matches!(
-                n.phase,
-                Phase::Armed | Phase::Takeoff | Phase::Airborne | Phase::Landing
-            ) {
+            if n.phase != Phase::Armed
+                && n.phase != Phase::Takeoff
+                && n.phase != Phase::Airborne
+                && n.phase != Phase::Landing
+            {
                 return Err(Reject::IllegalPhase);
             }
             if !n.armed {
@@ -428,7 +506,8 @@ pub fn step(s: SafetyState, e: Event) -> Result<SafetyState, Reject> {
             n.actuators_enabled = true;
         }
         Event::DisableActuators => {
-            if matches!(n.phase, Phase::Takeoff | Phase::Airborne | Phase::Landing) {
+            if n.phase == Phase::Takeoff || n.phase == Phase::Airborne || n.phase == Phase::Landing
+            {
                 return Err(Reject::IllegalPhase);
             }
             n.actuators_enabled = false;
@@ -450,13 +529,13 @@ pub fn step(s: SafetyState, e: Event) -> Result<SafetyState, Reject> {
             n.phase = Phase::Airborne;
         }
         Event::Land => {
-            if !matches!(n.phase, Phase::Airborne | Phase::Takeoff) {
+            if n.phase != Phase::Airborne && n.phase != Phase::Takeoff {
                 return Err(Reject::IllegalPhase);
             }
             n.phase = Phase::Landing;
         }
         Event::Touchdown => {
-            if !matches!(n.phase, Phase::Landing | Phase::Failsafe) {
+            if n.phase != Phase::Landing && n.phase != Phase::Failsafe {
                 return Err(Reject::IllegalPhase);
             }
             n.actuators_enabled = false;
@@ -494,6 +573,7 @@ pub fn step(s: SafetyState, e: Event) -> Result<SafetyState, Reject> {
         }
     }
 
+    #[cfg(not(creusot))]
     debug_assert!(
         check_invariants(&n),
         "safety invariant broken after {e:?}: {n:?}"
@@ -501,6 +581,7 @@ pub fn step(s: SafetyState, e: Event) -> Result<SafetyState, Reject> {
     Ok(n)
 }
 
+#[cfg(not(creusot))]
 pub fn step_all(mut s: SafetyState, events: &[Event]) -> Result<SafetyState, Reject> {
     for &e in events {
         s = step(s, e)?;
@@ -511,6 +592,7 @@ pub fn step_all(mut s: SafetyState, events: &[Event]) -> Result<SafetyState, Rej
 /// Pack a state into 16 bits for exhaustive enumeration / Kani `any` wrappers.
 ///
 /// Bit layout: phase[3:0] armed actuators imu estimator hb offboard failsafe
+#[cfg(not(creusot))]
 pub fn pack(s: &SafetyState) -> u16 {
     let mut v = s.phase as u16;
     if s.armed {
@@ -537,6 +619,7 @@ pub fn pack(s: &SafetyState) -> u16 {
     v
 }
 
+#[cfg(not(creusot))]
 pub fn unpack(v: u16) -> Option<SafetyState> {
     let phase = Phase::from_u8((v & 0xF) as u8)?;
     Some(SafetyState {
@@ -549,6 +632,47 @@ pub fn unpack(v: u16) -> Option<SafetyState> {
         offboard: v & (1 << 9) != 0,
         failsafe: v & (1 << 10) != 0,
     })
+}
+
+#[cfg(creusot)]
+use creusot_contracts::predicate;
+
+#[cfg(creusot)]
+#[predicate]
+fn failsafe_latched(s: SafetyState) -> bool {
+    (s.failsafe && s.phase == Phase::Failsafe && s.offboard == false)
+}
+
+#[cfg(creusot)]
+#[predicate]
+fn inv_aerial(s: SafetyState) -> bool {
+    (s.actuators_enabled && s.armed == false) == false
+        && (s.offboard && s.armed == false) == false
+        && (s.phase == Phase::Failsafe && s.failsafe == false) == false
+        && (s.failsafe && (s.phase == Phase::Failsafe || s.phase == Phase::Recovery) == false)
+            == false
+        && (s.phase == Phase::Disconnected
+            && (s.armed || s.actuators_enabled || s.failsafe || s.offboard))
+            == false
+        && ((s.phase == Phase::Armed
+            || s.phase == Phase::Takeoff
+            || s.phase == Phase::Airborne
+            || s.phase == Phase::Landing)
+            && s.armed == false)
+            == false
+        && ((s.phase == Phase::Takeoff || s.phase == Phase::Airborne || s.phase == Phase::Landing)
+            && s.actuators_enabled == false)
+            == false
+        && (s.armed
+            && s.failsafe == false
+            && (s.imu_healthy == false || s.estimator_valid == false))
+            == false
+}
+
+#[cfg(creusot)]
+#[predicate]
+fn step_ok(n: SafetyState) -> bool {
+    inv_aerial(n) && (n.actuators_enabled == false || n.armed)
 }
 
 #[cfg(test)]
@@ -706,5 +830,218 @@ mod tests {
             }
         }
         assert!(visited > 10);
+    }
+
+    #[test]
+    fn land_only_from_flight_touchdown_returns_ready() {
+        for bits in 0u16..=0x07FF {
+            let Some(s) = unpack(bits) else {
+                continue;
+            };
+            if !check_invariants(&s) {
+                continue;
+            }
+            match step(s, Event::Land) {
+                Ok(n) => {
+                    assert!(!s.failsafe, "{s:?}");
+                    assert!(matches!(s.phase, Phase::Takeoff | Phase::Airborne), "{s:?}");
+                    assert_eq!(n.phase, Phase::Landing);
+                    assert!(n.armed && n.actuators_enabled);
+                    assert!(check_invariants(&n));
+                }
+                Err(_) => {
+                    assert!(
+                        s.failsafe || !matches!(s.phase, Phase::Takeoff | Phase::Airborne),
+                        "{s:?}"
+                    );
+                }
+            }
+            match step(s, Event::Touchdown) {
+                Ok(n) => {
+                    assert!(matches!(s.phase, Phase::Landing | Phase::Failsafe), "{s:?}");
+                    assert_eq!(n.phase, Phase::Ready);
+                    assert!(!n.armed && !n.actuators_enabled && !n.offboard && !n.failsafe);
+                    assert!(check_invariants(&n));
+                }
+                Err(_) => {
+                    assert!(
+                        !matches!(s.phase, Phase::Landing | Phase::Failsafe),
+                        "{s:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn takeoff_only_from_armed_reached_altitude_only_from_takeoff() {
+        for bits in 0u16..=0x07FF {
+            let Some(s) = unpack(bits) else {
+                continue;
+            };
+            if !check_invariants(&s) {
+                continue;
+            }
+            match step(s, Event::Takeoff) {
+                Ok(n) => {
+                    assert!(!s.failsafe, "{s:?}");
+                    assert_eq!(s.phase, Phase::Armed, "{s:?}");
+                    assert!(s.armed, "{s:?}");
+                    assert_eq!(n.phase, Phase::Takeoff);
+                    assert!(n.armed && n.actuators_enabled);
+                    assert!(check_invariants(&n));
+                }
+                Err(_) => {
+                    assert!(s.failsafe || s.phase != Phase::Armed || !s.armed, "{s:?}");
+                }
+            }
+            match step(s, Event::ReachedAltitude) {
+                Ok(n) => {
+                    assert_eq!(s.phase, Phase::Takeoff, "{s:?}");
+                    assert_eq!(n.phase, Phase::Airborne);
+                    assert!(check_invariants(&n));
+                }
+                Err(_) => {
+                    assert_ne!(s.phase, Phase::Takeoff, "{s:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn failsafe_always_returns_failsafe() {
+        for bits in 0u16..=0x07FF {
+            let Some(s) = unpack(bits) else {
+                continue;
+            };
+            if !check_invariants(&s) {
+                continue;
+            }
+            let n = step(s, Event::TriggerFailsafe).unwrap();
+            assert_eq!(n.phase, Phase::Failsafe);
+            assert!(n.failsafe && !n.offboard);
+            assert!(check_invariants(&n));
+        }
+    }
+
+    #[test]
+    fn recover_only_from_recovery_returns_ready() {
+        for bits in 0u16..=0x07FF {
+            let Some(s) = unpack(bits) else {
+                continue;
+            };
+            if !check_invariants(&s) {
+                continue;
+            }
+            match step(s, Event::Recover) {
+                Ok(n) => {
+                    assert_eq!(s.phase, Phase::Recovery, "{s:?}");
+                    assert!(!s.armed, "{s:?}");
+                    assert_eq!(n.phase, Phase::Ready);
+                    assert!(!n.failsafe);
+                    assert!(check_invariants(&n));
+                }
+                Err(_) => {
+                    assert!(s.phase != Phase::Recovery || s.armed, "{s:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn enter_offboard_only_from_flight_phases() {
+        for bits in 0u16..=0x07FF {
+            let Some(s) = unpack(bits) else {
+                continue;
+            };
+            if !check_invariants(&s) {
+                continue;
+            }
+            match step(s, Event::EnterOffboard) {
+                Ok(n) => {
+                    assert!(!s.failsafe, "{s:?}");
+                    assert!(
+                        matches!(
+                            s.phase,
+                            Phase::Armed | Phase::Takeoff | Phase::Airborne | Phase::Landing
+                        ),
+                        "{s:?}"
+                    );
+                    assert!(s.armed && s.offboard_heartbeat_fresh, "{s:?}");
+                    assert!(n.offboard);
+                    assert_eq!(n.phase, s.phase);
+                    assert!(check_invariants(&n));
+                }
+                Err(_) => {
+                    assert!(
+                        s.failsafe
+                            || !matches!(
+                                s.phase,
+                                Phase::Armed | Phase::Takeoff | Phase::Airborne | Phase::Landing
+                            )
+                            || !s.armed
+                            || !s.offboard_heartbeat_fresh,
+                        "{s:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn disarm_unarms_and_returns_ready_or_recovery() {
+        for bits in 0u16..=0x07FF {
+            let Some(s) = unpack(bits) else {
+                continue;
+            };
+            if !check_invariants(&s) {
+                continue;
+            }
+            match step(s, Event::Disarm) {
+                Ok(n) => {
+                    assert_ne!(s.phase, Phase::Disconnected, "{s:?}");
+                    assert!(!n.armed && !n.actuators_enabled && !n.offboard);
+                    if s.failsafe {
+                        assert_eq!(n.phase, Phase::Recovery);
+                    } else {
+                        assert_eq!(n.phase, Phase::Ready);
+                        assert!(!n.failsafe);
+                    }
+                    assert!(check_invariants(&n));
+                }
+                Err(_) => {
+                    assert_eq!(s.phase, Phase::Disconnected, "{s:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mission_command_requires_armed_actuators() {
+        for bits in 0u16..=0x07FF {
+            let Some(s) = unpack(bits) else {
+                continue;
+            };
+            if !check_invariants(&s) {
+                continue;
+            }
+            match step(s, Event::MissionCommand) {
+                Ok(n) => {
+                    assert!(!s.failsafe && s.armed && s.actuators_enabled, "{s:?}");
+                    assert!(!s.offboard || s.offboard_heartbeat_fresh, "{s:?}");
+                    assert_eq!(n, s);
+                    assert!(check_invariants(&n));
+                }
+                Err(_) => {
+                    assert!(
+                        s.failsafe
+                            || !s.armed
+                            || !s.actuators_enabled
+                            || (s.offboard && !s.offboard_heartbeat_fresh),
+                        "{s:?}"
+                    );
+                }
+            }
+        }
     }
 }
