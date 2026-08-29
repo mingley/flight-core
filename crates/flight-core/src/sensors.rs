@@ -11,7 +11,10 @@ use crate::vector::{Acceleration, AngularVelocity};
 use core::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub enum SensorHealth {
     Ok,
     Degraded,
@@ -27,7 +30,10 @@ impl SensorHealth {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct ImuCovariance {
     /// Diagonal of accel covariance, (m/s²)².
     pub accel_var: [f32; 3],
@@ -45,7 +51,10 @@ impl ImuCovariance {
 }
 
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct ImuSample<F: Frame> {
     pub timestamp: MonotonicInstant,
     pub accel: Acceleration<F>,
@@ -82,6 +91,7 @@ pub enum SensorError {
     },
 }
 
+#[cfg(not(creusot))]
 impl fmt::Display for SensorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -107,7 +117,10 @@ pub trait Imu {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct ActuatorCommand {
     /// Normalized thrust in `[0, 1]` for up to 8 motors.
     pub motors: [u16; 8],
@@ -133,6 +146,7 @@ pub enum ActuatorError {
     Saturating,
 }
 
+#[cfg(not(creusot))]
 impl fmt::Display for ActuatorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

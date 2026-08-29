@@ -2,7 +2,8 @@
 
 use crate::frames::{Body, Enu, Frame, Frd, Ned};
 use crate::units::{
-    DegreePerSecond, Meter, MeterPerSecond, MeterPerSecondSquared, RadianPerSecond, Unit,
+    DegreePerSecond, Meter, MeterPerSecond, MeterPerSecondSquared, Newton, NewtonMeter,
+    RadianPerSecond, Unit,
 };
 use core::fmt;
 use core::marker::PhantomData;
@@ -26,7 +27,7 @@ impl<U, F> PartialEq for Vector3<U, F> {
     }
 }
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "serde", not(creusot)))]
 impl<U, F> serde::Serialize for Vector3<U, F> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -38,7 +39,7 @@ impl<U, F> serde::Serialize for Vector3<U, F> {
     }
 }
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "serde", not(creusot)))]
 impl<'de, U, F> serde::Deserialize<'de> for Vector3<U, F> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(serde::Deserialize)]
@@ -47,7 +48,7 @@ impl<'de, U, F> serde::Deserialize<'de> for Vector3<U, F> {
             y: f32,
             z: f32,
         }
-        let raw = Raw::deserialize(deserializer)?;
+        let raw = Raw.deserialize(deserializer)?;
         Ok(Self::new(raw.x, raw.y, raw.z))
     }
 }
@@ -107,6 +108,7 @@ impl<U, F> Vector3<U, F> {
     }
 }
 
+#[cfg(not(creusot))]
 impl<U: Unit, F: Frame> fmt::Display for Vector3<U, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -160,6 +162,8 @@ pub type Position<F> = Vector3<Meter, F>;
 pub type Velocity<F> = Vector3<MeterPerSecond, F>;
 pub type Acceleration<F> = Vector3<MeterPerSecondSquared, F>;
 pub type AngularVelocity<U, F> = Vector3<U, F>;
+pub type Force<F> = Vector3<Newton, F>;
+pub type Torque<F> = Vector3<NewtonMeter, F>;
 
 impl Position<Ned> {
     pub const fn ned(north: f32, east: f32, down: f32) -> Self {
