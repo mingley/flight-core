@@ -5,9 +5,10 @@
 //! ```
 //!
 //! Open `inland.mcap` in Foxglove (File → Open local file). Topics
-//! `/lab/observation` and `/lab/action` are JSON with `jsonschema` encoding.
-//! Observation fields include `hold_ned`, `legal_cmds`, aerial/ground/marine
-//! `kind`, `sphere_hits`, and the property vector.
+//! `/lab/observation` and `/lab/action` are JSON with `jsonschema` encoding
+//! from `crates/robot-lab/schemas/`. Observation fields include `hold_ned`,
+//! `legal_cmds`, aerial/ground/marine `kind`, `sphere_hits`, and the property
+//! vector. NED z-down is documented on the schema.
 
 use robot_lab::{Lab, McapBag};
 

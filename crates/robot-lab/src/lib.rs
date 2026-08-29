@@ -42,6 +42,7 @@ mod apply;
 mod cmd;
 mod lab;
 mod observe;
+mod schema;
 mod script;
 
 pub use bag::{action_json, looks_like_mcap, observation_json, schema_json, McapBag};
@@ -65,6 +66,7 @@ pub use research::{
     TypedStationResume, TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
     TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
 };
+pub use schema::{validate_instance, AGENT_ACTION_SCHEMA, OBSERVATION_SCHEMA, TIMED_ACTION_SCHEMA};
 
 #[cfg(test)]
 mod tests;

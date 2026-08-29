@@ -1,0 +1,355 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "lab.Observation",
+  "description": "Clear-state snapshot of a verified lab world. Robot pose and velocity fields n,e,d and vn,ve,vd are NED metres (and m/s), z-down.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "t",
+    "scenario",
+    "seed",
+    "message",
+    "all_hold",
+    "env_cmds",
+    "environment",
+    "robots",
+    "properties",
+    "sphere_hits"
+  ],
+  "properties": {
+    "t": { "type": "number", "description": "World time in seconds." },
+    "scenario": { "type": "string" },
+    "seed": { "type": "integer" },
+    "message": { "type": "string" },
+    "all_hold": { "type": "boolean" },
+    "env_cmds": {
+      "type": "array",
+      "description": "Environment LabCmd values that need no robot id.",
+      "items": { "$ref": "#/$defs/lab_cmd" }
+    },
+    "environment": { "$ref": "#/$defs/env_view" },
+    "robots": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/robot_view" }
+    },
+    "properties": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/property" }
+    },
+    "sphere_hits": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sphere_hit" }
+    }
+  },
+  "$defs": {
+    "lab_cmd": {
+      "type": "string",
+      "description": "Closed LabCmd set. Snake_case JSON names; unknown names fail deserialize.",
+      "enum": [
+        "arm",
+        "disarm",
+        "offboard",
+        "enable_actuators",
+        "takeoff",
+        "airborne",
+        "land",
+        "touchdown",
+        "failsafe",
+        "velocity",
+        "position",
+        "hold",
+        "drive",
+        "thrust",
+        "release",
+        "halt",
+        "park",
+        "estop",
+        "clear",
+        "undock",
+        "dock",
+        "station",
+        "resume",
+        "recover",
+        "set_charge",
+        "set_wind",
+        "set_waves",
+        "set_current"
+      ]
+    },
+    "ned3": {
+      "type": "array",
+      "description": "NED metres, z-down.",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "env_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wind_ned",
+        "current_ned",
+        "waterline_z",
+        "seabed_z",
+        "shoreline_n",
+        "wave_amp",
+        "wave_phase",
+        "hydro_nx",
+        "hydro_ny",
+        "hydro_dx",
+        "hydro_origin_n",
+        "hydro_origin_e",
+        "hydro_volume",
+        "hydro_volume0",
+        "hydro_gpu",
+        "hydro_h"
+      ],
+      "properties": {
+        "wind_ned": { "$ref": "#/$defs/ned3" },
+        "current_ned": { "$ref": "#/$defs/ned3" },
+        "waterline_z": { "type": "number" },
+        "seabed_z": { "type": "number" },
+        "shoreline_n": { "type": "number" },
+        "wave_amp": { "type": "number" },
+        "wave_phase": { "type": "number" },
+        "hydro_nx": { "type": "integer" },
+        "hydro_ny": { "type": "integer" },
+        "hydro_dx": { "type": "number" },
+        "hydro_origin_n": { "type": "number" },
+        "hydro_origin_e": { "type": "number" },
+        "hydro_volume": { "type": "number" },
+        "hydro_volume0": { "type": "number" },
+        "hydro_gpu": { "type": "boolean" },
+        "hydro_h": { "type": "array", "items": { "type": "number" } }
+      }
+    },
+    "property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "holds", "detail"],
+      "properties": {
+        "id": { "type": "string" },
+        "holds": { "type": "boolean" },
+        "detail": { "type": "string" }
+      }
+    },
+    "sphere_hit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["a", "b", "jn", "jt"],
+      "properties": {
+        "a": { "type": "string" },
+        "b": { "type": "string" },
+        "jn": { "type": "number" },
+        "jt": { "type": "number" }
+      }
+    },
+    "aerial_machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "kind",
+        "armed",
+        "actuators_enabled",
+        "offboard",
+        "failsafe",
+        "imu_healthy",
+        "estimator_valid"
+      ],
+      "properties": {
+        "phase": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "disconnected",
+            "disarmed",
+            "preflight_ready",
+            "armed",
+            "offboard",
+            "takeoff",
+            "airborne",
+            "landing",
+            "failsafe",
+            "recovery"
+          ]
+        },
+        "armed": { "type": "boolean" },
+        "actuators_enabled": { "type": "boolean" },
+        "offboard": { "type": "boolean" },
+        "failsafe": { "type": "boolean" },
+        "imu_healthy": { "type": "boolean" },
+        "estimator_valid": { "type": "boolean" }
+      }
+    },
+    "ground_machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "kind", "drive_enabled", "estop"],
+      "properties": {
+        "phase": { "type": "string" },
+        "kind": { "type": "string", "enum": ["parked", "moving", "estopped"] },
+        "drive_enabled": { "type": "boolean" },
+        "estop": { "type": "boolean" }
+      }
+    },
+    "marine_machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "kind", "thrust_enabled", "failsafe"],
+      "properties": {
+        "phase": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["docked", "underway", "station_keep", "failsafe"]
+        },
+        "thrust_enabled": { "type": "boolean" },
+        "failsafe": { "type": "boolean" }
+      }
+    },
+    "robot_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "domain",
+        "phase",
+        "medium",
+        "support",
+        "terrain_contact",
+        "contact_jn",
+        "sphere_contact",
+        "sphere_jn",
+        "sphere_jt",
+        "sphere_partners",
+        "n",
+        "e",
+        "d",
+        "vn",
+        "ve",
+        "vd",
+        "alt",
+        "yaw",
+        "armed",
+        "actuators",
+        "failsafe",
+        "ke",
+        "pe",
+        "drag_power",
+        "charge_j",
+        "capacity_j",
+        "angular_ke",
+        "radius_m",
+        "propulsion_live",
+        "legal_cmds"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "domain": { "type": "string" },
+        "phase": { "type": "string" },
+        "medium": { "type": "string" },
+        "support": { "type": "string" },
+        "terrain_contact": { "type": "boolean" },
+        "contact_jn": { "type": "number" },
+        "sphere_contact": { "type": "boolean" },
+        "sphere_jn": { "type": "number" },
+        "sphere_jt": { "type": "number" },
+        "sphere_partners": { "type": "array", "items": { "type": "string" } },
+        "n": { "type": "number", "description": "North position, metres, NED z-down." },
+        "e": { "type": "number" },
+        "d": { "type": "number", "description": "Down position, metres, NED z-down." },
+        "vn": { "type": "number" },
+        "ve": { "type": "number" },
+        "vd": { "type": "number", "description": "Down velocity, metres per second, NED z-down." },
+        "alt": { "type": "number" },
+        "yaw": { "type": "number" },
+        "armed": { "type": "boolean" },
+        "actuators": { "type": "boolean" },
+        "failsafe": { "type": "boolean" },
+        "ke": { "type": "number" },
+        "pe": { "type": "number" },
+        "drag_power": { "type": "number" },
+        "charge_j": { "type": "number" },
+        "capacity_j": { "type": "number" },
+        "angular_ke": { "type": "number" },
+        "radius_m": { "type": "number" },
+        "propulsion_live": { "type": "boolean" },
+        "legal_cmds": {
+          "type": "array",
+          "description": "Closed LabCmd strings the live machine would accept on this body.",
+          "items": { "$ref": "#/$defs/lab_cmd" }
+        },
+        "hold_ned": {
+          "description": "Optional NED pose target in metres, z-down. Omitted when idle, after failsafe, or after a velocity command.",
+          "type": ["array", "null"],
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "aerial": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": [
+            "phase",
+            "kind",
+            "armed",
+            "actuators_enabled",
+            "offboard",
+            "failsafe",
+            "imu_healthy",
+            "estimator_valid"
+          ],
+          "properties": {
+            "phase": { "type": "string" },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "disconnected",
+                "disarmed",
+                "preflight_ready",
+                "armed",
+                "offboard",
+                "takeoff",
+                "airborne",
+                "landing",
+                "failsafe",
+                "recovery"
+              ]
+            },
+            "armed": { "type": "boolean" },
+            "actuators_enabled": { "type": "boolean" },
+            "offboard": { "type": "boolean" },
+            "failsafe": { "type": "boolean" },
+            "imu_healthy": { "type": "boolean" },
+            "estimator_valid": { "type": "boolean" }
+          }
+        },
+        "ground": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["phase", "kind", "drive_enabled", "estop"],
+          "properties": {
+            "phase": { "type": "string" },
+            "kind": { "type": "string", "enum": ["parked", "moving", "estopped"] },
+            "drive_enabled": { "type": "boolean" },
+            "estop": { "type": "boolean" }
+          }
+        },
+        "marine": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["phase", "kind", "thrust_enabled", "failsafe"],
+          "properties": {
+            "phase": { "type": "string" },
+            "kind": {
+              "type": "string",
+              "enum": ["docked", "underway", "station_keep", "failsafe"]
+            },
+            "thrust_enabled": { "type": "boolean" },
+            "failsafe": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

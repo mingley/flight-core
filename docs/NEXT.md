@@ -38,6 +38,8 @@ Goal: an agent can experiment and understand **without** reading kernel source, 
 
 ### A2. JSON Schema for observe / act
 
+**Status: landed.** Documents in `crates/robot-lab/schemas/` (`observation.json`, `agent_action.json`, `timed_action.json`) are locked to `LabCmd::ALL`. Crate tests validate coastal observations, timed actions, and `examples/bag.rs`-shaped MCAP output. `hold_ned` is optional; `legal_cmds` / `cmd` are closed enums; NED z-down is in the schema descriptions.
+
 **Why:** bags and HTTP are implied contracts. Agents and Foxglove need an explicit one.
 
 **Acceptance:**
@@ -222,13 +224,12 @@ Only after A is usable and B1–B2 have a written status (landed or explicitly d
 
 ## Suggested implementation order
 
-1. **A1 → A2 → A4** (tools, schema, rejects) — agents become safe and legible.
-2. **A3 → A5 → A6** (runner, richer observe, local tools).
-3. **B1 / B2** (ground hold, marine DP) — domain-complete control.
-4. **B3 / B4 / B5** (estimation bit, planning, coordination).
-5. **C1–C3** (proofs, traces, scenarios) can overlap A3.
-6. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
-7. **D\*** morphologies last.
+1. **A3 → A4 → A5 → A6** (runner, structured rejects, richer observe, local tools).
+2. **B1 / B2** (ground hold, marine DP) — domain-complete control.
+3. **B3 / B4 / B5** (estimation bit, planning, coordination).
+4. **C1–C3** (proofs, traces, scenarios) can overlap A3.
+5. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
+6. **D\*** morphologies last.
 
 Items in remaining-spec §2 are constraints on **every** step, not a phase.
 

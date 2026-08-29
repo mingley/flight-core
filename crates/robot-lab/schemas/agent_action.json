@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "lab.AgentAction",
+  "description": "JSON act from an agent or the demo console. vn, ve, vd are NED metres per second, z-down. cmd is a closed LabCmd string.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cmd"],
+  "properties": {
+    "robot": { "type": "string", "description": "Body id. Empty for environment commands." },
+    "cmd": {
+      "type": "string",
+      "description": "Closed LabCmd set. Snake_case JSON names; unknown names fail deserialize.",
+      "enum": [
+        "arm",
+        "disarm",
+        "offboard",
+        "enable_actuators",
+        "takeoff",
+        "airborne",
+        "land",
+        "touchdown",
+        "failsafe",
+        "velocity",
+        "position",
+        "hold",
+        "drive",
+        "thrust",
+        "release",
+        "halt",
+        "park",
+        "estop",
+        "clear",
+        "undock",
+        "dock",
+        "station",
+        "resume",
+        "recover",
+        "set_charge",
+        "set_wind",
+        "set_waves",
+        "set_current"
+      ]
+    },
+    "vn": { "type": "number", "description": "North velocity or NED n, metres (per second), z-down." },
+    "ve": { "type": "number" },
+    "vd": { "type": "number", "description": "Down component, metres (per second), NED z-down." },
+    "yaw_rate": { "type": "number" }
+  }
+}

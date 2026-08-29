@@ -5,7 +5,7 @@
 //! writer is a small, dependency-free subset of the MCAP spec: Header, Schema,
 //! Channel, Message, DataEnd, Footer.
 
-use crate::{Observation, TimedAction};
+use crate::{Observation, TimedAction, OBSERVATION_SCHEMA, TIMED_ACTION_SCHEMA};
 use serde::Serialize;
 use std::io::{self, Write};
 
@@ -22,9 +22,6 @@ const CH_ACT: u16 = 2;
 const SCHEMA_OBS: u16 = 1;
 const SCHEMA_ACT: u16 = 2;
 
-const OBS_SCHEMA: &str = r#"{"type":"object","title":"lab.Observation","required":["t","scenario","all_hold","robots","properties","sphere_hits"],"properties":{"t":{"type":"number"},"scenario":{"type":"string"},"seed":{"type":"integer"},"message":{"type":"string"},"all_hold":{"type":"boolean"},"properties":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"holds":{"type":"boolean"},"detail":{"type":"string"}}}},"sphere_hits":{"type":"array","items":{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"string"},"jn":{"type":"number"},"jt":{"type":"number"}}}},"robots":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"legal_cmds":{"type":"array","items":{"type":"string"}},"hold_ned":{"type":["array","null"],"items":{"type":"number"},"minItems":3,"maxItems":3},"aerial":{"type":["object","null"],"properties":{"kind":{"type":"string"}}},"ground":{"type":["object","null"],"properties":{"kind":{"type":"string"}}},"marine":{"type":["object","null"],"properties":{"kind":{"type":"string"}}}}}}}}"#;
-const ACT_SCHEMA: &str = r#"{"type":"object","title":"lab.TimedAction","required":["t","cmd"],"properties":{"t":{"type":"number"},"robot":{"type":"string"},"cmd":{"type":"string"},"vn":{"type":"number"},"ve":{"type":"number"},"vd":{"type":"number"},"yaw_rate":{"type":"number"}}}"#;
-
 /// Streaming MCAP bag. Call [`McapBag::finish`] after the last message.
 pub struct McapBag<W: Write> {
     inner: W,
@@ -40,12 +37,16 @@ impl<W: Write> McapBag<W> {
         write_record(
             &mut inner,
             OP_SCHEMA,
-            &schema_payload(SCHEMA_OBS, "lab.Observation", OBS_SCHEMA.as_bytes()),
+            &schema_payload(SCHEMA_OBS, "lab.Observation", OBSERVATION_SCHEMA.as_bytes()),
         )?;
         write_record(
             &mut inner,
             OP_SCHEMA,
-            &schema_payload(SCHEMA_ACT, "lab.TimedAction", ACT_SCHEMA.as_bytes()),
+            &schema_payload(
+                SCHEMA_ACT,
+                "lab.TimedAction",
+                TIMED_ACTION_SCHEMA.as_bytes(),
+            ),
         )?;
         write_record(
             &mut inner,
