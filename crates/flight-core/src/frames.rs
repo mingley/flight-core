@@ -20,7 +20,7 @@ macro_rules! define_frame {
     ($(#[$attr:meta])* $name:ident, $label:literal) => {
         $(#[$attr])*
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[cfg_attr(all(feature = "serde", not(creusot)), derive(serde::Serialize, serde::Deserialize))]
         pub struct $name;
         impl Frame for $name {
             const NAME: &'static str = $label;

@@ -13,9 +13,16 @@ categories = ["science::robotics", "embedded", "no-std"]
 default = ["std"]
 std = ["serde"]
 serde = ["dep:serde"]
+# Official Creusot `#[requires]` / `#[ensures]` on the kernel. Dummy macros on
+# rustc; `cargo creusot` discharges them. Optional: LGPL-2.1-or-later.
+creusot = ["dep:creusot-contracts"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
+creusot-contracts = { version = "0.5.0", optional = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(creusot)'] }
 
 [dev-dependencies]
 trybuild = { workspace = true }

@@ -8,6 +8,9 @@ members = [
     "crates/flight-ros2",
     "crates/flight-verify",
     "crates/flight-demo",
+    "crates/flight-hitl",
+    "crates/robot-world",
+    "crates/robot-lab",
 ]
 
 [workspace.package]
@@ -24,6 +27,9 @@ flight-sim = { path = "crates/flight-sim", version = "0.1.0" }
 flight-mavlink = { path = "crates/flight-mavlink", version = "0.1.0" }
 flight-px4 = { path = "crates/flight-px4", version = "0.1.0" }
 flight-ros2 = { path = "crates/flight-ros2", version = "0.1.0" }
+flight-hitl = { path = "crates/flight-hitl", version = "0.1.0" }
+robot-world = { path = "crates/robot-world", version = "0.1.0" }
+robot-lab = { path = "crates/robot-lab", version = "0.1.0" }
 tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "net", "time", "sync", "io-util"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -31,3 +37,6 @@ mavlink = { version = "0.17", default-features = false, features = ["std", "udp"
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors"] }
 trybuild = "=1.0.104"
+wgpu = "23.0.1"
+pollster = "0.4"
+bytemuck = { version = "1.21", features = ["derive"] }
