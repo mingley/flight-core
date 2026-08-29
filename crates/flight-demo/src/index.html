@@ -3,18 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>flight-core · mission console</title>
+  <title>robot-lab · verified coastal world</title>
   <style>
     :root {
-      --bg: #07080b;
-      --panel: #10141c;
-      --ink: #e8edf5;
-      --muted: #8b97ab;
-      --line: #1d2633;
+      --bg: #071016;
+      --panel: #0e1a22;
+      --ink: #e7f2f6;
+      --muted: #7f98a6;
+      --line: #1c333e;
       --ok: #3ee0a0;
       --warn: #f5c518;
       --bad: #ff5c5c;
       --ice: #7ad7ff;
+      --water: #12384a;
+      --land: #1a2e22;
       --mono: "IBM Plex Mono", "ui-monospace", "SFMono-Regular", Menlo, monospace;
       --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
     }
@@ -22,21 +24,23 @@
     html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
     body { min-height: 100vh; }
     header {
-      display: flex; justify-content: space-between; align-items: flex-end;
-      padding: 20px 24px 12px; border-bottom: 1px solid var(--line);
+      display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
+      padding: 18px 22px 12px; border-bottom: 1px solid var(--line);
     }
-    .brand { font-family: var(--mono); letter-spacing: 0.14em; font-size: 13px; color: var(--ice); }
+    .brand { font-family: var(--mono); letter-spacing: 0.14em; font-size: 12px; color: var(--ice); }
     .brand span { color: var(--muted); letter-spacing: 0.08em; }
     h1 { margin: 4px 0 0; font-size: 22px; font-weight: 550; }
     .meta { text-align: right; font-family: var(--mono); font-size: 12px; color: var(--muted); }
     .grid {
       display: grid;
-      grid-template-columns: 220px 1fr 280px;
-      gap: 16px;
-      padding: 16px 24px 24px;
+      grid-template-columns: 260px 1fr 300px;
+      gap: 14px;
+      padding: 14px 22px 18px;
     }
-    @media (max-width: 980px) {
+    @media (max-width: 1040px) {
       .grid { grid-template-columns: 1fr; }
+      header { flex-direction: column; align-items: flex-start; }
+      .meta { text-align: left; }
     }
     .panel {
       background: var(--panel);
@@ -45,187 +49,399 @@
       padding: 14px;
     }
     .panel h2 {
-      margin: 0 0 12px;
+      margin: 0 0 10px;
       font-size: 11px;
       letter-spacing: 0.16em;
       text-transform: uppercase;
       color: var(--muted);
       font-weight: 600;
     }
-    .phase {
-      list-style: none; margin: 0; padding: 0;
-      font-family: var(--mono); font-size: 12px;
-    }
-    .phase li {
-      padding: 6px 8px;
-      border-left: 2px solid var(--line);
-      color: var(--muted);
-    }
-    .phase li.on {
-      border-left-color: var(--ok);
-      color: var(--ink);
-      background: #13251c;
-    }
-    .phase li.fail {
-      border-left-color: var(--bad);
-      color: var(--bad);
-      background: #2a1212;
-    }
-    canvas { width: 100%; height: 360px; background: #0a0d13; border-radius: 8px; display: block; }
-    .readouts {
+    canvas { width: 100%; height: 380px; background: #071018; border-radius: 8px; display: block; }
+    .safety, .returns, .maneuvers {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
-      margin-top: 12px;
+      margin-top: 10px;
+    }
+    .safety button, .returns button, .maneuvers button { letter-spacing: 0.04em; padding: 7px; font-size: 10px; }
+    .safety button[hidden], .returns button[hidden], .maneuvers button[hidden] { display: none; }
+    .robots { display: grid; gap: 8px; }
+    .robot {
+      background: #071018; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
       font-family: var(--mono); font-size: 12px;
     }
-    .kv { background: #0a0d13; padding: 8px 10px; border-radius: 6px; }
-    .kv b { display: block; color: var(--muted); font-weight: 400; font-size: 10px; letter-spacing: 0.12em; }
-    .flags { display: flex; flex-wrap: wrap; gap: 6px; }
-    .flag {
+    .robot .id { color: var(--ice); letter-spacing: 0.08em; }
+    .robot .row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; color: var(--muted); margin-top: 4px; }
+    .robot .bits { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-start; }
+    .bit {
+      display: inline-block; padding: 0 5px; border-radius: 4px;
+      border: 1px solid var(--line); font-size: 10px; letter-spacing: 0.06em;
+      white-space: nowrap;
+    }
+    .bit.on { color: var(--ok); border-color: #1e5a40; }
+    .bit.off { color: var(--muted); }
+    .bit.legal { color: var(--ice); border-color: #2a5a70; letter-spacing: 0; }
+    .bit.bad { color: var(--bad); border-color: var(--bad); }
+    .props {
+      display: grid;
+      gap: 6px;
+      max-height: min(28vh, 280px);
+      overflow-y: auto;
+    }
+    .prop {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
       font-family: var(--mono); font-size: 11px;
-      padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
+      padding: 6px 8px; border-radius: 6px; background: #071018; border: 1px solid var(--line);
     }
-    .flag.hot { border-color: var(--ok); color: var(--ok); }
-    .flag.cold { border-color: var(--bad); color: var(--bad); }
+    .dot { width: 8px; height: 8px; border-radius: 99px; background: var(--muted); flex: none; }
+    .prop.ok .dot { background: var(--ok); }
+    .prop.bad { border-color: var(--bad); color: var(--bad); }
+    .prop.bad .dot { background: var(--bad); }
+    .env { font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.55; }
+    textarea {
+      width: 100%; min-height: 78px; margin-top: 8px; padding: 8px;
+      background: #071018; color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+      font-family: var(--mono); font-size: 12px;
+    }
+    .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
     button {
-      width: 100%; margin-top: 14px; padding: 10px;
-      background: transparent; color: var(--bad);
-      border: 1px solid var(--bad); border-radius: 8px;
-      font-family: var(--mono); letter-spacing: 0.08em; cursor: pointer;
+      padding: 9px; background: transparent; color: var(--ice);
+      border: 1px solid var(--ice); border-radius: 8px;
+      font-family: var(--mono); letter-spacing: 0.04em; cursor: pointer; font-size: 11px;
     }
-    button:hover { background: #2a1212; }
-    .msg { margin-top: 12px; font-family: var(--mono); font-size: 12px; color: var(--ice); min-height: 2.4em; }
-    footer { padding: 0 24px 20px; color: var(--muted); font-size: 12px; }
+    button.bad { color: var(--bad); border-color: var(--bad); }
+    button:hover { background: #123040; }
+    button.bad:hover { background: #2a1212; }
+    .msg { margin-top: 10px; font-family: var(--mono); font-size: 12px; color: var(--ice); min-height: 2.2em; }
+    footer { padding: 0 22px 18px; color: var(--muted); font-size: 12px; }
     code { color: var(--warn); }
+    .hold { font-family: var(--mono); font-size: 12px; }
+    .hold.on { color: var(--ok); }
+    .hold.off { color: var(--bad); }
+    .scenes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .scenes button { width: auto; padding: 6px 10px; }
+    .scenes button.on { background: #123040; color: var(--ok); border-color: var(--ok); }
+    #hits { white-space: pre-line; min-height: 1.4em; }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <div class="brand">FLIGHT-CORE <span>PX4-RS</span></div>
-      <h1>Typed vehicle console</h1>
+      <div class="brand">ROBOT-LAB <span>FLIGHT-CORE</span></div>
+      <h1 id="title">Mechanically verified world</h1>
     </div>
     <div class="meta">
       <div id="clock">t = 0.00 s</div>
-      <div>frames: NED · units: SI</div>
+      <div>NED · SI · seed <span id="seed">1</span></div>
+      <div id="hold" class="hold on">PROPERTIES HOLD</div>
     </div>
   </header>
   <div class="grid">
     <section class="panel">
-      <h2>Safety machine</h2>
-      <ul class="phase" id="phases"></ul>
+      <h2>Sphere contacts</h2>
+      <div class="env" id="hits">none this step</div>
+      <h2 style="margin-top:16px">Platforms</h2>
+      <div class="robots" id="robots"></div>
+      <h2 style="margin-top:16px">Environment</h2>
+      <div class="env" id="env">wind / current</div>
+      <h2 style="margin-top:16px">Scenario</h2>
+      <div class="scenes" id="scenes"></div>
     </section>
     <section class="panel">
-      <h2>Local NED</h2>
-      <canvas id="map" width="800" height="360"></canvas>
-      <div class="readouts">
-        <div class="kv"><b>NORTH m</b><span id="n">0.00</span></div>
-        <div class="kv"><b>EAST m</b><span id="e">0.00</span></div>
-        <div class="kv"><b>ALT AGL m</b><span id="alt">0.00</span></div>
-        <div class="kv"><b>VDOWN m/s</b><span id="vd">0.00</span></div>
+      <h2>Local NED · land north, water south</h2>
+      <canvas id="map" width="860" height="380"></canvas>
+      <div class="safety">
+        <button type="button" class="bad" id="fail" data-robot="drone">DRONE FAILSAFE</button>
+        <button type="button" id="recover" data-robot="drone">DRONE RECOVER</button>
+        <button type="button" class="bad" id="estop" data-robot="rover">ROVER ESTOP</button>
+        <button type="button" id="clear" data-robot="rover">ROVER CLEAR</button>
+        <button type="button" class="bad" id="skiff-fail" data-robot="skiff">SKIFF FAILSAFE</button>
+        <button type="button" id="skiff-recover" data-robot="skiff">SKIFF RECOVER</button>
+        <button type="button" class="bad" id="auv-fail" data-robot="surveyor">AUV FAILSAFE</button>
+        <button type="button" id="auv-recover" data-robot="surveyor">AUV RECOVER</button>
       </div>
+      <div class="returns">
+        <button type="button" id="land" data-robot="drone">DRONE LAND</button>
+        <button type="button" id="touchdown" data-robot="drone">DRONE TOUCHDOWN</button>
+        <button type="button" id="disarm" data-robot="drone">DRONE DISARM</button>
+        <button type="button" id="park" data-robot="rover">ROVER PARK</button>
+        <button type="button" id="skiff-dock" data-robot="skiff">SKIFF DOCK</button>
+        <button type="button" id="auv-dock" data-robot="surveyor">AUV DOCK</button>
+      </div>
+      <div class="maneuvers">
+        <button type="button" id="skiff-station" data-robot="skiff">SKIFF STATION</button>
+        <button type="button" id="skiff-resume" data-robot="skiff">SKIFF RESUME</button>
+        <button type="button" id="auv-station" data-robot="surveyor">AUV STATION</button>
+        <button type="button" id="auv-resume" data-robot="surveyor">AUV RESUME</button>
+        <button type="button" id="airborne" data-robot="drone">DRONE AIRBORNE</button>
+        <button type="button" id="drone-hold" data-robot="drone">DRONE HOLD</button>
+      </div>
+      <p class="msg" id="msg">starting coastal world</p>
     </section>
     <section class="panel">
-      <h2>Invariants</h2>
-      <div class="flags">
-        <span class="flag" id="f-armed">ARMED</span>
-        <span class="flag" id="f-act">ACTUATORS</span>
-        <span class="flag" id="f-off">OFFBOARD</span>
-        <span class="flag" id="f-imu">IMU</span>
-        <span class="flag" id="f-est">ESTIMATOR</span>
-        <span class="flag" id="f-fs">FAILSAFE</span>
+      <h2>Mechanical properties</h2>
+      <div class="props" id="props"></div>
+      <h2 style="margin-top:16px">Agent action</h2>
+      <textarea id="act">{
+  "robot": "rover",
+  "cmd": "drive",
+  "vn": -0.5,
+  "ve": 0.2
+}</textarea>
+      <div class="btns">
+        <button type="button" id="send">POST ACTION</button>
+        <button type="button" id="reset">RESET WORLD</button>
       </div>
-      <p class="msg" id="msg">connecting…</p>
-      <button type="button" id="fail">TRIP FAILSAFE</button>
-      <p class="msg" style="color: var(--muted)">Illegal mixes never reach this console: <code>Position&lt;NED&gt; + Position&lt;ENU&gt;</code> and <code>Vehicle&lt;Disarmed&gt;.set_motor_thrust</code> are type errors.</p>
+      <p class="msg" style="color: var(--muted)">Illegal at compile time: parked twist, docked thrust, disarmed failsafe, mixed frames. Land is Takeoff or Airborne; park is Moving; dock is Underway or StationKeep; station is Underway; resume is StationKeep; airborne is Takeoff; hold is OffboardControl.</p>
     </section>
   </div>
   <footer>
-    Same controller loop against sim IMU. Swap the backend for PX4 SITL, recorded jsonl, or Kani.
+    Same safety machines as production. Water is a conserved shallow-water field (Vulkan when available). Drag opposes flow, buoyancy is zero when dry, contact never leaves a body inside terrain.
   </footer>
   <script>
-    const PHASES = ["disconnected","connected","initializing","preflight","ready","armed","takeoff","airborne","landing","failsafe","recovery"];
-    const ul = document.getElementById("phases");
-    PHASES.forEach(p => {
-      const li = document.createElement("li");
-      li.dataset.phase = p;
-      li.textContent = p;
-      ul.appendChild(li);
-    });
-    const trail = [];
+    const COLORS = { drone: "#3ee0a0", rover: "#f5c518", skiff: "#7ad7ff", surveyor: "#6b8cff" };
+    const trails = {};
     const canvas = document.getElementById("map");
     const ctx = canvas.getContext("2d");
 
-    function flag(id, on, invert) {
-      const el = document.getElementById(id);
-      el.classList.toggle("hot", invert ? !on : on);
-      el.classList.toggle("cold", invert ? on : !on);
-    }
-
     function draw(s) {
       const w = canvas.width, h = canvas.height;
-      ctx.fillStyle = "#0a0d13";
+      const scale = 14;
+      const cx = w * 0.5, cy = h * 0.42;
+      ctx.fillStyle = "#071018";
       ctx.fillRect(0, 0, w, h);
-      ctx.strokeStyle = "#1d2633";
-      ctx.lineWidth = 1;
-      for (let i = 0; i < 8; i++) {
-        ctx.beginPath();
-        ctx.moveTo((w/8)*i, 0); ctx.lineTo((w/8)*i, h); ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(0, (h/6)*i); ctx.lineTo(w, (h/6)*i); ctx.stroke();
+      const shoreN = s.environment.shoreline_n;
+      let shore;
+      if (shoreN < -100) shore = h;
+      else if (shoreN > 100) shore = 0;
+      else shore = cy - shoreN * scale;
+      ctx.fillStyle = "#1a2e22";
+      ctx.fillRect(0, 0, w, shore);
+      paintHydro(ctx, s.environment, w, h, shore, cx, cy, scale);
+      ctx.strokeStyle = "#3ee0a044";
+      ctx.beginPath(); ctx.moveTo(0, shore); ctx.lineTo(w, shore); ctx.stroke();
+      ctx.strokeStyle = "#1c333e";
+      for (let i = 0; i < 10; i++) {
+        ctx.beginPath(); ctx.moveTo((w/10)*i, 0); ctx.lineTo((w/10)*i, h); ctx.stroke();
       }
-      trail.push([s.n, s.e]);
-      if (trail.length > 400) trail.shift();
-      const scale = 12;
-      const cx = w * 0.35, cy = h * 0.7;
-      ctx.strokeStyle = "#7ad7ff";
-      ctx.beginPath();
-      trail.forEach(([n,e], i) => {
-        const x = cx + e * scale, y = cy - n * scale;
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-      const x = cx + s.e * scale, y = cy - s.n * scale;
-      ctx.fillStyle = s.failsafe ? "#ff5c5c" : "#3ee0a0";
-      ctx.beginPath();
-      ctx.arc(x, y, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#f5c518";
-      const barH = Math.min(h - 20, Math.max(4, s.alt * 18));
-      ctx.fillRect(w - 28, h - 16 - barH, 12, barH);
-      ctx.fillStyle = "#8b97ab";
+      ctx.fillStyle = "#7f98a6";
       ctx.font = "11px monospace";
-      ctx.fillText("N", cx - 8, 16);
-      ctx.fillText("E", w - 48, cy + 4);
-      ctx.fillText("alt", w - 52, 16);
+      ctx.fillText(shoreN < -100 ? "INLAND" : (shoreN > 100 ? "OPEN WATER" : "LAND"), 10, 18);
+      if (shoreN > -100 && shoreN < 100) ctx.fillText("WATER", 10, Math.min(h - 8, shore + 18));
+      ctx.fillText("N", cx - 6, 14);
+      ctx.fillText("E", w - 18, cy + 4);
+      (s.robots || []).forEach(r => {
+        if (!trails[r.id]) trails[r.id] = [];
+        trails[r.id].push([r.n, r.e]);
+        if (trails[r.id].length > 280) trails[r.id].shift();
+        ctx.strokeStyle = COLORS[r.id] || "#e7f2f6";
+        ctx.beginPath();
+        trails[r.id].forEach(([n,e], i) => {
+          const x = cx + e * scale, y = cy - n * scale;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        const x = cx + r.e * scale, y = cy - n * scale;
+        ctx.fillStyle = r.failsafe ? "#ff5c5c" : (COLORS[r.id] || "#e7f2f6");
+        ctx.beginPath();
+        ctx.arc(x, y, r.domain === "aerial" ? 5 : 6, 0, Math.PI * 2);
+        ctx.fill();
+        const rad = Math.max(4, (r.radius_m || 0.4) * scale);
+        ctx.strokeStyle = (COLORS[r.id] || "#e7f2f6") + "88";
+        ctx.beginPath();
+        ctx.arc(x, y, rad, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = "#e7f2f6";
+        ctx.fillText(r.id, x + 8, y - 6);
+      });
+      (s.sphere_hits || []).forEach(h => {
+        const ra = (s.robots || []).find(r => r.id === h.a);
+        const rb = (s.robots || []).find(r => r.id === h.b);
+        if (!ra || !rb) return;
+        const x0 = cx + ra.e * scale, y0 = cy - ra.n * scale;
+        const x1 = cx + rb.e * scale, y1 = cy - rb.n * scale;
+        ctx.strokeStyle = "#ff5c5ccc";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      });
+    }
+
+    function hydroAt(env, n, e) {
+      const field = env.hydro_h;
+      if (!field || !field.length) return 0;
+      const nx = env.hydro_nx || 1, ny = env.hydro_ny || 1, dx = env.hydro_dx || 1;
+      let i = Math.floor((n - (env.hydro_origin_n || 0)) / dx);
+      let j = Math.floor((e - (env.hydro_origin_e || 0)) / dx);
+      i = Math.max(0, Math.min(nx - 1, i));
+      j = Math.max(0, Math.min(ny - 1, j));
+      return field[i * ny + j] || 0;
+    }
+
+    function paintHydro(ctx, env, w, h, shore, cx, cy, scale) {
+      const still = Math.max(0.01, env.seabed_z || 4);
+      if (shore >= h) return;
+      const y0 = Math.max(0, Math.floor(shore));
+      for (let py = y0; py < h; py += 2) {
+        for (let px = 0; px < w; px += 2) {
+          const n = (cy - py) / scale;
+          const e = (px - cx) / scale;
+          const eta = (hydroAt(env, n, e) - still) / 0.22;
+          const t = Math.max(-1, Math.min(1, eta));
+          ctx.fillStyle = `rgb(${18 + t * 10}, ${48 + t * 22}, ${72 + t * 36})`;
+          ctx.fillRect(px, py, 2, 2);
+        }
+      }
+    }
+
+    function pct(charge, cap) {
+      if (!cap) return 0;
+      return Math.max(0, Math.min(100, Math.round(100 * charge / cap)));
+    }
+
+    function grantBits(r) {
+      const bits = [];
+      if (r.hold_ned) bits.push(["HOLD", "on"]);
+      if (r.terrain_contact) bits.push(["GND", "on"]);
+      else if (r.support === "water") bits.push(["WET", "wet"]);
+      else bits.push(["AIR", "off"]);
+      if (r.ground) {
+        bits.push(r.ground.drive_enabled ? ["DRIVE", "on"] : ["PARK", "off"]);
+        if (r.ground.estop) bits.push(["ESTOP", "bad"]);
+      }
+      if (r.marine) {
+        bits.push(r.marine.thrust_enabled ? ["THRUST", "on"] : ["DOCK", "off"]);
+        if (r.marine.failsafe) bits.push(["FS", "bad"]);
+      }
+      if (r.aerial) {
+        bits.push(r.aerial.armed ? ["ARMED", "on"] : ["SAFE", "off"]);
+        bits.push(r.aerial.actuators_enabled ? ["LIVE", "on"] : ["CUT", "off"]);
+        if (r.aerial.offboard) bits.push(["OB", "on"]);
+        if (r.aerial.failsafe) bits.push(["FS", "bad"]);
+      }
+      bits.push(r.propulsion_live ? ["PROP", "on"] : ["idle", "off"]);
+      if (r.sphere_contact) {
+        const who = (r.sphere_partners || []).join("·");
+        bits.push([who ? "HIT " + who : "HIT", "bad"]);
+      }
+      return bits.map(([label, kind]) => `<span class="bit ${kind}">${label}</span>`).join("");
+    }
+
+    function robots(list) {
+      const root = document.getElementById("robots");
+      root.innerHTML = (list || []).map(r => `
+        <div class="robot">
+          <div class="id">${r.id} · ${r.domain}</div>
+          <div class="row"><span>${(r.aerial && r.aerial.kind) || (r.ground && r.ground.kind) || (r.marine && r.marine.kind) || r.phase} · ${r.phase} · ${r.support || r.medium}</span></div>
+          <div class="row bits">${grantBits(r)}</div>
+          <div class="row"><span>n ${r.n.toFixed(1)}  e ${r.e.toFixed(1)}</span><span>d ${r.d.toFixed(2)}</span></div>
+          ${r.hold_ned ? `<div class="row"><span>hold n ${Number(r.hold_ned[0]).toFixed(1)}  e ${Number(r.hold_ned[1]).toFixed(1)}</span><span>d ${Number(r.hold_ned[2]).toFixed(2)}</span></div>` : ""}
+          <div class="row"><span>KE ${(r.ke || 0).toFixed(1)} J</span><span>PE ${(r.pe || 0).toFixed(0)} J</span></div>
+          <div class="row"><span>pack ${pct(r.charge_j, r.capacity_j)}%</span><span>spin ${(r.angular_ke || 0).toFixed(2)} J</span></div>
+          <div class="row bits">${(r.legal_cmds || []).map(c => `<span class="bit legal">${c}</span>`).join("")}</div>
+        </div>`).join("");
+    }
+
+    function props(list) {
+      const root = document.getElementById("props");
+      root.innerHTML = (list || []).map(p => `
+        <div class="prop ${p.holds ? "ok" : "bad"}">
+          <span>${p.id}</span>
+          <span class="dot"></span>
+        </div>`).join("");
     }
 
     async function tick() {
       try {
-        const s = await (await fetch("/api/telemetry")).json();
+        const s = await (await fetch("/api/lab/observation")).json();
         document.getElementById("clock").textContent = `t = ${s.t.toFixed(2)} s`;
-        document.getElementById("n").textContent = s.n.toFixed(2);
-        document.getElementById("e").textContent = s.e.toFixed(2);
-        document.getElementById("alt").textContent = s.alt.toFixed(2);
-        document.getElementById("vd").textContent = s.vd.toFixed(2);
-        document.getElementById("msg").textContent = s.message + " · " + s.last_command;
-        document.querySelectorAll(".phase li").forEach(li => {
-          li.classList.toggle("on", li.dataset.phase === s.phase);
-          li.classList.toggle("fail", s.failsafe && li.dataset.phase === "failsafe");
+        document.getElementById("seed").textContent = String(s.seed);
+        const hold = document.getElementById("hold");
+        hold.textContent = s.all_hold ? "PROPERTIES HOLD" : "PROPERTY BROKEN";
+        hold.className = "hold " + (s.all_hold ? "on" : "off");
+        document.getElementById("msg").textContent = s.message;
+        document.getElementById("title").textContent = `Mechanically verified ${s.scenario} world`;
+        const e = s.environment;
+        document.getElementById("env").innerHTML =
+          `wind  [${e.wind_ned.map(v => v.toFixed(2)).join(", ")}] m/s<br>` +
+          `current  [${e.current_ned.map(v => v.toFixed(2)).join(", ")}] m/s<br>` +
+          `seabed z = ${e.seabed_z.toFixed(1)} m · waves ${Number(e.wave_amp || 0).toFixed(2)} m<br>` +
+          `hydro  V ${Number(e.hydro_volume || 0).toFixed(0)} / ${Number(e.hydro_volume0 || 0).toFixed(0)} m³ · ${e.hydro_gpu ? "vulkan" : "cpu"}`;
+        document.querySelectorAll(".scenes button").forEach(b => {
+          b.classList.toggle("on", b.dataset.scene === s.scenario);
         });
-        flag("f-armed", s.armed);
-        flag("f-act", s.actuators);
-        flag("f-off", s.offboard);
-        flag("f-imu", s.imu_healthy);
-        flag("f-est", s.estimator_valid);
-        flag("f-fs", s.failsafe, true);
+        robots(s.robots);
+        const ids = new Set((s.robots || []).map(r => r.id));
+        document.querySelectorAll("[data-robot]").forEach(b => {
+          b.hidden = !ids.has(b.dataset.robot);
+        });
+        const hits = s.sphere_hits || [];
+        document.getElementById("hits").textContent = hits.length
+          ? hits.map(h => `${h.a} · ${h.b}  jn ${Number(h.jn || 0).toFixed(2)}`).join("\n")
+          : "none this step";
+        props(s.properties);
         draw(s);
-      } catch (e) { /* server coming up */ }
+      } catch (err) { /* coming up */ }
     }
+    async function loadScenes() {
+      try {
+        const list = await (await fetch("/api/lab/scenarios")).json();
+        const root = document.getElementById("scenes");
+        root.innerHTML = list.map(name => `<button type="button" data-scene="${name}">${name}</button>`).join("");
+        root.querySelectorAll("button").forEach(b => {
+          b.onclick = () => {
+            Object.keys(trails).forEach(k => trails[k] = []);
+            fetch("/api/lab/open", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ scenario: b.dataset.scene })
+            });
+          };
+        });
+      } catch (e) { /* coming up */ }
+    }
+    loadScenes();
     setInterval(tick, 80);
     tick();
     document.getElementById("fail").onclick = () => fetch("/api/failsafe", { method: "POST" });
+    document.getElementById("recover").onclick = () => fetch("/api/recover", { method: "POST" });
+    document.getElementById("estop").onclick = () => fetch("/api/estop", { method: "POST" });
+    document.getElementById("clear").onclick = () => fetch("/api/clear", { method: "POST" });
+    document.getElementById("skiff-fail").onclick = () => fetch("/api/skiff-failsafe", { method: "POST" });
+    document.getElementById("skiff-recover").onclick = () => fetch("/api/skiff-recover", { method: "POST" });
+    document.getElementById("auv-fail").onclick = () => fetch("/api/auv-failsafe", { method: "POST" });
+    document.getElementById("auv-recover").onclick = () => fetch("/api/auv-recover", { method: "POST" });
+    document.getElementById("land").onclick = () => fetch("/api/land", { method: "POST" });
+    document.getElementById("touchdown").onclick = () => fetch("/api/touchdown", { method: "POST" });
+    document.getElementById("disarm").onclick = () => fetch("/api/disarm", { method: "POST" });
+    document.getElementById("park").onclick = () => fetch("/api/park", { method: "POST" });
+    document.getElementById("skiff-dock").onclick = () => fetch("/api/skiff-dock", { method: "POST" });
+    document.getElementById("auv-dock").onclick = () => fetch("/api/auv-dock", { method: "POST" });
+    document.getElementById("skiff-station").onclick = () => fetch("/api/skiff-station", { method: "POST" });
+    document.getElementById("skiff-resume").onclick = () => fetch("/api/skiff-resume", { method: "POST" });
+    document.getElementById("auv-station").onclick = () => fetch("/api/auv-station", { method: "POST" });
+    document.getElementById("auv-resume").onclick = () => fetch("/api/auv-resume", { method: "POST" });
+    document.getElementById("airborne").onclick = () => fetch("/api/airborne", { method: "POST" });
+    document.getElementById("drone-hold").onclick = () => fetch("/api/hold", { method: "POST" });
+    document.getElementById("reset").onclick = () => {
+      Object.keys(trails).forEach(k => trails[k] = []);
+      fetch("/api/lab/reset", { method: "POST" });
+    };
+    document.getElementById("send").onclick = async () => {
+      let body;
+      try { body = JSON.parse(document.getElementById("act").value); }
+      catch (e) { document.getElementById("msg").textContent = "invalid JSON"; return; }
+      const r = await fetch("/api/lab/action", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const j = await r.json();
+      document.getElementById("msg").textContent = j.message || j.error || "sent";
+    };
   </script>
 </body>
 </html>
