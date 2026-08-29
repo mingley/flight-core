@@ -5,4 +5,4 @@ error[E0599]: no method named `arm` found for struct `Vehicle<flight_core::vehic
   |                     ^^^ method not found in `Vehicle<Disconnected, B>`
   |
   = note: the method was found for
-          - `Vehicle<PreflightReady, B>`
+          - `Vehicle<flight_core::vehicle::PreflightReady, B>`

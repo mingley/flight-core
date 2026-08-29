@@ -5,7 +5,9 @@
 //!
 //! - production-shaped physics (virtual clock + simulated IMU + mixer)
 //! - recorded IMU streams (jsonl)
-//! - fuzzed IMU (seeded noise around a source)
+//! - fuzzed IMU (seeded noise around a source), including [`WorldImu`] so a
+//!   controller can wrap [`FuzzedImu`] around the verified plant without
+//!   substituting that plant's `step`
 
 #![deny(unsafe_code)]
 
@@ -13,11 +15,15 @@ pub mod backend;
 pub mod fuzz;
 pub mod physics;
 pub mod replay;
+pub mod world_backend;
 
 pub use backend::{SimBackend, SimConfig};
 pub use fuzz::FuzzedImu;
 pub use physics::{Physics, GRAVITY_NED};
 pub use replay::{JsonlReplay, RecordedSample};
+pub use world_backend::{
+    GroundWorldBackend, MarineWorldBackend, WorldBackend, WorldImu, WorldSession,
+};
 
 use flight_core::prelude::*;
 use flight_core::vehicle::Vehicle;
