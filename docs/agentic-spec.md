@@ -178,18 +178,18 @@ New catalogs must declare bodies explicitly and get a typed agent skip list (see
                     │  observe · legal_cmds · act · research  │
                     └──────────────────┬──────────────────────┘
                                        │
-                    ┌──────────────────┴──────────────────────┐
+                    ┌──────────────────▼──────────────────────┐
                     │  robot-lab  Lab  (JSON + attach walks)  │
                     └──────────────────┬──────────────────────┘
                                        │
      flight-px4 / flight-ros2 / flight-hitl / Vehicle<S,B>
                                        │
-                    ┌──────────────────┴──────────────────────┐
+                    ┌──────────────────▼──────────────────────┐
                     │  WorldSession attach walks              │
                     │  flush all grants → one World::try_step │
                     └──────────────────┬──────────────────────┘
                                        │
-                    ┌──────────────────┴──────────────────────┐
+                    ┌──────────────────▼──────────────────────┐
                     │  robot-world  22 named properties       │
                     │  NED z-down · catalogs · hydro · contact│
                     └─────────────────────────────────────────┘
