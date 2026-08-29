@@ -1,0 +1,239 @@
+# Next steps
+
+Ordered work toward [`docs/agentic-spec.md`](agentic-spec.md). Technical dependence, not calendar. An item is done only when **acceptance** is true against the tree, tests, proofs, and (where named) a recorded run.
+
+**Always on:** keep v0 green. Do not regress [`docs/remaining-spec.md`](remaining-spec.md) **P1–P14**. Atomic commits on `main`. No PR pile-up unless someone asks. MSRV 1.85. After demo HTML/`include_str` changes, re-run remaining-spec §8 D2.
+
+v0 functional gaps in remaining-spec are **landed**. This file is the backlog from here.
+
+---
+
+## Phase 0 — Keep the slice honest
+
+| ID | Work | Acceptance |
+| --- | --- | --- |
+| 0.1 | Invariant CI | fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, gpu, kani (harness count in lockstep with `flight-verify`), rclrs, creusot (81 libraries on 0.5.0), sitl (`sitl_live --ignored` on `px4io/px4-sitl:v1.18.0-beta2`) stay required. |
+| 0.2 | New operator act | Typed agent **and** JSON probe twin. Catalog skips for omitted bodies (P11). |
+| 0.3 | New kernel event | trybuild + verify theorems + do not collapse P1–P9. |
+| 0.4 | Docs | README “Still ahead” points here and at the north-star spec. Do not mention private remotes or temporary clone names. |
+
+---
+
+## Phase A — Agentic surface (do this first)
+
+Goal: an agent can experiment and understand **without** reading kernel source, and **cannot** smuggle illegal motion.
+
+### A1. Legal-command tool adapter
+
+**Why:** `legal_cmds` already exists on `RobotView`. Agents still post arbitrary `LabCmd` strings and discover Protocol after the fact.
+
+**Acceptance:**
+
+1. A Rust API (and JSON) that, given an `Observation`, returns the **only** callable robot tools: `(robot_id, cmd)` pairs from `legal_cmds`, plus `env_cmds`.
+2. `Lab::act` / `act_through_attach` reject `cmd` not in that set **before** domain attach, with a structured error (`unknown robot`, `not legal now`, kernel reject unchanged).
+3. Tests: parked `drive`, docked `thrust`, pad `hold`, inland `undock` (no hull), open_water `drive` (no rover) — all rejected as not-legal, not as a crash.
+4. Does not change P6 (JSON Failsafe Disarm vs PX4 DISARM).
+
+### A2. JSON Schema for observe / act
+
+**Why:** bags and HTTP are implied contracts. Agents and Foxglove need an explicit one.
+
+**Acceptance:**
+
+1. Schema documents for `Observation` and `AgentAction` / `TimedAction`, generated from or locked to the Rust types.
+2. CI (or a crate test) validates a coastal bag plus `examples/bag.rs` output against the schema.
+3. Field `hold_ned` remains optional; `legal_cmds` remains an array of closed `LabCmd` strings; NED z-down is stated in the schema description.
+4. No silent rename of v0 field names.
+
+### A3. Closed-loop experiment runner
+
+**Why:** `Lab::research` is a library. World-class tooling is a repeatable **run**.
+
+**Acceptance:**
+
+1. CLI or example: `scenario`, `seed` or seed range, `dt`, `steps`, agent name (typed) or JSONL script.
+2. Writes a run directory: `run.json` (`ResearchRun` + git commit if available), observations JSONL, actions JSONL, optional MCAP.
+3. Non-zero exit if `all_hold` is false or if a named `--require-property` fails.
+4. Seed sweep: at least two seeds on `harbor` with `TypedFleetHold` (or successor) both green.
+5. Still one `WorldSession::step` per tick (P12).
+
+### A4. Structured rejection traces
+
+**Why:** understanding is “why did that fail,” not `Protocol`.
+
+**Acceptance:**
+
+1. Attach/act failures serialize: domain, robot, cmd, from phase/kind, attempted event, reject enum display, and if applicable the invariant id (P1–P13) documented for that split.
+2. `research_probe` / typed illegal probes include those traces in the report.
+3. Demo or observation may surface the last reject; do not require a new GUI product.
+
+### A5. Richer observations for agents
+
+**Why:** plant truth is there; agents still reverse-engineer attach kind vs phase.
+
+**Acceptance:**
+
+1. Observation (or a documented sub-object) includes: property ids that **would** be the first to break on a refused `try_step` when a debug/refuse path exists; otherwise document that refuse is atomic (`all_hold` + `broken`).
+2. Keep `kind` vs `phase` in schema and README.
+3. IMU health / `estimator_valid` remain visible on aerial machines.
+4. No extra `step` to compute observations.
+
+### A6. Local tool server (optional adapter)
+
+**Why:** LLM agents speak HTTP/MCP. The lab must not grow auth or cloud.
+
+**Acceptance:**
+
+1. Optional binary or `flight-demo` routes: observe, list legal tools, act, step/research tick, replay metadata.
+2. Binds locally (reuse `FLIGHT_DEMO_BIND` or a sibling port). No authentication product. No Vercel.
+3. Tools call A1; they do not expose a raw “set NED velocity” that skips `legal_cmds`.
+4. If HTML changes, remaining-spec §8 D2.
+
+---
+
+## Phase B — Control depth
+
+Goal: every domain can **hold and move** under the same typestate story; companions stay one API.
+
+### B1. Ground pose hold
+
+Was v0 out of scope. Now a north-star control item.
+
+**Acceptance:**
+
+1. Compile-fail: no hold from Parked / EStop (trybuild).
+2. Plant field analogous to aerial `hold_ned` (or documented ground-frame equivalent) and a named property “command restores pose” when set.
+3. Kani-style restore fact or an explicit “integer/kernel only” write-up if f32 lands in Kani like aerial hold.
+4. `LabCmd` + `legal_cmds` + typed agent + JSON probe. Inland included; open_water skips rover (P11).
+5. Ungranted wipe policy written (follow P13 spirit or a documented B-choice). Do not silently persist hold while ungranted.
+
+### B2. Marine dynamic positioning (NED pose hold)
+
+Distinct from `StationKeep` heading/station machine (keep that machine; P3 stands).
+
+**Acceptance:**
+
+1. Pose target for Underway or StationKeep only; compile-fail from Docked / Failsafe.
+2. Plant property + typed agent + JSON probe. Inland skips hulls; coastal/harbor/open_water include skiff and surveyor as specified.
+3. Do not add `declare_failsafe` on `Docked`. Do not dock from Failsafe in typestate.
+
+### B3. Estimation loop trips `estimator_valid`
+
+**Acceptance:**
+
+1. A navigation update (Mahony/complementary or successor) **may** clear `estimator_valid` on bad IMU without writing plant quaternion.
+2. Plant `unit_attitude` remains physics-truth from `mech::quat_integrate`.
+3. Kani or lab test: unusable IMU ⇒ failsafe path still `all_hold` (v0 fuzzed IMU stays).
+4. Full ESKF/GNSS fusion may land in a later B3b; not required to close B3.
+
+### B4. Typed planning layer
+
+**Acceptance:**
+
+1. A path/waypoint type in Rust (NED, units).
+2. Execution is a sequence of legal `set_position` / `set_velocity` / hold / drive / thrust through attach — no kernel bypass.
+3. Aerial: OffboardControl only. Ground: Moving only. Marine: `CanThrust` only.
+4. Typed agent follows a two-point path; properties hold; replay works.
+
+### B5. Multi-vehicle coordination certificates
+
+**Acceptance:**
+
+1. At least one named property or research certificate beyond pairwise sphere contact: e.g. minimum spacing, or “fleet hold simultaneously” already in `TypedFleetHold` promoted to a plant or lab assertion with a stable id.
+2. Catalog skips remain correct (no fake hull inland).
+3. P12: still one world step after flushing all grants.
+
+### B6. Additional autopilot backend
+
+**Acceptance:**
+
+1. One more companion (e.g. ArduPilot MAVLink) implementing the same `VehicleBackend` (and domain backends if applicable).
+2. Disconnected send is `BackendError::Disconnected`.
+3. Documented SITL recipe; live test `#[ignore]` + CI job **or** an explicit “loopback only” decision in remaining-spec style.
+4. Do not send AUTO takeoff that fights typestate velocity climb (PX4 lesson: stay in offboard for `takeoff_now`).
+
+### B7. Physical FCH1 recorded run
+
+**Acceptance:**
+
+1. One recorded log against a real card **or** a faithful UDP mock that is not the in-process plant (remaining-spec §4.4 full bar).
+2. `apply == 0` still zeros the slot (`RackCommand::from_fch1`). Slot map 0–3 unchanged unless documented with catalog bodies.
+
+### B8. `no_std` kernel deploy (not typestate)
+
+**Acceptance:**
+
+1. Discrete aerial/ground/marine/HITL machines remain usable `no_std` (already the `--no-default-features` story).
+2. A documented firmware or `no_std` example ticks `step` / `ground_step` / `marine_step` on host or a board.
+3. Vehicles stay `std` unless a separate decision lifts remaining-spec §6.1. Do not bump MSRV.
+
+---
+
+## Phase C — Understanding
+
+### C1. Proof artifacts as agent input
+
+**Acceptance:**
+
+1. A checked-in or generated summary: Creusot crate list + “f32 stays Kani” (hold, buoyancy, hydro mass, HITL miss-zero).
+2. Experiment runner (A3) can copy or hash that summary into `run.json`.
+3. Harness count and Creusot library count stay in lockstep with README when they change.
+
+### C2. Causal / property traces
+
+**Acceptance:**
+
+1. When `try_step` refuses, the caller can read which property id failed (already implied by the vector — expose it on `Lab` without panicking away the world).
+2. ResearchRun `broken` stays the list of failed ids; tests cover at least one induced break in a **clone** (do not ship a catalog that fails).
+
+### C3. Scenario DSL
+
+**Acceptance:**
+
+1. A Rust (not YAML-as-source-of-truth) way to name a scene: catalog or custom body set, seed, wind/current/waves, charges.
+2. Custom body sets cannot put a rover in `open_water` or a hull in `inland` **using those catalog names**. New names are new catalogs with an explicit body table.
+3. Typed fleet agents skip missing bodies.
+
+### C4. Scale without dropping properties
+
+**Acceptance:**
+
+1. Any hydro resolution change keeps `hydro_height_nonnegative`, `hydro_volume_conserved`, `hydro_land_stays_dry`.
+2. Any extra body keeps contact properties and P12.
+3. GPU remains optional performance; no CPU/GPU bit-identity requirement.
+
+---
+
+## Phase D — More domains and morphologies
+
+Only after A is usable and B1–B2 have a written status (landed or explicitly deferred in this file).
+
+| ID | Work | Acceptance |
+| --- | --- | --- |
+| D1 | Manipulator typestate | Consume-self gripper/arm states; compile-fails; contact with existing sphere/terrain properties or a new named property; lab cmd + typed agent. |
+| D2 | Extra airframes | VTOL or fixed-wing as a **new** aerial body kind or documented Vehicle configuration; NED z-down; trybuild for new illegal transitions; catalog entry with P11-style body table. |
+| D3 | Extra ground morphologies | Tracked or second rover; hold (B1) applies or is explicitly N/A. |
+| D4 | Depth hold for AUV | Distinct from surface station if the machine needs it; compile-fail from Docked; property + agent. |
+| D5 | N-body catalogs | More than four bodies with fleet certificates (B5); omit-body rules documented. |
+
+---
+
+## Suggested implementation order
+
+1. **A1 → A2 → A4** (tools, schema, rejects) — agents become safe and legible.
+2. **A3 → A5 → A6** (runner, richer observe, local tools).
+3. **B1 / B2** (ground hold, marine DP) — domain-complete control.
+4. **B3 / B4 / B5** (estimation bit, planning, coordination).
+5. **C1–C3** (proofs, traces, scenarios) can overlap A3.
+6. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
+7. **D\*** morphologies last.
+
+Items in remaining-spec §2 are constraints on **every** step, not a phase.
+
+---
+
+## Done when (north star, not v0)
+
+The north star is not a single checkbox. It is honest to say **world-class agentic tooling** only when Phase **A** is landed, Phase **B** hold/DP (B1–B2) are landed or explicitly deferred with a reason, and P1–P14 still hold. Morphologies (D) can remain open without diluting A+B.
+
+Until then, README “Still ahead” points here.
