@@ -4,7 +4,10 @@ use core::fmt;
 
 /// Nanoseconds since an arbitrary epoch (boot, recording start, or symbolic zero).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct MonotonicInstant {
     nanos: u64,
 }
@@ -49,6 +52,7 @@ impl MonotonicInstant {
     }
 }
 
+#[cfg(not(creusot))]
 impl fmt::Display for MonotonicInstant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:.6}s", self.as_secs_f32())
@@ -56,7 +60,10 @@ impl fmt::Display for MonotonicInstant {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct Duration {
     nanos: u64,
 }

@@ -12,7 +12,10 @@ pub trait Unit: Copy + Clone + fmt::Debug + Send + Sync + 'static {
 macro_rules! define_unit {
     ($name:ident, $label:literal) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[cfg_attr(
+            all(feature = "serde", not(creusot)),
+            derive(serde::Serialize, serde::Deserialize)
+        )]
         pub struct $name;
         impl Unit for $name {
             const NAME: &'static str = $label;
@@ -30,14 +33,20 @@ define_unit!(DegreePerSecond, "deg/s");
 define_unit!(Celsius, "°C");
 define_unit!(Second, "s");
 define_unit!(Newton, "N");
+define_unit!(NewtonMeter, "N·m");
+define_unit!(Kilogram, "kg");
+define_unit!(KilogramPerCubicMeter, "kg/m³");
 define_unit!(Dimensionless, "1");
 
 /// Scalar quantity tagged with a unit.
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct Qty<U> {
     value: f32,
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(all(feature = "serde", not(creusot)), serde(skip))]
     _unit: PhantomData<U>,
 }
 
@@ -68,6 +77,7 @@ impl<U> Qty<U> {
     }
 }
 
+#[cfg(not(creusot))]
 impl<U: Unit> fmt::Display for Qty<U> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {}", self.value, U::NAME)

@@ -2,6 +2,10 @@
 //!
 //! Complementary (Mahony-style) filter, fixed-size state, no panics, no `unsafe`.
 //! Intended as the start of a trusted `no_std` navigation core — not a full ESKF.
+//!
+//! Not wired into `robot-world::World::try_step`. The plant quaternion is
+//! physics truth (`mech::quat_integrate` / `unit_attitude`). Kernel
+//! `estimator_valid` is a safety bit, not [`ComplementaryAttitude::is_valid`].
 
 use crate::frames::Body;
 use crate::units::RadianPerSecond;
