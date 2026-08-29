@@ -15,7 +15,13 @@ fn parked_drive_is_rejected() {
             yaw_rate: 0.0,
         })
         .unwrap_err();
-    assert!(matches!(err, LabError::Ground(_)));
+    assert!(matches!(
+        err,
+        LabError::NotLegal {
+            cmd: LabCmd::Drive,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -40,7 +46,13 @@ fn docked_thrust_is_rejected() {
     let err = lab
         .act(parse(r#"{"robot":"skiff","cmd":"thrust","vn":0.5}"#))
         .unwrap_err();
-    assert!(matches!(err, LabError::Marine(_)));
+    assert!(matches!(
+        err,
+        LabError::NotLegal {
+            cmd: LabCmd::Thrust,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -137,15 +149,24 @@ fn json_illegal_then_typestate_grants_move() {
     let mut lab = Lab::coastal(3);
     assert!(matches!(
         lab.act(parse(r#"{"robot":"rover","cmd":"drive","vn":-0.6}"#)),
-        Err(LabError::Ground(_))
+        Err(LabError::NotLegal {
+            cmd: LabCmd::Drive,
+            ..
+        })
     ));
     assert!(matches!(
         lab.act(parse(r#"{"robot":"skiff","cmd":"thrust","vn":0.8}"#)),
-        Err(LabError::Marine(_))
+        Err(LabError::NotLegal {
+            cmd: LabCmd::Thrust,
+            ..
+        })
     ));
     assert!(matches!(
         lab.act(parse(r#"{"robot":"drone","cmd":"velocity","ve":1.0}"#)),
-        Err(LabError::Aerial(_))
+        Err(LabError::NotLegal {
+            cmd: LabCmd::Velocity,
+            ..
+        })
     ));
     assert!(lab
         .ground("rover")
@@ -287,6 +308,123 @@ fn observation_exposes_safety_machines() {
 }
 
 #[test]
+fn legal_tools_lists_env_and_robot_cmds_as_json() {
+    let lab = Lab::coastal(1);
+    let obs = lab.observe();
+    let tools = obs.tools();
+    assert_eq!(tools.env_cmds, LabCmd::ENV.to_vec());
+    assert_eq!(tools, lab.legal_tools());
+    assert!(tools.allows("", LabCmd::SetWind));
+    assert!(tools.allows("rover", LabCmd::Release));
+    assert!(!tools.allows("rover", LabCmd::Drive));
+    assert!(tools.allows("drone", LabCmd::Arm));
+    assert!(!tools.allows("drone", LabCmd::Hold));
+    assert!(!tools.allows("skiff", LabCmd::Thrust));
+    let json = serde_json::to_value(&tools).unwrap();
+    let env = json["env_cmds"].as_array().unwrap();
+    assert!(env.iter().any(|c| c == "set_wind"));
+    let robots = json["robot_tools"].as_array().unwrap();
+    assert!(robots
+        .iter()
+        .any(|t| t["robot"] == "rover" && t["cmd"] == "release"));
+    let round: LegalTools = serde_json::from_value(json).unwrap();
+    assert_eq!(round.env_cmds, tools.env_cmds);
+}
+
+#[test]
+fn act_rejects_not_legal_before_kernel_and_unknown_robots() {
+    let mut coastal = Lab::coastal(1);
+    let parked = coastal
+        .act(AgentAction::new("rover", LabCmd::Drive).ned(-1.0, 0.0, 0.0))
+        .unwrap_err();
+    assert!(
+        matches!(
+            parked,
+            LabError::NotLegal {
+                cmd: LabCmd::Drive,
+                ..
+            }
+        ),
+        "{parked}"
+    );
+    let docked = coastal
+        .act(AgentAction::new("skiff", LabCmd::Thrust).ned(0.5, 0.0, 0.0))
+        .unwrap_err();
+    assert!(
+        matches!(
+            docked,
+            LabError::NotLegal {
+                cmd: LabCmd::Thrust,
+                ..
+            }
+        ),
+        "{docked}"
+    );
+    let pad_hold = coastal
+        .act(AgentAction::new("drone", LabCmd::Hold))
+        .unwrap_err();
+    assert!(
+        matches!(
+            pad_hold,
+            LabError::NotLegal {
+                cmd: LabCmd::Hold,
+                ..
+            }
+        ),
+        "{pad_hold}"
+    );
+    assert!(coastal.log.is_empty());
+
+    let mut inland = Lab::inland(1);
+    let missing_hull = inland
+        .act(AgentAction::new("skiff", LabCmd::Undock))
+        .unwrap_err();
+    assert!(
+        matches!(missing_hull, LabError::UnknownRobot(ref id) if id == "skiff"),
+        "{missing_hull}"
+    );
+
+    let mut water = Lab::open_water(1);
+    let missing_rover = water
+        .act(AgentAction::new("rover", LabCmd::Drive).ned(-0.4, 0.0, 0.0))
+        .unwrap_err();
+    assert!(
+        matches!(missing_rover, LabError::UnknownRobot(ref id) if id == "rover"),
+        "{missing_rover}"
+    );
+
+    let through = inland
+        .act_through_attach(AgentAction::new("skiff", LabCmd::Undock))
+        .unwrap_err();
+    assert!(
+        matches!(through, LabError::UnknownRobot(ref id) if id == "skiff"),
+        "{through}"
+    );
+}
+
+#[test]
+fn json_disarm_from_failsafe_is_recovery_not_ready() {
+    use flight_core::safety::Phase;
+
+    let mut lab = Lab::open("inland", 1).unwrap();
+    lab.act_through_attach(AgentAction::new("drone", LabCmd::Takeoff))
+        .unwrap();
+    lab.act_through_attach(AgentAction::new("drone", LabCmd::Failsafe))
+        .unwrap();
+    assert_eq!(body(&lab, "drone").aerial.unwrap().phase, Phase::Failsafe);
+    assert!(view(&lab, "drone").allows(LabCmd::Disarm));
+    lab.act_through_attach(AgentAction::new("drone", LabCmd::Disarm))
+        .unwrap();
+    let s = body(&lab, "drone").aerial.unwrap();
+    assert_eq!(
+        s.phase,
+        Phase::Recovery,
+        "P6: JSON Failsafe Disarm → Recovery"
+    );
+    assert!(!s.armed);
+}
+
+#[test]
 fn json_touchdown_clears_command_like_touchdown_now() {
     use flight_core::frames::Ned;
     use flight_core::safety::Phase;
@@ -405,7 +543,16 @@ fn json_position_from_ready_is_rejected_and_never_a_velocity() {
     let err = lab
         .act(AgentAction::new("drone", LabCmd::Position).ned(0.0, 0.0, -2.0))
         .unwrap_err();
-    assert!(matches!(err, LabError::Aerial(_)), "{err}");
+    assert!(
+        matches!(
+            err,
+            LabError::NotLegal {
+                cmd: LabCmd::Position,
+                ..
+            }
+        ),
+        "{err}"
+    );
     assert!(body(&lab, "drone").command.is_none());
 
     lab.act_through_attach(AgentAction::new("drone", LabCmd::Takeoff))
@@ -422,7 +569,16 @@ fn json_position_from_ready_is_rejected_and_never_a_velocity() {
     let err = lab
         .act(AgentAction::new("rover", LabCmd::Position).ned(0.0, 0.0, -2.0))
         .unwrap_err();
-    assert!(matches!(err, LabError::WrongDomain), "{err}");
+    assert!(
+        matches!(
+            err,
+            LabError::NotLegal {
+                cmd: LabCmd::Position,
+                ..
+            }
+        ),
+        "{err}"
+    );
 }
 
 #[test]
@@ -526,7 +682,16 @@ fn json_hold_from_ready_is_rejected_and_rover_is_wrong_domain() {
     let err = lab
         .act(AgentAction::new("drone", LabCmd::Hold))
         .unwrap_err();
-    assert!(matches!(err, LabError::Aerial(_)), "{err}");
+    assert!(
+        matches!(
+            err,
+            LabError::NotLegal {
+                cmd: LabCmd::Hold,
+                ..
+            }
+        ),
+        "{err}"
+    );
     assert!(body(&lab, "drone").hold_ned.is_none());
 
     lab.act_through_attach(AgentAction::new("drone", LabCmd::Takeoff))
@@ -538,7 +703,16 @@ fn json_hold_from_ready_is_rejected_and_rover_is_wrong_domain() {
     let err = lab
         .act(AgentAction::new("rover", LabCmd::Hold))
         .unwrap_err();
-    assert!(matches!(err, LabError::WrongDomain), "{err}");
+    assert!(
+        matches!(
+            err,
+            LabError::NotLegal {
+                cmd: LabCmd::Hold,
+                ..
+            }
+        ),
+        "{err}"
+    );
 }
 
 #[test]
@@ -622,7 +796,16 @@ fn act_through_attach_enable_actuators_from_ready_rejects() {
     let err = lab
         .act_through_attach(AgentAction::new("drone", LabCmd::EnableActuators))
         .unwrap_err();
-    assert!(matches!(err, LabError::Aerial(_)), "{err}");
+    assert!(
+        matches!(
+            err,
+            LabError::NotLegal {
+                cmd: LabCmd::EnableActuators,
+                ..
+            }
+        ),
+        "{err}"
+    );
     assert!(!body(&lab, "drone").aerial.unwrap().actuators_enabled);
     assert!(lab.log.is_empty());
 }
@@ -733,7 +916,16 @@ fn json_recover_from_airborne_does_not_disarm() {
     let err = lab
         .act(AgentAction::new("drone", LabCmd::Recover))
         .unwrap_err();
-    assert!(matches!(err, LabError::Aerial(_)), "{err}");
+    assert!(
+        matches!(
+            err,
+            LabError::NotLegal {
+                cmd: LabCmd::Recover,
+                ..
+            }
+        ),
+        "{err}"
+    );
     let s = body(&lab, "drone").aerial.unwrap();
     assert_eq!(s.phase, Phase::Airborne);
     assert!(s.armed);

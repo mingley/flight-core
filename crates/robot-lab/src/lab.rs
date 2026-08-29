@@ -235,6 +235,11 @@ impl Lab {
         Observation::from_lab(self)
     }
 
+    /// NEXT A1: callable `(robot, cmd)` tools plus `env_cmds` for this snapshot.
+    pub fn legal_tools(&self) -> crate::LegalTools {
+        self.observe().tools()
+    }
+
     /// One JSON object per line — the record an agent or replay tool stores.
     pub fn write_jsonl<W: std::io::Write>(&self, mut w: W) -> std::io::Result<()> {
         serde_json::to_writer(&mut w, &self.observe())?;
@@ -262,6 +267,7 @@ impl Lab {
     }
 
     pub fn act(&mut self, action: AgentAction) -> Result<(), LabError> {
+        self.ensure_tool(&action)?;
         let t = self.with_world(|w| w.t);
         self.apply_action(&action)?;
         self.log.push(TimedAction { t, action });
@@ -276,6 +282,7 @@ impl Lab {
     /// back to JSON `act`. Replay walks the same helpers without pushing to
     /// [`Self::log`].
     pub fn act_through_attach(&mut self, action: AgentAction) -> Result<(), LabError> {
+        self.ensure_tool_or_attach_grant(&action)?;
         let t = self.with_world(|w| w.t);
         if self.try_attach(t, &action, true)? {
             return Ok(());
@@ -630,6 +637,7 @@ impl Lab {
         let mut i = 0;
         while self.with_world(|w| w.t) + 1e-6 < t_end {
             while i < log.len() && log[i].t <= self.with_world(|w| w.t) + 1e-6 {
+                self.ensure_tool_or_attach_grant(&log[i].action)?;
                 if !self.try_attach(log[i].t, &log[i].action, false)? {
                     self.apply_action(&log[i].action)?;
                 }
@@ -664,6 +672,62 @@ impl Lab {
             .with_world_mut(|world| apply_action_world(world, action))?;
         self.message = message;
         Ok(())
+    }
+
+    /// NEXT A1: reject unknown robots and cmds not in `legal_cmds` / `env_cmds`
+    /// before kernel or attach. Environment cmds do not need a robot id.
+    fn ensure_tool(&self, action: &AgentAction) -> Result<(), LabError> {
+        if LabCmd::ENV.contains(&action.cmd) {
+            return Ok(());
+        }
+        let id = action.robot.as_str();
+        if id.is_empty() {
+            return Err(LabError::UnknownRobot(action.robot.clone()));
+        }
+        self.with_world(|world| {
+            let Some(body) = world.body(id) else {
+                return Err(LabError::UnknownRobot(action.robot.clone()));
+            };
+            if action.cmd.on_legal_list(body) {
+                Ok(())
+            } else {
+                Err(LabError::NotLegal {
+                    robot: action.robot.clone(),
+                    cmd: action.cmd,
+                })
+            }
+        })
+    }
+
+    /// Same gate as [`Self::ensure_tool`], plus the Ready/Armed/Offboard
+    /// `Takeoff` attach grant (`attach_takeoff` / `attach_start_takeoff`).
+    /// Kernel Takeoff from Ready stays illegal on [`Self::act`] (P2).
+    fn ensure_tool_or_attach_grant(&self, action: &AgentAction) -> Result<(), LabError> {
+        match self.ensure_tool(action) {
+            Ok(()) => Ok(()),
+            Err(LabError::NotLegal { .. }) if self.attach_takeoff_grant(action) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn attach_takeoff_grant(&self, action: &AgentAction) -> bool {
+        if action.cmd != LabCmd::Takeoff {
+            return false;
+        }
+        let Some(id) = intern_robot(&action.robot) else {
+            return false;
+        };
+        self.with_world(|w| {
+            w.body(id)
+                .and_then(|b| b.aerial)
+                .map(aerial_kind)
+                .is_some_and(|k| {
+                    matches!(
+                        k,
+                        AerialKind::PreflightReady | AerialKind::Armed | AerialKind::Offboard
+                    )
+                })
+        })
     }
 }
 
@@ -740,6 +804,11 @@ pub enum LabError {
     UnknownCommand(String),
     UnknownScenario(String),
     WrongDomain,
+    /// Command is not in this body's `legal_cmds` (or `env_cmds`) right now.
+    NotLegal {
+        robot: String,
+        cmd: LabCmd,
+    },
     Aerial(flight_core::safety::Reject),
     Ground(flight_core::ground::GroundReject),
     Marine(flight_core::marine::MarineReject),
@@ -752,6 +821,7 @@ impl std::fmt::Display for LabError {
             LabError::UnknownCommand(c) => write!(f, "unknown command '{c}'"),
             LabError::UnknownScenario(s) => write!(f, "unknown scenario '{s}'"),
             LabError::WrongDomain => write!(f, "command does not apply to this robot's domain"),
+            LabError::NotLegal { robot, cmd } => write!(f, "not legal now: {robot} {cmd}"),
             LabError::Aerial(r) => write!(f, "aerial safety rejected: {r}"),
             LabError::Ground(r) => write!(f, "ground safety rejected: {r}"),
             LabError::Marine(r) => write!(f, "marine safety rejected: {r}"),

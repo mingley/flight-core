@@ -10,7 +10,10 @@
 //! and the hold target, not just land-cell drag fluid.
 //! After every `step`, mechanical properties are re-checked. `Lab::research`
 //! returns that vector on [`ResearchRun`]. Research traces are JSONL or
-//! Foxglove-compatible MCAP.
+//! Foxglove-compatible MCAP. [`Observation::tools`] / [`LegalTools`] list the
+//! only `(robot, cmd)` pairs plus `env_cmds` an agent may call; [`Lab::act`]
+//! and [`Lab::act_through_attach`] reject anything else as [`LabError::NotLegal`]
+//! or [`LabError::UnknownRobot`] before domain attach.
 //!
 //! Observe / act / research share the same [`WorldSession`] plant as the
 //! typestate fleet APIs. [`Lab::world`] is a snapshot; [`Lab::session`] is live.
@@ -48,7 +51,10 @@ pub use flight_core::vehicle::{
 };
 pub use flight_sim::{GroundWorldBackend, MarineWorldBackend, WorldBackend, WorldSession};
 pub use lab::{AgentAction, Lab, LabError, TimedAction};
-pub use observe::{AerialMachine, EnvView, GroundMachine, MarineMachine, Observation, RobotView};
+pub use observe::{
+    AerialMachine, EnvView, GroundMachine, LegalTools, MarineMachine, Observation, RobotTool,
+    RobotView,
+};
 pub use probe::ProbeReport;
 pub use research::{
     CoastalFleet, CollisionSweep, PadLanding, ResearchAgent, ResearchRun, RoverProbe,

@@ -25,6 +25,8 @@ Goal: an agent can experiment and understand **without** reading kernel source, 
 
 ### A1. Legal-command tool adapter
 
+**Status: landed.** `Observation::tools` / `Lab::legal_tools` enumerate `(robot_id, cmd)` from `legal_cmds` plus `env_cmds`. `Lab::act` / `Lab::act_through_attach` / replay reject `unknown robot` and `not legal now` before kernel or attach. Ready `Takeoff` remains an attach grant on `act_through_attach` only (P2: kernel Takeoff from Ready stays illegal on `act`). P6 JSON Failsafe Disarm → Recovery is unchanged.
+
 **Why:** `legal_cmds` already exists on `RobotView`. Agents still post arbitrary `LabCmd` strings and discover Protocol after the fact.
 
 **Acceptance:**

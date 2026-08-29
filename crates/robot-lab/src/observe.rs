@@ -2,7 +2,7 @@ use flight_core::vehicle::{
     aerial_kind, ground_kind, marine_kind, AerialKind, GroundKind, MarineKind,
 };
 use robot_world::{Body, Property, SphereHit, World};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cmd::LabCmd;
 use crate::lab::Lab;
@@ -243,5 +243,54 @@ impl RobotView {
 
     pub fn allows(&self, cmd: LabCmd) -> bool {
         self.legal_cmds.contains(&cmd)
+    }
+}
+
+/// One callable robot tool: a `(robot_id, cmd)` pair from [`RobotView::legal_cmds`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RobotTool {
+    pub robot: String,
+    pub cmd: LabCmd,
+}
+
+/// The only tools an agent may call given an [`Observation`]: environment
+/// commands plus per-robot [`LabCmd`] values from `legal_cmds`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegalTools {
+    pub env_cmds: Vec<LabCmd>,
+    pub robot_tools: Vec<RobotTool>,
+}
+
+impl Observation {
+    /// NEXT A1: enumerate callable tools without reading kernel source.
+    pub fn tools(&self) -> LegalTools {
+        LegalTools::from_observation(self)
+    }
+}
+
+impl LegalTools {
+    pub fn from_observation(obs: &Observation) -> Self {
+        Self {
+            env_cmds: obs.env_cmds.clone(),
+            robot_tools: obs
+                .robots
+                .iter()
+                .flat_map(|r| {
+                    r.legal_cmds.iter().copied().map(|cmd| RobotTool {
+                        robot: r.id.clone(),
+                        cmd,
+                    })
+                })
+                .collect(),
+        }
+    }
+
+    pub fn allows(&self, robot: &str, cmd: LabCmd) -> bool {
+        if LabCmd::ENV.contains(&cmd) {
+            return true;
+        }
+        self.robot_tools
+            .iter()
+            .any(|t| t.robot == robot && t.cmd == cmd)
     }
 }
