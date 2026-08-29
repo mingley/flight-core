@@ -1,436 +1,797 @@
-//! ROS 2 node adapters that wrap `flight_core` simulation into `rclrs` publishers
-//! and subscribers.
-//!
-//! Two node types are provided:
-//!
-//! * [`SimNode`] — full 6-DoF / 12-state vehicle simulator. Publishes `/odom` and
-//!   `/imu`, subscribes to `/cmd_vel` and `/cmd_wrench`.
-//! * [`PlantNode`] — SISO plant simulator. Publishes `/plant/state`,
-//!   `/plant/output`, `/plant/step`, `/plant/y`, `/plant/u`; subscribes to
-//!   `/cmd_force`. Designed to pair with `flight_px4::Px4PlantNode`.
-//!
-//! Both nodes run a simulation tick on a wall-clock timer whose period matches
-//! the configured `dt`. Incoming ROS 2 messages are stored in a mutex and applied
-//! at the start of the next tick.
-//!
-//! # QoS
-//!
-//! All topics use the ROS 2 default QoS profile (reliable, keep-last 10) unless
-//! otherwise noted. Sensor topics (`/odom`, `/imu`) are published at the
-//! simulation rate.
-//!
-//! # Coordinate frames
-//!
-//! * `/odom` uses `odom` as the parent frame and `base_link` as the child.
-//! * `/imu` uses `base_link` as the frame.
-//! * `/plant/state` and `/plant/output` use `plant` as the frame.
-//!
-//! # Threading
-//!
-//! `rclrs` executor spins in the calling thread (`node.spin()`). The simulation
-//! state lives behind a `Mutex` so the timer callback and subscriber callbacks
-//! can share it. Lock poisoning is treated as a fatal error (`.unwrap()`).
+//! Production `rclrs` node: publish or subscribe `geometry_msgs/msg/Twist` (ENU)
+//! against a verified [`flight_sim::WorldSession`].
 
+use crate::geometry::Twist;
+use crate::plant::{FleetPlant, FleetTwist};
+use crate::{ExternalFlightMode, OffboardSetpoint};
+use flight_core::frames::Ned;
+use flight_core::vector::Velocity;
+use flight_core::vehicle::BackendError;
+use flight_sim::{WorldBackend, WorldSession};
+use rclrs::{
+    Context, CreateBasicExecutor, Executor, InitOptions, Node, Publisher, RclrsError, SpinOptions,
+    Subscription,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use geometry_msgs::msg::{
-    Point, Pose, Quaternion, Twist, Vector3, Wrench, WrenchStamped,
-};
-use nav_msgs::msg::Odometry;
-use rclrs::{
-    Context as RclContext, CreateBasicExecutor, CreateTimerOptions, Executor,
-    Node, Publisher, QosProfile, SpinOptions, Subscription, Timer,
-    Worker, WorkerCommands,
-};
-use sensor_msgs::msg::Imu;
-use std_msgs::msg::{Float64, Header};
+pub use rclrs::RclrsError as RosError;
 
-use crate::convert::{
-    stamp_now, twist_to_force, wrench_to_force, ForceCommand, PlantStateMsg,
-};
-use flight_core::{
-    Plant, SimConfig, VehicleKind, VehicleSim, GRAVITY,
-};
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-fn make_header(frame_id: &str) -> Header {
-    Header {
-        stamp: stamp_now(),
-        frame_id: frame_id.to_string(),
-    }
-}
-
-fn quat_from_yaw(yaw: f64) -> Quaternion {
-    let half = yaw * 0.5;
-    Quaternion {
-        x: 0.0,
-        y: 0.0,
-        z: half.sin(),
-        w: half.cos(),
-    }
-}
-
-fn quat_from_rpy(roll: f64, pitch: f64, yaw: f64) -> Quaternion {
-    let (sr, cr) = (roll * 0.5).sin_cos();
-    let (sp, cp) = (pitch * 0.5).sin_cos();
-    let (sy, cy) = (yaw * 0.5).sin_cos();
-    Quaternion {
-        x: sr * cp * cy - cr * sp * sy,
-        y: cr * sp * cy + sr * cp * sy,
-        z: cr * cp * sy - sr * sp * cy,
-        w: cr * cp * cy + sr * sp * sy,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// SimNode — 6-DoF / 12-state vehicle simulator
-// ---------------------------------------------------------------------------
-
-/// ROS 2 node that wraps a [`VehicleSim`] and exposes `/odom`, `/imu`,
-/// `/cmd_vel`, and `/cmd_wrench`.
-///
-/// # Topics
-///
-/// | Topic         | Type                    | Direction | Description                    |
-/// |---------------|-------------------------|-----------|--------------------------------|
-/// | `/odom`       | `nav_msgs/Odometry`     | pub       | Pose + twist at sim rate       |
-/// | `/imu`        | `sensor_msgs/Imu`       | pub       | Linear accel + angular vel     |
-/// | `/cmd_vel`    | `geometry_msgs/Twist`   | sub       | Velocity-derived force command |
-/// | `/cmd_wrench` | `geometry_msgs/WrenchStamped` | sub | Direct force/torque command |
-///
-/// # Example
-///
-/// ```ignore
-/// let ctx = RclContext::default_from_env()?;
-/// let mut node = SimNode::new(&ctx, "flight_sim", VehicleKind::Ground, SimConfig::default())?;
-/// node.spin()?;
-/// ```
-pub struct SimNode {
+/// Companion-computer offboard publisher on a real ROS 2 graph.
+pub struct OffboardNode {
     executor: Executor,
     node: Node,
-    worker: Worker<SimWorkerData>,
-    _timer: Timer,
-    _cmd_vel_sub: Subscription<Twist>,
-    _cmd_wrench_sub: Subscription<WrenchStamped>,
+    publisher: Publisher<Twist>,
+    topic: String,
 }
 
-struct SimWorkerData {
-    sim: VehicleSim,
-    pending_force: ForceCommand,
-    odom_pub: Publisher<Odometry>,
-    imu_pub: Publisher<Imu>,
-}
+impl OffboardNode {
+    pub fn new(name: &str, topic: &str) -> Result<Self, RclrsError> {
+        Self::with_domain(name, topic, None)
+    }
 
-impl SimNode {
-    /// Create a new simulation node.
-    ///
-    /// `node_name` is the ROS 2 node name (typically `"flight_sim"`).
-    /// `kind` selects the vehicle type. `config` sets mass, inertia, dt, etc.
-    pub fn new(
-        rcl_ctx: &RclContext,
-        node_name: &str,
-        kind: VehicleKind,
-        config: SimConfig,
-    ) -> Result<Self> {
-        let executor = rcl_ctx.create_basic_executor(node_name.into());
-        let node = executor.create_node(node_name)?;
-
-        let qos = QosProfile::default();
-        let odom_pub = node.create_publisher::<Odometry>("odom", qos.clone())?;
-        let imu_pub = node.create_publisher::<Imu>("imu", qos.clone())?;
-
-        let dt = config.dt;
-        let sim = VehicleSim::new(kind, config);
-
-        let worker_data = SimWorkerData {
-            sim,
-            pending_force: ForceCommand::zero(),
-            odom_pub,
-            imu_pub,
-        };
-
-        let worker: Worker<SimWorkerData> = node.create_worker(worker_data);
-
-        let timer: Timer = {
-            let worker_clone = worker.clone();
-            node.create_timer(
-                Duration::from_secs_f64(dt),
-                move || {
-                    let mut data = worker_clone.lock().unwrap();
-                    let force = data.pending_force;
-                    data.sim.step(force.force, force.torque);
-                    let snapshot = data.sim.snapshot();
-                    let pose = snapshot.pose;
-                    let twist = snapshot.twist;
-                    let accel = snapshot.accel;
-
-                    let odom = Odometry {
-                        header: make_header("odom"),
-                        child_frame_id: "base_link".to_string(),
-                        pose: Pose {
-                            position: Point {
-                                x: pose.x,
-                                y: pose.y,
-                                z: pose.z,
-                            },
-                            orientation: quat_from_rpy(pose.roll, pose.pitch, pose.yaw),
-                        },
-                        twist: Twist {
-                            linear: Vector3 {
-                                x: twist.vx,
-                                y: twist.vy,
-                                z: twist.vz,
-                            },
-                            angular: Vector3 {
-                                x: twist.wx,
-                                y: twist.wy,
-                                z: twist.wz,
-                            },
-                        },
-                        ..Default::default()
-                    };
-                    let _ = data.odom_pub.publish(odom);
-
-                    let imu = Imu {
-                        header: make_header("base_link"),
-                        orientation: quat_from_rpy(pose.roll, pose.pitch, pose.yaw),
-                        angular_velocity: Vector3 {
-                            x: twist.wx,
-                            y: twist.wy,
-                            z: twist.wz,
-                        },
-                        linear_acceleration: Vector3 {
-                            x: accel.ax,
-                            y: accel.ay,
-                            z: accel.az,
-                        },
-                        ..Default::default()
-                    };
-                    let _ = data.imu_pub.publish(imu);
-                },
-                CreateTimerOptions::default(),
-            )?
-        };
-
-        let cmd_vel_sub: Subscription<Twist> = {
-            let worker_clone = worker.clone();
-            node.create_subscription::<Twist, _>(
-                "cmd_vel",
-                qos.clone(),
-                move |msg: Twist| {
-                    let mut data = worker_clone.lock().unwrap();
-                    data.pending_force = twist_to_force(&msg, 1.0, 1.0);
-                },
-            )?
-        };
-
-        let cmd_wrench_sub: Subscription<WrenchStamped> = {
-            let worker_clone = worker.clone();
-            node.create_subscription::<WrenchStamped, _>(
-                "cmd_wrench",
-                qos,
-                move |msg: WrenchStamped| {
-                    let mut data = worker_clone.lock().unwrap();
-                    data.pending_force = wrench_to_force(&msg.wrench);
-                },
-            )?
-        };
-
+    pub fn with_domain(
+        name: &str,
+        topic: &str,
+        domain_id: Option<usize>,
+    ) -> Result<Self, RclrsError> {
+        let context = Context::new(
+            ["flight-ros2".to_string()],
+            InitOptions::new().with_domain_id(domain_id),
+        )?;
+        let executor = context.create_basic_executor();
+        let node = executor.create_node(name)?;
+        let publisher = node.create_publisher::<Twist>(topic)?;
         Ok(Self {
             executor,
             node,
-            worker,
-            _timer: timer,
-            _cmd_vel_sub: cmd_vel_sub,
-            _cmd_wrench_sub: cmd_wrench_sub,
+            publisher,
+            topic: topic.into(),
         })
     }
 
-    /// Spin the executor until interrupted.
-    pub fn spin(&mut self) -> Result<()> {
-        self.executor.spin(SpinOptions::default()).context("spin failed")
+    pub fn topic(&self) -> &str {
+        &self.topic
     }
 
-    /// Return a reference to the underlying `rclrs` node.
-    pub fn node(&self) -> &Node {
-        &self.node
+    pub fn name(&self) -> String {
+        self.node.name()
+    }
+
+    pub fn publish_setpoint(&self, sp: &OffboardSetpoint) -> Result<(), RclrsError> {
+        let twist = match sp.velocity_ned {
+            Some(v) => Twist::from_ned_velocity(v),
+            None => Twist::default(),
+        };
+        self.publisher.publish(twist)
+    }
+
+    pub fn publish_velocity(&self, v: Velocity<Ned>) -> Result<(), RclrsError> {
+        self.publisher.publish(Twist::from_ned_velocity(v))
+    }
+
+    pub fn publish_mode(
+        &self,
+        mode: &mut impl ExternalFlightMode<Setpoint = OffboardSetpoint>,
+        dt_secs: f32,
+    ) -> Result<(), RclrsError> {
+        self.publish_setpoint(&mode.update(dt_secs))
+    }
+
+    pub fn spin_once(&mut self, timeout: Duration) -> Vec<RclrsError> {
+        self.executor
+            .spin(SpinOptions::spin_once().timeout(timeout))
     }
 }
 
-// ---------------------------------------------------------------------------
-// PlantNode — SISO plant simulator
-// ---------------------------------------------------------------------------
-
-/// ROS 2 node that wraps a [`Plant`] (mass-spring-damper) and exposes plant
-/// state, output, and a force command subscriber.
-///
-/// # Topics
-///
-/// | Topic            | Type                      | Direction | Description              |
-/// |------------------|---------------------------|-----------|--------------------------|
-/// | `/plant/state`   | `nav_msgs/Odometry`       | pub       | Position + velocity      |
-/// | `/plant/output`  | `geometry_msgs/WrenchStamped` | pub   | Measured output wrench   |
-/// | `/plant/step`    | `std_msgs/Float64`        | pub       | Current time             |
-/// | `/plant/y`       | `std_msgs/Float64`        | pub       | Output (position)        |
-/// | `/plant/u`       | `std_msgs/Float64`        | pub       | Applied input            |
-/// | `/cmd_force`     | `std_msgs/Float64`        | sub       | Force command            |
-///
-/// # Pairing with PX4
-///
-/// `PlantNode` is designed to run alongside `flight_px4::Px4PlantNode`:
-///
-/// * `Px4PlantNode` publishes `/cmd_force` (the control effort).
-/// * `PlantNode` subscribes to `/cmd_force` and publishes `/plant/output`.
-/// * `Px4PlantNode` subscribes to `/plant/output` as its measurement.
-///
-/// # Example
-///
-/// ```ignore
-/// let ctx = RclContext::default_from_env()?;
-/// let mut node = PlantNode::new(&ctx, "flight_plant", Plant::default())?;
-/// node.spin()?;
-/// ```
+/// Subscribe to ENU Twist and apply it to a verified coastal drone plant.
 pub struct PlantNode {
     executor: Executor,
     node: Node,
-    worker: Worker<PlantWorkerData>,
-    _timer: Timer,
-    _cmd_force_sub: Subscription<Float64>,
-}
-
-struct PlantWorkerData {
-    plant: Plant,
-    pending_u: f64,
-    state_pub: Publisher<Odometry>,
-    output_pub: Publisher<WrenchStamped>,
-    step_pub: Publisher<Float64>,
-    y_pub: Publisher<Float64>,
-    u_pub: Publisher<Float64>,
+    session: WorldSession,
+    drone: WorldBackend,
+    latest: Arc<Mutex<Option<[f64; 3]>>>,
+    _sub: Subscription<Twist>,
 }
 
 impl PlantNode {
-    /// Create a new plant node.
-    pub fn new(rcl_ctx: &RclContext, node_name: &str, plant: Plant) -> Result<Self> {
-        let executor = rcl_ctx.create_basic_executor(node_name.into());
-        let node = executor.create_node(node_name)?;
+    pub fn coastal(name: &str, topic: &str, seed: u64) -> Result<Self, RclrsError> {
+        Self::with_domain(name, topic, seed, None)
+    }
 
-        let qos = QosProfile::default();
-        let state_pub = node.create_publisher::<Odometry>("plant/state", qos.clone())?;
-        let output_pub =
-            node.create_publisher::<WrenchStamped>("plant/output", qos.clone())?;
-        let step_pub = node.create_publisher::<Float64>("plant/step", qos.clone())?;
-        let y_pub = node.create_publisher::<Float64>("plant/y", qos.clone())?;
-        let u_pub = node.create_publisher::<Float64>("plant/u", qos.clone())?;
-
-        let dt = plant.dt();
-
-        let worker_data = PlantWorkerData {
-            plant,
-            pending_u: 0.0,
-            state_pub,
-            output_pub,
-            step_pub,
-            y_pub,
-            u_pub,
-        };
-
-        let worker: Worker<PlantWorkerData> = node.create_worker(worker_data);
-
-        let timer: Timer = {
-            let worker_clone = worker.clone();
-            node.create_timer(
-                Duration::from_secs_f64(dt),
-                move || {
-                    let mut data = worker_clone.lock().unwrap();
-                    let u = data.pending_u;
-                    data.plant.step(u);
-                    let snap = data.plant.snapshot();
-
-                    let odom = Odometry {
-                        header: make_header("plant"),
-                        child_frame_id: "plant".to_string(),
-                        pose: Pose {
-                            position: Point {
-                                x: snap.position,
-                                y: 0.0,
-                                z: 0.0,
-                            },
-                            orientation: quat_from_yaw(0.0),
-                        },
-                        twist: Twist {
-                            linear: Vector3 {
-                                x: snap.velocity,
-                                y: 0.0,
-                                z: 0.0,
-                            },
-                            angular: Vector3 {
-                                x: 0.0,
-                                y: 0.0,
-                                z: 0.0,
-                            },
-                        },
-                        ..Default::default()
-                    };
-                    let _ = data.state_pub.publish(odom);
-
-                    let wrench = WrenchStamped {
-                        header: make_header("plant"),
-                        wrench: Wrench {
-                            force: Vector3 {
-                                x: snap.output,
-                                y: 0.0,
-                                z: 0.0,
-                            },
-                            torque: Vector3 {
-                                x: 0.0,
-                                y: 0.0,
-                                z: 0.0,
-                            },
-                        },
-                    };
-                    let _ = data.output_pub.publish(wrench);
-
-                    let _ = data.step_pub.publish(Float64 { data: snap.time });
-                    let _ = data.y_pub.publish(Float64 { data: snap.output });
-                    let _ = data.u_pub.publish(Float64 { data: u });
-                },
-                CreateTimerOptions::default(),
-            )?
-        };
-
-        let cmd_force_sub: Subscription<Float64> = {
-            let worker_clone = worker.clone();
-            node.create_subscription::<Float64, _>(
-                "cmd_force",
-                qos,
-                move |msg: Float64| {
-                    let mut data = worker_clone.lock().unwrap();
-                    data.pending_u = msg.data;
-                },
-            )?
-        };
-
+    pub fn with_domain(
+        name: &str,
+        topic: &str,
+        seed: u64,
+        domain_id: Option<usize>,
+    ) -> Result<Self, RclrsError> {
+        let context = Context::new(
+            ["flight-ros2-plant".to_string()],
+            InitOptions::new().with_domain_id(domain_id),
+        )?;
+        let executor = context.create_basic_executor();
+        let node = executor.create_node(name)?;
+        let session = WorldSession::coastal(seed);
+        let drone = session.aerial("drone");
+        let latest = Arc::new(Mutex::new(None));
+        let slot = Arc::clone(&latest);
+        let sub = node.create_subscription(topic, move |msg: Twist| {
+            *slot.lock().expect("twist slot") = Some([msg.linear.x, msg.linear.y, msg.linear.z]);
+        })?;
         Ok(Self {
             executor,
             node,
-            worker,
-            _timer: timer,
-            _cmd_force_sub: cmd_force_sub,
+            session,
+            drone,
+            latest,
+            _sub: sub,
         })
     }
 
-    /// Spin the executor until interrupted.
-    pub fn spin(&mut self) -> Result<()> {
-        self.executor.spin(SpinOptions::default()).context("spin failed")
+    pub fn name(&self) -> String {
+        self.node.name()
     }
 
-    /// Return a reference to the underlying `rclrs` node.
     pub fn node(&self) -> &Node {
         &self.node
+    }
+
+    pub fn session(&self) -> &WorldSession {
+        &self.session
+    }
+
+    pub fn grant_offboard(&mut self) -> Result<(), BackendError> {
+        self.drone = self.session.attach_takeoff("drone")?;
+        Ok(())
+    }
+
+    /// Trip aerial failsafe through [`crate::plant::apply_failsafe`].
+    pub fn trip_failsafe(&mut self) -> Result<(), BackendError> {
+        crate::plant::apply_failsafe(&mut self.drone)
+    }
+
+    /// Recover Ready through [`crate::plant::apply_recover_ready`].
+    pub fn recover_ready(&mut self) -> Result<(), BackendError> {
+        crate::plant::apply_recover_ready(&mut self.drone)
+    }
+
+    /// Disarm to Ready through [`crate::plant::apply_disarm`].
+    pub fn disarm(&mut self) -> Result<(), BackendError> {
+        crate::plant::apply_disarm(&mut self.drone)
+    }
+
+    /// Enter landing through [`crate::plant::apply_land`].
+    pub fn land(&mut self) -> Result<(), BackendError> {
+        crate::plant::apply_land(&mut self.drone)
+    }
+
+    /// Touch down through [`crate::plant::apply_touchdown`].
+    pub fn touchdown(&mut self) -> Result<(), BackendError> {
+        crate::plant::apply_touchdown(&mut self.drone)
+    }
+
+    /// Takeoff → Airborne through [`crate::plant::apply_airborne`].
+    pub fn airborne(&mut self) -> Result<(), BackendError> {
+        crate::plant::apply_airborne(&mut self.drone)
+    }
+
+    /// Hold the drone at its current NED pose through [`crate::plant::apply_hold`].
+    pub fn hold(&mut self) -> Result<(), BackendError> {
+        crate::plant::apply_hold(&mut self.drone)
+    }
+
+    /// Drain the ROS 2 graph, apply the latest Twist, take one verified step.
+    pub fn spin_step(&mut self, dt: f32, timeout: Duration) -> Result<(), BackendError> {
+        let _ = self
+            .executor
+            .spin(SpinOptions::spin_once().timeout(timeout));
+        if let Some(lin) = *self.latest.lock().expect("twist") {
+            crate::plant::apply_twist_linear(&mut self.drone, lin)?;
+        }
+        self.session.step(dt)
+    }
+}
+
+/// Topic names for [`FleetPlantNode`] (REP-103 Twist, one per catalog body).
+/// Inland ignores hull topics; open water ignores the rover topic.
+#[derive(Clone, Copy, Debug)]
+pub struct FleetTopics<'a> {
+    pub drone: &'a str,
+    pub rover: &'a str,
+    pub skiff: &'a str,
+    pub surveyor: &'a str,
+}
+
+impl FleetTopics<'static> {
+    pub const COASTAL: Self = Self {
+        drone: "/drone/cmd_vel",
+        rover: "/rover/cmd_vel",
+        skiff: "/skiff/cmd_vel",
+        surveyor: "/surveyor/cmd_vel",
+    };
+}
+
+/// Subscribe ENU Twist per platform and step one verified catalog fleet.
+pub struct FleetPlantNode {
+    executor: Executor,
+    node: Node,
+    plant: FleetPlant,
+    latest: Arc<Mutex<FleetTwist>>,
+    drone_topic: String,
+    rover_topic: String,
+    skiff_topic: String,
+    surveyor_topic: String,
+    _drone: Subscription<Twist>,
+    _rover: Subscription<Twist>,
+    _skiff: Subscription<Twist>,
+    _surveyor: Subscription<Twist>,
+}
+
+impl FleetPlantNode {
+    pub fn coastal(name: &str, seed: u64) -> Result<Self, RclrsError> {
+        Self::with_domain(name, seed, None)
+    }
+
+    /// Harbor shoreline fleet on the same Twist topics as coastal.
+    pub fn harbor(name: &str, seed: u64) -> Result<Self, RclrsError> {
+        Self::with_plant(name, None, FleetTopics::COASTAL, FleetPlant::harbor(seed))
+    }
+
+    /// Inland air + ground. Hull Twists are ignored.
+    pub fn inland(name: &str, seed: u64) -> Result<Self, RclrsError> {
+        Self::with_plant(name, None, FleetTopics::COASTAL, FleetPlant::inland(seed))
+    }
+
+    /// Open water air + hulls. Rover Twists are ignored.
+    pub fn open_water(name: &str, seed: u64) -> Result<Self, RclrsError> {
+        Self::with_plant(
+            name,
+            None,
+            FleetTopics::COASTAL,
+            FleetPlant::open_water(seed),
+        )
+    }
+
+    pub fn with_domain(
+        name: &str,
+        seed: u64,
+        domain_id: Option<usize>,
+    ) -> Result<Self, RclrsError> {
+        Self::with_topics(name, seed, domain_id, FleetTopics::COASTAL)
+    }
+
+    pub fn with_topics(
+        name: &str,
+        seed: u64,
+        domain_id: Option<usize>,
+        topics: FleetTopics<'_>,
+    ) -> Result<Self, RclrsError> {
+        Self::with_plant(name, domain_id, topics, FleetPlant::coastal(seed))
+    }
+
+    /// Same Twist subscriptions as coastal, over an arbitrary [`FleetPlant`].
+    pub fn with_plant(
+        name: &str,
+        domain_id: Option<usize>,
+        topics: FleetTopics<'_>,
+        plant: FleetPlant,
+    ) -> Result<Self, RclrsError> {
+        let context = Context::new(
+            ["flight-ros2-fleet".to_string()],
+            InitOptions::new().with_domain_id(domain_id),
+        )?;
+        let executor = context.create_basic_executor();
+        let node = executor.create_node(name)?;
+        let latest = Arc::new(Mutex::new(FleetTwist::default()));
+        let drone_slot = Arc::clone(&latest);
+        let rover_slot = Arc::clone(&latest);
+        let skiff_slot = Arc::clone(&latest);
+        let surveyor_slot = Arc::clone(&latest);
+        let drone_sub = node.create_subscription(topics.drone, move |msg: Twist| {
+            drone_slot.lock().expect("twist").drone =
+                Some([msg.linear.x, msg.linear.y, msg.linear.z]);
+        })?;
+        let rover_sub = node.create_subscription(topics.rover, move |msg: Twist| {
+            rover_slot.lock().expect("twist").rover =
+                Some([msg.linear.x, msg.linear.y, msg.linear.z]);
+        })?;
+        let skiff_sub = node.create_subscription(topics.skiff, move |msg: Twist| {
+            skiff_slot.lock().expect("twist").skiff =
+                Some([msg.linear.x, msg.linear.y, msg.linear.z]);
+        })?;
+        let surveyor_sub = node.create_subscription(topics.surveyor, move |msg: Twist| {
+            surveyor_slot.lock().expect("twist").surveyor =
+                Some([msg.linear.x, msg.linear.y, msg.linear.z]);
+        })?;
+        Ok(Self {
+            executor,
+            node,
+            plant,
+            latest,
+            drone_topic: topics.drone.into(),
+            rover_topic: topics.rover.into(),
+            skiff_topic: topics.skiff.into(),
+            surveyor_topic: topics.surveyor.into(),
+            _drone: drone_sub,
+            _rover: rover_sub,
+            _skiff: skiff_sub,
+            _surveyor: surveyor_sub,
+        })
+    }
+
+    pub fn name(&self) -> String {
+        self.node.name()
+    }
+
+    pub fn node(&self) -> &Node {
+        &self.node
+    }
+
+    pub fn topics(&self) -> [&str; 4] {
+        [
+            &self.drone_topic,
+            &self.rover_topic,
+            &self.skiff_topic,
+            &self.surveyor_topic,
+        ]
+    }
+
+    pub fn plant(&self) -> &FleetPlant {
+        &self.plant
+    }
+
+    pub fn plant_mut(&mut self) -> &mut FleetPlant {
+        &mut self.plant
+    }
+
+    pub fn grant_all(&mut self) -> Result<(), BackendError> {
+        self.plant.grant_all()
+    }
+
+    /// Trip every live catalog body through [`FleetPlant::trip_safety`].
+    pub fn trip_safety(&mut self) -> Result<(), BackendError> {
+        self.plant.trip_safety()
+    }
+
+    /// Recover every live catalog body through [`FleetPlant::recover_safety`].
+    pub fn recover_safety(&mut self) -> Result<(), BackendError> {
+        self.plant.recover_safety()
+    }
+
+    /// Land, park, and dock every live catalog body through [`FleetPlant::return_all`].
+    pub fn return_all(&mut self) -> Result<(), BackendError> {
+        self.plant.return_all()
+    }
+
+    /// Takeoff → Airborne through [`FleetPlant::airborne`].
+    pub fn airborne(&mut self) -> Result<(), BackendError> {
+        self.plant.airborne()
+    }
+
+    /// Hold station on catalog hulls through [`FleetPlant::station_all`].
+    pub fn station_all(&mut self) -> Result<(), BackendError> {
+        self.plant.station_all()
+    }
+
+    /// Resume Underway on catalog hulls through [`FleetPlant::resume_all`].
+    pub fn resume_all(&mut self) -> Result<(), BackendError> {
+        self.plant.resume_all()
+    }
+
+    /// Dock catalog hulls through [`FleetPlant::dock_all`].
+    pub fn dock_all(&mut self) -> Result<(), BackendError> {
+        self.plant.dock_all()
+    }
+
+    /// Halt the rover through [`FleetPlant::park_all`].
+    pub fn park_all(&mut self) -> Result<(), BackendError> {
+        self.plant.park_all()
+    }
+
+    /// Hold the drone at its current NED pose through [`FleetPlant::hold`].
+    pub fn hold(&mut self) -> Result<(), BackendError> {
+        self.plant.hold()
+    }
+
+    /// Drain the ROS 2 graph, apply the latest Twists, take one verified step.
+    pub fn spin_step(&mut self, dt: f32, timeout: Duration) -> Result<(), BackendError> {
+        let _ = self
+            .executor
+            .spin(SpinOptions::spin_once().timeout(timeout));
+        let twist = *self.latest.lock().expect("twist");
+        self.plant.apply_twists(twist)?;
+        self.plant.step(dt)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::VelocityMode;
+    use rclrs::Context;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn rclrs_roundtrip_ned_velocity_as_enu_twist() {
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let topic = format!("/flight_core/cmd_vel_{pid}");
+        let domain = 171usize;
+        let context = Context::new(
+            ["flight-ros2-test".to_string()],
+            InitOptions::new().with_domain_id(Some(domain)),
+        )
+        .expect("rcl context");
+        let mut executor = context.create_basic_executor();
+        let pub_node = executor
+            .create_node(&format!("fc_pub_{pid}"))
+            .expect("pub node");
+        let sub_node = executor
+            .create_node(&format!("fc_sub_{pid}"))
+            .expect("sub node");
+        let publisher = pub_node
+            .create_publisher::<Twist>(topic.as_str())
+            .expect("publisher");
+        let got = Arc::new(Mutex::new(None));
+        let slot = Arc::clone(&got);
+        let _sub = sub_node
+            .create_subscription(topic.as_str(), move |msg: Twist| {
+                *slot.lock().expect("twist slot") = Some(msg);
+            })
+            .expect("subscription");
+
+        let mut mode = VelocityMode::new(Velocity::<Ned>::ned(0.4, 1.2, -0.3));
+        mode.on_activate();
+        let twist = Twist::from_ned_velocity(mode.update(0.02).velocity_ned.unwrap());
+        publisher.publish(twist).expect("publish");
+
+        let mut seen = None;
+        for _ in 0..40 {
+            let _ = executor.spin(SpinOptions::spin_once().timeout(Duration::from_millis(50)));
+            if let Some(msg) = *got.lock().expect("lock") {
+                seen = Some(msg);
+                break;
+            }
+        }
+        let msg = seen.expect("did not receive Twist on the ROS 2 graph");
+        assert!((msg.linear.x - 1.2).abs() < 1e-6, "east {}", msg.linear.x);
+        assert!((msg.linear.y - 0.4).abs() < 1e-6, "north {}", msg.linear.y);
+        assert!((msg.linear.z - 0.3).abs() < 1e-6, "up {}", msg.linear.z);
+    }
+
+    #[test]
+    fn offboard_node_publishes_velocity_mode() {
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let mut node = OffboardNode::with_domain(
+            &format!("fc_smoke_{pid}"),
+            &format!("/flight_core/smoke_{pid}"),
+            Some(172),
+        )
+        .expect("offboard node");
+        let mut mode = VelocityMode::new(Velocity::<Ned>::ned(0.1, 0.0, 0.0));
+        mode.on_activate();
+        node.publish_mode(&mut mode, 0.02).expect("publish");
+        let _ = node.spin_once(Duration::from_millis(10));
+        assert_eq!(node.name(), format!("fc_smoke_{pid}"));
+    }
+
+    #[test]
+    fn plant_node_climbs_from_enu_twist() {
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let topic = format!("/flight_core/plant_{pid}");
+        let domain = 173usize;
+        let mut plant = PlantNode::with_domain(&format!("fc_plant_{pid}"), &topic, 1, Some(domain))
+            .expect("plant node");
+        plant.grant_offboard().expect("grant");
+        let publisher = plant
+            .node()
+            .create_publisher::<Twist>(topic.as_str())
+            .expect("publisher");
+        let climb = Twist::from_ned_velocity(Velocity::<Ned>::ned(0.0, 0.0, -1.2));
+
+        let alt0 = plant
+            .session()
+            .world()
+            .body("drone")
+            .unwrap()
+            .altitude_agl();
+        for _ in 0..50 {
+            publisher.publish(climb).expect("publish climb");
+            plant
+                .spin_step(0.02, Duration::from_millis(20))
+                .expect("spin step");
+        }
+        let world = plant.session().world();
+        let alt1 = world.body("drone").unwrap().altitude_agl();
+        assert!(alt1 > alt0 + 0.15, "ROS Twist plant climb {alt0} → {alt1}");
+        assert!(world.all_hold(), "{:?}", world.last_properties);
+        assert_eq!(plant.name(), format!("fc_plant_{pid}"));
+    }
+
+    #[test]
+    fn plant_node_trip_failsafe_then_recover_ready() {
+        use flight_core::vehicle::VehicleHandle;
+
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let mut plant = PlantNode::with_domain(
+            &format!("fc_plant_fs_{pid}"),
+            &format!("/flight_core/plant_fs_{pid}"),
+            1,
+            Some(175),
+        )
+        .expect("plant node");
+        plant.trip_failsafe().expect("trip");
+        match plant.session().aerial("drone").attach().unwrap() {
+            VehicleHandle::Failsafe(_) => {}
+            other => panic!("expected Failsafe, got {:?}", other.kind()),
+        }
+        plant.recover_ready().expect("recover");
+        match plant.session().aerial("drone").attach().unwrap() {
+            VehicleHandle::PreflightReady(_) => {}
+            other => panic!("expected Ready, got {:?}", other.kind()),
+        }
+        assert!(matches!(plant.recover_ready(), Err(BackendError::Protocol)));
+        assert!(plant.session().world().all_hold());
+    }
+
+    #[test]
+    fn fleet_plant_node_moves_four_domains() {
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let drone_topic = format!("/flight_core/fleet_drone_{pid}");
+        let rover_topic = format!("/flight_core/fleet_rover_{pid}");
+        let skiff_topic = format!("/flight_core/fleet_skiff_{pid}");
+        let surveyor_topic = format!("/flight_core/fleet_surveyor_{pid}");
+        let mut plant = FleetPlantNode::with_topics(
+            &format!("fc_fleet_{pid}"),
+            1,
+            Some(174),
+            FleetTopics {
+                drone: &drone_topic,
+                rover: &rover_topic,
+                skiff: &skiff_topic,
+                surveyor: &surveyor_topic,
+            },
+        )
+        .expect("fleet plant node");
+        plant.grant_all().expect("grant");
+        let pub_drone = plant
+            .node()
+            .create_publisher::<Twist>(drone_topic.as_str())
+            .expect("drone pub");
+        let pub_rover = plant
+            .node()
+            .create_publisher::<Twist>(rover_topic.as_str())
+            .expect("rover pub");
+        let pub_skiff = plant
+            .node()
+            .create_publisher::<Twist>(skiff_topic.as_str())
+            .expect("skiff pub");
+        let pub_surveyor = plant
+            .node()
+            .create_publisher::<Twist>(surveyor_topic.as_str())
+            .expect("surveyor pub");
+        let climb = Twist::from_ned_velocity(Velocity::<Ned>::ned(0.0, 0.0, -1.2));
+        let south = Twist::from_ned_velocity(Velocity::<Ned>::ned(-0.8, 0.0, 0.0));
+        let east = Twist::from_ned_velocity(Velocity::<Ned>::ned(0.0, 0.6, 0.0));
+        let north = Twist::from_ned_velocity(Velocity::<Ned>::ned(0.4, 0.0, 0.0));
+
+        let world0 = plant.plant().session().world();
+        let alt0 = world0.body("drone").unwrap().altitude_agl();
+        let n0 = world0.body("rover").unwrap().position_m[0];
+        let e0 = world0.body("skiff").unwrap().position_m[1];
+        let sn0 = world0.body("surveyor").unwrap().position_m[0];
+        for _ in 0..50 {
+            pub_drone.publish(climb).expect("publish climb");
+            pub_rover.publish(south).expect("publish south");
+            pub_skiff.publish(east).expect("publish east");
+            pub_surveyor.publish(north).expect("publish north");
+            plant
+                .spin_step(0.02, Duration::from_millis(20))
+                .expect("spin step");
+        }
+        let world = plant.plant().session().world();
+        let alt1 = world.body("drone").unwrap().altitude_agl();
+        let n1 = world.body("rover").unwrap().position_m[0];
+        let e1 = world.body("skiff").unwrap().position_m[1];
+        let sn1 = world.body("surveyor").unwrap().position_m[0];
+        assert!(alt1 > alt0 + 0.15, "ROS fleet drone {alt0} → {alt1}");
+        assert!(n1 < n0 - 0.1, "ROS fleet rover {n0} → {n1}");
+        assert!(e1 > e0 + 0.08, "ROS fleet skiff {e0} → {e1}");
+        assert!(sn1 > sn0 + 0.1, "ROS fleet surveyor {sn0} → {sn1}");
+        assert!(world.all_hold(), "{:?}", world.last_properties);
+        assert_eq!(plant.name(), format!("fc_fleet_{pid}"));
+        assert_eq!(
+            plant.topics(),
+            [
+                drone_topic.as_str(),
+                rover_topic.as_str(),
+                skiff_topic.as_str(),
+                surveyor_topic.as_str()
+            ]
+        );
+    }
+
+    #[test]
+    fn fleet_plant_node_trip_then_recover_safety() {
+        use flight_core::vehicle::{GroundHandle, MarineHandle, VehicleHandle};
+
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let mut plant = FleetPlantNode::with_domain(&format!("fc_fleet_fs_{pid}"), 1, Some(176))
+            .expect("fleet plant node");
+        plant.grant_all().expect("grant");
+        plant.trip_safety().expect("trip");
+        match plant.plant().session().aerial("drone").attach().unwrap() {
+            VehicleHandle::Failsafe(_) => {}
+            other => panic!("drone {:?}", other.kind()),
+        }
+        match plant.plant().session().ground("rover").attach().unwrap() {
+            GroundHandle::EStopped(_) => {}
+            other => panic!("rover {:?}", other.kind()),
+        }
+        match plant.plant().session().marine("skiff").attach().unwrap() {
+            MarineHandle::Failsafe(_) => {}
+            other => panic!("skiff {:?}", other.kind()),
+        }
+        plant.recover_safety().expect("recover");
+        match plant.plant().session().aerial("drone").attach().unwrap() {
+            VehicleHandle::PreflightReady(_) => {}
+            other => panic!("drone {:?}", other.kind()),
+        }
+        assert!(matches!(
+            plant.recover_safety(),
+            Err(BackendError::Protocol)
+        ));
+        plant.grant_all().expect("re-grant");
+        assert!(plant.plant().session().world().all_hold());
+    }
+
+    #[test]
+    fn fleet_plant_node_inland_has_no_hull() {
+        use flight_core::vehicle::{GroundHandle, VehicleHandle};
+
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let mut plant = FleetPlantNode::with_plant(
+            &format!("fc_fleet_inland_{pid}"),
+            Some(177),
+            FleetTopics::COASTAL,
+            FleetPlant::inland(1),
+        )
+        .expect("inland fleet node");
+        assert!(plant.plant().session().world().body("skiff").is_none());
+        plant.grant_all().expect("grant");
+        match plant.plant().session().aerial("drone").attach().unwrap() {
+            VehicleHandle::Takeoff(_) => {}
+            other => panic!("drone {:?}", other.kind()),
+        }
+        match plant.plant().session().ground("rover").attach().unwrap() {
+            GroundHandle::Moving(_) => {}
+            other => panic!("rover {:?}", other.kind()),
+        }
+        assert!(plant.plant().session().world().body("skiff").is_none());
+        plant.return_all().expect("return");
+        match plant.plant().session().aerial("drone").attach().unwrap() {
+            VehicleHandle::PreflightReady(_) => {}
+            other => panic!("drone {:?}", other.kind()),
+        }
+        assert!(plant.plant().session().world().all_hold());
+    }
+
+    #[test]
+    fn fleet_plant_node_open_water_has_no_rover() {
+        use flight_core::vehicle::{MarineHandle, VehicleHandle};
+
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let mut plant = FleetPlantNode::with_plant(
+            &format!("fc_fleet_water_{pid}"),
+            Some(178),
+            FleetTopics::COASTAL,
+            FleetPlant::open_water(1),
+        )
+        .expect("open water fleet node");
+        assert!(plant.plant().session().world().body("rover").is_none());
+        plant.grant_all().expect("grant");
+        match plant.plant().session().aerial("drone").attach().unwrap() {
+            VehicleHandle::Takeoff(_) => {}
+            other => panic!("drone {:?}", other.kind()),
+        }
+        match plant.plant().session().marine("skiff").attach().unwrap() {
+            MarineHandle::Underway(_) => {}
+            other => panic!("skiff {:?}", other.kind()),
+        }
+        assert!(plant.plant().session().world().body("rover").is_none());
+        plant.return_all().expect("return");
+        match plant.plant().session().marine("surveyor").attach().unwrap() {
+            MarineHandle::Docked(_) => {}
+            other => panic!("surveyor {:?}", other.kind()),
+        }
+        assert!(plant.plant().session().world().all_hold());
+    }
+
+    #[test]
+    fn fleet_plant_node_harbor_grants_four_bodies() {
+        use flight_core::vehicle::{GroundHandle, MarineHandle, VehicleHandle};
+
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let mut plant = FleetPlantNode::with_plant(
+            &format!("fc_fleet_harbor_{pid}"),
+            Some(179),
+            FleetTopics::COASTAL,
+            FleetPlant::harbor(1),
+        )
+        .expect("harbor fleet node");
+        assert_eq!(plant.plant().session().world().scenario, "harbor");
+        plant.grant_all().expect("grant");
+        match plant.plant().session().aerial("drone").attach().unwrap() {
+            VehicleHandle::Takeoff(_) => {}
+            other => panic!("drone {:?}", other.kind()),
+        }
+        match plant.plant().session().ground("rover").attach().unwrap() {
+            GroundHandle::Moving(_) => {}
+            other => panic!("rover {:?}", other.kind()),
+        }
+        match plant.plant().session().marine("surveyor").attach().unwrap() {
+            MarineHandle::Underway(_) => {}
+            other => panic!("surveyor {:?}", other.kind()),
+        }
+        assert!(plant.plant().session().world().all_hold());
+    }
+
+    #[test]
+    fn plant_node_hold_before_grant_is_protocol() {
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let mut plant = PlantNode::with_domain(
+            &format!("fc_plant_hold_{pid}"),
+            &format!("/flight_core/plant_hold_{pid}"),
+            1,
+            Some(180),
+        )
+        .expect("plant node");
+        assert!(matches!(plant.hold(), Err(BackendError::Protocol)));
+        plant.grant_offboard().expect("grant");
+        plant.hold().expect("hold after grant");
+        let pose = plant.session().world().body("drone").unwrap().position_m;
+        assert_eq!(
+            plant.session().world().body("drone").unwrap().hold_ned,
+            Some(pose)
+        );
+        assert!(plant.session().world().all_hold());
+    }
+
+    #[test]
+    fn fleet_plant_node_hold_before_grant_is_protocol() {
+        std::env::set_var("ROS_LOCALHOST_ONLY", "1");
+        let pid = std::process::id();
+        let mut plant = FleetPlantNode::with_domain(&format!("fc_fleet_hold_{pid}"), 1, Some(181))
+            .expect("fleet plant node");
+        assert!(matches!(plant.hold(), Err(BackendError::Protocol)));
+        plant.grant_all().expect("grant");
+        plant.hold().expect("hold after grant");
+        let pose = plant
+            .plant()
+            .session()
+            .world()
+            .body("drone")
+            .unwrap()
+            .position_m;
+        assert_eq!(
+            plant
+                .plant()
+                .session()
+                .world()
+                .body("drone")
+                .unwrap()
+                .hold_ned,
+            Some(pose)
+        );
+        assert!(plant.plant().session().world().all_hold());
     }
 }
