@@ -1,0 +1,8 @@
+error[E0599]: no method named `hold_station` found for struct `MarineVehicle<flight_core::vehicle::MarineFailsafe, B>` in the current scope
+ --> tests/ui/failsafe_station.rs:5:18
+  |
+5 |     let _ = hull.hold_station();
+  |                  ^^^^^^^^^^^^ method not found in `MarineVehicle<MarineFailsafe, B>`
+  |
+  = note: the method was found for
+          - `MarineVehicle<flight_core::vehicle::Underway, B>`
