@@ -9,7 +9,8 @@
 //! pose hold is tracking, so agents see pad, water, collisions, legal acts,
 //! and the hold target, not just land-cell drag fluid.
 //! After every `step`, mechanical properties are re-checked. `Lab::research`
-//! returns that vector on [`ResearchRun`]. Research traces are JSONL or
+//! returns that vector on [`ResearchRun`]. [`Experiment`] writes a run
+//! directory (JSONL + optional MCAP). Research traces are JSONL or
 //! Foxglove-compatible MCAP. [`Observation::tools`] / [`LegalTools`] list the
 //! only `(robot, cmd)` pairs plus `env_cmds` an agent may call; [`Lab::act`]
 //! and [`Lab::act_through_attach`] reject anything else as [`LabError::NotLegal`]
@@ -46,6 +47,7 @@ mod cmd;
 mod lab;
 mod observe;
 mod reject;
+mod runner;
 mod schema;
 mod script;
 
@@ -71,6 +73,7 @@ pub use research::{
     TypedStationResume, TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
     TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
 };
+pub use runner::{git_head, named_agent, Experiment, ExperimentSummary, RunError, RunRecord};
 pub use schema::{validate_instance, AGENT_ACTION_SCHEMA, OBSERVATION_SCHEMA, TIMED_ACTION_SCHEMA};
 
 #[cfg(test)]

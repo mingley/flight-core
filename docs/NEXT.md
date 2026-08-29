@@ -51,6 +51,8 @@ Goal: an agent can experiment and understand **without** reading kernel source, 
 
 ### A3. Closed-loop experiment runner
 
+**Status: landed.** `cargo run -p robot-lab --example run` (library: [`Experiment`]) takes `scenario`, seed / seed list / `--from`--`--to`, `dt`, `steps`, typed `--agent` or `--jsonl`, and writes a run directory (`run.json` with `ResearchRun` + git commit, observations JSONL, actions JSONL, optional MCAP). Exit 1 if `all_hold` is false or `--require-property` fails. Harbor seed sweep (`typed-fleet-hold`, seeds 1 and 3) is a crate test. Each tick is still one `WorldSession::step` (P12).
+
 **Why:** `Lab::research` is a library. World-class tooling is a repeatable **run**.
 
 **Acceptance:**

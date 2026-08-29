@@ -33,4 +33,7 @@ name = "probe"
 name = "agent"
 
 [[example]]
+name = "run"
+
+[[example]]
 name = "typed"

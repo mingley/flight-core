@@ -23,7 +23,7 @@ pub use typed_marine::{
     TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
 };
 
-use crate::{AgentAction, Lab, Observation, RejectTrace};
+use crate::{AgentAction, Lab, Observation, RejectTrace, TimedAction};
 use robot_world::{Property, SphereHit};
 use serde::Serialize;
 
@@ -97,18 +97,33 @@ impl std::fmt::Display for ResearchRun {
 
 impl Lab {
     /// Run `agent` for `steps` ticks. Each tick: observe, apply the agent's
-    /// command vector through [`Self::act_through_attach`], then one verified
-    /// step. Illegal JSON probes still bounce. Typed agents that grant on
-    /// handles and return an empty vector keep `actions_applied == 0`.
-    /// Stops early if a property fails (the violating successor was not
-    /// committed).
+    /// command vector through [`Self::act_through_attach`], then **one**
+    /// verified step (P12). Illegal JSON probes still bounce. Typed agents
+    /// that grant on handles and return an empty vector keep
+    /// `actions_applied == 0`. Stops early if a property fails (the violating
+    /// successor was not committed).
     pub fn research(&mut self, agent: &mut impl ResearchAgent, dt: f32, steps: u32) -> ResearchRun {
+        self.research_with(agent, dt, steps, |_| {}, |_| {})
+    }
+
+    /// Same loop as [`Self::research`], with per-tick observation and newly
+    /// logged action hooks for the experiment runner (NEXT A3).
+    pub fn research_with(
+        &mut self,
+        agent: &mut (impl ResearchAgent + ?Sized),
+        dt: f32,
+        steps: u32,
+        mut on_obs: impl FnMut(&Observation),
+        mut on_act: impl FnMut(&TimedAction),
+    ) -> ResearchRun {
         let mut actions_applied = 0usize;
         let mut actions_rejected = 0usize;
         let mut rejects = Vec::new();
         let mut ran = 0u32;
         for _ in 0..steps {
             let obs = self.observe();
+            on_obs(&obs);
+            let log_at = self.log.len();
             let actions = agent.act(self, &obs);
             for a in actions {
                 match self.act_through_attach(a) {
@@ -121,12 +136,16 @@ impl Lab {
                     }
                 }
             }
+            for timed in &self.log[log_at..] {
+                on_act(timed);
+            }
             self.step(dt);
             ran += 1;
             if !self.all_hold() {
                 break;
             }
         }
+        on_obs(&self.observe());
         let world = self.world();
         let broken: Vec<String> = world
             .last_properties
