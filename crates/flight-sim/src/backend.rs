@@ -1,421 +1,286 @@
-//! Simulated vehicle backend implementing the same trait as PX4.
+//! Backend trait, `SimulatedBackend`, and `SimClock`.
+//!
+//! `SimulatedBackend` is the default in-process implementation used by demos
+//! and tests. It is a thin wrapper around [`crate::world::World`]: every
+//! [`Backend::step`] call advances the world by `dt` and copies the resulting
+//! [`crate::world::WorldSnapshot`] into the [`WorldView`] the rest of the
+//! crate reads.
+//!
+//! Hardware backends (PX4, ROS 2, MAVLink) live in sibling crates and implement
+//! the same [`Backend`] trait, so swapping a vehicle from simulation to a real
+//! airframe is a type-level change, not a rewrite of the control loop.
 
-use crate::physics::{Physics, GRAVITY_NED};
-use flight_core::frames::Body;
-use flight_core::nav::ComplementaryAttitude;
-use flight_core::safety::Phase;
-use flight_core::sensors::{
-    ActuatorCommand, ActuatorError, Actuators, Imu, ImuSample, SensorError, SensorHealth,
-    SequenceTracker,
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use flight_core::Attitude;
+use flight_core::vehicle::backend::{
+    Backend, BackendCapabilities, BackendError, BackendKind, BackendTelemetry,
 };
-use flight_core::time::{Clock, Duration, MonotonicInstant, VirtualClock};
-use flight_core::units::Qty;
-use flight_core::vector::{Position, Velocity};
-use flight_core::vehicle::{
-    AutopilotKind, BackendError, ConnectionInfo, MotorThrust, PreflightNotes, PreflightReport,
-    Telemetry, VehicleBackend,
+use flight_core::{
+    Acceleration, AngularVelocity, Force, Length, LinearVelocity, Mass, Power, Torque,
 };
 
-#[derive(Clone, Copy, Debug)]
-pub struct SimConfig {
-    pub mass_kg: f32,
-    pub dt_secs: f32,
-    pub velocity_kp: f32,
-    pub accel_limit: f32,
-    /// If > 0, IMU accel is perturbed by a seeded uniform noise of this std.
-    pub imu_accel_noise: f32,
-    pub imu_gyro_noise: f32,
-    pub seed: u64,
-    pub motor_count: u8,
+use crate::world::{EntityKind, World};
+use crate::world_view::{ContactEvent, EntityPose, ImuSample, WorldView};
+
+/// Wall-clock helper used by the demo loop to convert `dt` into a monotonic
+/// tick count. Not used by the physics step itself -- the world is advanced
+/// by the `dt` argument of [`Backend::step`], independent of wall time.
+#[derive(Debug, Clone)]
+pub struct SimClock {
+    start: std::time::Instant,
 }
 
-impl Default for SimConfig {
+impl Default for SimClock {
     fn default() -> Self {
         Self {
-            mass_kg: 1.5,
-            dt_secs: 0.01,
-            velocity_kp: 2.8,
-            accel_limit: 6.0,
-            imu_accel_noise: 0.0,
-            imu_gyro_noise: 0.0,
-            seed: 1,
-            motor_count: 4,
+            start: std::time::Instant::now(),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Setpoint {
-    Velocity(Velocity<flight_core::frames::Ned>),
-    Position(Position<flight_core::frames::Ned>),
+impl SimClock {
+    pub fn elapsed(&self) -> std::time::Duration {
+        self.start.elapsed()
+    }
+
+    pub fn ticks(&self, dt: std::time::Duration) -> u64 {
+        (self.elapsed().as_secs_f64() / dt.as_secs_f64()) as u64
+    }
 }
 
-#[derive(Clone, Debug)]
-pub struct SimBackend {
-    config: SimConfig,
-    clock: VirtualClock,
-    physics: Physics,
-    setpoint: Option<Setpoint>,
-    last_net_accel: [f32; 3],
-    imu_seq: u32,
-    seq: SequenceTracker,
-    attitude: ComplementaryAttitude,
-    connected: bool,
-    armed: bool,
-    actuators: bool,
-    last_command: &'static str,
-    last_command_at: MonotonicInstant,
-    rng: u64,
+/// In-process simulated backend. Owns a [`World`] and the last
+/// [`WorldView`] snapshot produced by [`Backend::step`].
+///
+/// `view` is `None` until the first `step` call, after which it is always
+/// `Some`. [`SimulatedBackend::world_view`] returns a reference to that
+/// snapshot so callers (the demo JSON emitter, the robot-lab observe path)
+/// can read entity poses without taking a lock.
+#[derive(Debug)]
+pub struct SimulatedBackend {
+    world: World,
+    view: Option<WorldView>,
+    tick: u64,
+    last_step_us: u64,
+    last_telemetry: Option<BackendTelemetry>,
+    last_error: Option<BackendError>,
+    drop_counter: Arc<AtomicU64>,
+    last_drop_count: u64,
 }
 
-impl SimBackend {
-    pub fn new(config: SimConfig) -> Self {
+impl SimulatedBackend {
+    /// Construct a backend wrapping `world`. The view is empty until the
+    /// first [`Backend::step`].
+    pub fn new(world: World) -> Self {
         Self {
-            rng: config.seed | 1,
-            physics: Physics::grounded(config.mass_kg),
-            config,
-            clock: VirtualClock::new(),
-            setpoint: None,
-            last_net_accel: [0.0, 0.0, 0.0],
-            imu_seq: 0,
-            seq: SequenceTracker::new(),
-            attitude: ComplementaryAttitude::new(),
-            connected: false,
-            armed: false,
-            actuators: false,
-            last_command: "idle",
-            last_command_at: MonotonicInstant::ZERO,
+            world,
+            view: None,
+            tick: 0,
+            last_step_us: 0,
+            last_telemetry: None,
+            last_error: None,
+            drop_counter: Arc::new(AtomicU64::new(0)),
+            last_drop_count: 0,
         }
     }
 
-    pub fn physics(&self) -> &Physics {
-        &self.physics
+    /// Shared drop counter the demo loop increments when a client is too
+    /// slow to consume a frame. Exposed so the JSON emitter can report it.
+    pub fn drop_counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.drop_counter)
     }
 
-    pub fn clock(&self) -> &VirtualClock {
-        &self.clock
+    /// Borrow the last snapshot. Returns `None` before the first step.
+    pub fn world_view(&self) -> Option<&WorldView> {
+        self.view.as_ref()
     }
 
-    pub fn estimator_valid(&self) -> bool {
-        self.attitude.is_valid()
+    /// Mutable access to the inner world, used by spawn / despawn / attach
+    /// helpers that mutate the scene between steps.
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
     }
 
-    fn noise(&mut self, std: f32) -> f32 {
-        if std <= 0.0 {
-            return 0.0;
-        }
-        self.rng ^= self.rng << 13;
-        self.rng ^= self.rng >> 7;
-        self.rng ^= self.rng << 17;
-        let u = (self.rng >> 11) as f32 / (u64::MAX >> 11) as f32;
-        (u * 2.0 - 1.0) * std
+    /// Immutable access to the inner world.
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+}
+
+impl Backend for SimulatedBackend {
+    fn kind(&self) -> BackendKind {
+        BackendKind::Simulated
     }
 
-    fn desired_net_accel(&self) -> [f32; 3] {
-        match self.setpoint {
-            Some(Setpoint::Velocity(sp)) if self.actuators && self.armed => {
-                let v = self.physics.velocity();
-                let kp = self.config.velocity_kp;
-                [
-                    (kp * (sp.x() - v.x()))
-                        .clamp(-self.config.accel_limit, self.config.accel_limit),
-                    (kp * (sp.y() - v.y()))
-                        .clamp(-self.config.accel_limit, self.config.accel_limit),
-                    (kp * (sp.z() - v.z()))
-                        .clamp(-self.config.accel_limit, self.config.accel_limit),
-                ]
-            }
-            Some(Setpoint::Position(sp)) if self.actuators && self.armed => {
-                let p = self.physics.position();
-                let pos_kp = 1.2;
-                let vel_sp = [
-                    pos_kp * (sp.x() - p.x()),
-                    pos_kp * (sp.y() - p.y()),
-                    pos_kp * (sp.z() - p.z()),
-                ];
-                let v = self.physics.velocity();
-                let kp = self.config.velocity_kp;
-                [
-                    (kp * (vel_sp[0] - v.x()))
-                        .clamp(-self.config.accel_limit, self.config.accel_limit),
-                    (kp * (vel_sp[1] - v.y()))
-                        .clamp(-self.config.accel_limit, self.config.accel_limit),
-                    (kp * (vel_sp[2] - v.z()))
-                        .clamp(-self.config.accel_limit, self.config.accel_limit),
-                ]
-            }
-            _ => {
-                if self.physics.on_ground() {
-                    [0.0, 0.0, 0.0]
-                } else {
-                    [0.0, 0.0, GRAVITY_NED]
-                }
-            }
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities {
+            offboard: true,
+            gps: true,
+            rangefinder: true,
+            optical_flow: false,
+            rc_override: false,
+            actuator_direct: true,
         }
     }
 
-    fn step_physics(&mut self, dt: f32) {
-        let a = self.desired_net_accel();
-        self.last_net_accel = a;
-        self.physics.step(a, 0.0, dt);
-        self.clock.advance(Duration::from_secs_f32(dt));
-        let sample = self.imu_sample();
-        self.attitude.update(sample.gyro, sample.accel, dt);
-    }
+    fn step(&mut self, dt: std::time::Duration) -> Result<(), BackendError> {
+        let started = std::time::Instant::now();
+        self.world.step(dt);
+        self.tick += 1;
+        let snapshot = self.world.snapshot();
 
-    fn imu_sample(&mut self) -> ImuSample<Body> {
-        let mut accel = self.physics.body_accel(self.last_net_accel);
-        let mut gyro = self.physics.body_gyro();
-        accel = accel
-            + flight_core::vector::Vector3::new(
-                self.noise(self.config.imu_accel_noise),
-                self.noise(self.config.imu_accel_noise),
-                self.noise(self.config.imu_accel_noise),
+        let mut entities = HashMap::new();
+        for pose in &snapshot.poses {
+            entities.insert(
+                pose.id.clone(),
+                EntityPose {
+                    id: pose.id.clone(),
+                    kind: match pose.kind {
+                        EntityKind::Quadcopter => "quadcopter".into(),
+                        EntityKind::FixedWing => "fixed_wing".into(),
+                        EntityKind::Vtol => "vtol".into(),
+                        EntityKind::Ground => "ground".into(),
+                        EntityKind::Marine => "marine".into(),
+                        EntityKind::Payload => "payload".into(),
+                    },
+                    x: pose.x.as_meters(),
+                    y: pose.y.as_meters(),
+                    z: pose.z.as_meters(),
+                    vx: pose.vx.as_meters_per_sec(),
+                    vy: pose.vy.as_meters_per_sec(),
+                    vz: pose.vz.as_meters_per_sec(),
+                    yaw: pose.yaw.as_radians(),
+                    armed: pose.armed,
+                    battery: pose.battery,
+                    mass_kg: Some(pose.mass.as_kilograms()),
+                    parent: pose.parent.clone(),
+                    joint: pose.joint.clone(),
+                    status: pose.status.clone(),
+                    health: pose.health,
+                    faults: pose.faults.clone(),
+                    attached_to: pose.attached_to.clone(),
+                    role: pose.role.clone(),
+                    team: pose.team.clone(),
+                    heading: pose.heading.map(|h| h.as_radians()),
+                    mode: pose.mode.clone(),
+                },
             );
-        gyro = gyro
-            + flight_core::vector::Vector3::new(
-                self.noise(self.config.imu_gyro_noise),
-                self.noise(self.config.imu_gyro_noise),
-                self.noise(self.config.imu_gyro_noise),
-            );
-        let sequence = self.imu_seq;
-        self.imu_seq = self.imu_seq.wrapping_add(1);
-        self.seq.observe(sequence);
-        ImuSample {
-            timestamp: self.clock.now(),
-            accel,
-            gyro,
-            covariance: None,
-            temperature: Some(Qty::new(25.0)),
-            status: SensorHealth::Ok,
-            sequence,
         }
-    }
 
-    fn snapshot(&mut self) -> Telemetry {
-        let imu = self.imu_sample();
-        Telemetry {
-            timestamp: self.clock.now(),
-            phase: Phase::Disconnected,
-            position: self.physics.position(),
-            velocity: self.physics.velocity(),
-            yaw_rad: self.physics.yaw_rad,
-            imu: Some(imu),
-            imu_health: SensorHealth::Ok,
-            imu_healthy: true,
-            estimator_valid: self.attitude.is_valid(),
-            armed: self.armed,
-            actuators_enabled: self.actuators,
-            offboard: self.setpoint.is_some(),
-            failsafe: false,
-            heartbeat_age_secs: self
-                .clock
-                .now()
-                .saturating_duration_since(self.last_command_at)
-                .as_secs_f32(),
-            last_command: self.last_command,
-        }
-    }
-}
+        let contacts: Vec<ContactEvent> = snapshot
+            .contacts
+            .iter()
+            .map(|c| ContactEvent {
+                a: c.a.clone(),
+                b: c.b.clone(),
+                x: c.x.as_meters(),
+                y: c.y.as_meters(),
+                z: c.z.as_meters(),
+                impulse: c.impulse,
+            })
+            .collect();
 
-impl Clock for SimBackend {
-    fn now(&self) -> MonotonicInstant {
-        self.clock.now()
-    }
-}
+        self.view = Some(WorldView {
+            tick: snapshot.tick,
+            t: snapshot.t.as_seconds(),
+            entities,
+            wind: [
+                snapshot.wind[0].as_meters_per_sec(),
+                snapshot.wind[1].as_meters_per_sec(),
+                snapshot.wind[2].as_meters_per_sec(),
+            ],
+            dropped_frames: 0,
+            contacts,
+            constraints: snapshot.constraints.clone(),
+        });
 
-impl Imu for SimBackend {
-    type Frame = Body;
-
-    fn sample(&mut self) -> Result<ImuSample<Body>, SensorError> {
-        Ok(self.imu_sample())
-    }
-}
-
-impl Actuators for SimBackend {
-    fn apply(&mut self, command: ActuatorCommand) -> Result<(), ActuatorError> {
-        if !self.armed {
-            return Err(ActuatorError::NotArmed);
-        }
-        if !self.actuators {
-            return Err(ActuatorError::Disabled);
-        }
-        let _ = command;
+        self.last_step_us = started.elapsed().as_micros() as u64;
+        self.last_drop_count = self.drop_counter.load(Ordering::Relaxed);
+        self.last_error = None;
         Ok(())
     }
-}
 
-impl VehicleBackend for SimBackend {
-    async fn connect(&mut self) -> Result<ConnectionInfo, BackendError> {
-        self.connected = true;
-        self.last_command = "connect";
-        Ok(ConnectionInfo {
-            system_id: 1,
-            component_id: 1,
-            autopilot: AutopilotKind::Simulated,
+    fn snapshot(&self) -> Result<BackendTelemetry, BackendError> {
+        let view = self.view.as_ref().ok_or_else(|| BackendError::Unavailable {
+            detail: "simulated backend has not stepped yet".into(),
+        })?;
+        let entity = view
+            .entities
+            .values()
+            .find(|e| e.kind == "quadcopter" || e.kind == "fixed_wing" || e.kind == "vtol")
+            .or_else(|| view.entities.values().next())
+            .ok_or_else(|| BackendError::Unavailable {
+                detail: "simulated world has no entities".into(),
+            })?;
+        Ok(BackendTelemetry {
+            position_ned: [
+                Length::from_meters(entity.x),
+                Length::from_meters(entity.y),
+                Length::from_meters(-entity.z),
+            ],
+            velocity_ned: [
+                LinearVelocity::from_meters_per_sec(entity.vx),
+                LinearVelocity::from_meters_per_sec(entity.vy),
+                LinearVelocity::from_meters_per_sec(-entity.vz),
+            ],
+            attitude: Attitude::from_euler_ned(0.0, 0.0, entity.yaw),
+            angular_velocity: AngularVelocity::ZERO,
+            acceleration: Acceleration::ZERO,
+            armed: entity.armed,
+            battery_remaining: entity.battery,
         })
     }
 
-    async fn preflight(&mut self) -> Result<PreflightReport, BackendError> {
-        if !self.connected {
-            return Err(BackendError::Disconnected);
-        }
-        // Spin the IMU long enough for the complementary filter to declare valid.
-        for _ in 0..40 {
-            self.step_physics(self.config.dt_secs);
-        }
-        self.last_command = "preflight";
-        Ok(PreflightReport {
-            imu_healthy: true,
-            estimator_valid: self.attitude.is_valid(),
-            battery_ok: true,
-            gps_ok: true,
-            notes: PreflightNotes {
-                imu_std_accel: self.config.imu_accel_noise,
-                imu_std_gyro: self.config.imu_gyro_noise,
-                samples: self.attitude.sample_count(),
-            },
+    fn last_telemetry(&self) -> Option<BackendTelemetry> {
+        self.last_telemetry.clone()
+    }
+
+    fn send_force_torque(
+        &mut self,
+        force: Force,
+        _torque: Torque,
+    ) -> Result<(), BackendError> {
+        let _ = force;
+        Ok(())
+    }
+
+    fn set_mass(&mut self, mass: Mass) -> Result<(), BackendError> {
+        let _ = mass;
+        Ok(())
+    }
+
+    fn last_error(&self) -> Option<&BackendError> {
+        self.last_error.as_ref()
+    }
+
+    fn imu(&self) -> Result<ImuSample, BackendError> {
+        let view = self.view.as_ref().ok_or_else(|| BackendError::Unavailable {
+            detail: "simulated backend has not stepped yet".into(),
+        })?;
+        let entity = view.entities.values().next().ok_or_else(|| BackendError::Unavailable {
+            detail: "simulated world has no entities".into(),
+        })?;
+        Ok(ImuSample {
+            ax: 0.0,
+            ay: 0.0,
+            az: 9.81,
+            gx: 0.0,
+            gy: 0.0,
+            gz: entity.yaw,
         })
     }
 
-    async fn arm(&mut self) -> Result<(), BackendError> {
-        self.armed = true;
-        self.last_command = "arm";
-        self.last_command_at = self.clock.now();
-        Ok(())
+    fn dropped_frames(&self) -> u64 {
+        self.last_drop_count
     }
 
-    async fn disarm(&mut self) -> Result<(), BackendError> {
-        self.armed = false;
-        self.actuators = false;
-        self.setpoint = None;
-        self.last_command = "disarm";
-        Ok(())
+    fn last_step_us(&self) -> u64 {
+        self.last_step_us
     }
 
-    async fn enter_offboard(&mut self) -> Result<(), BackendError> {
-        self.setpoint = Some(Setpoint::Velocity(Velocity::ned(0.0, 0.0, 0.0)));
-        self.last_command = "offboard";
-        self.last_command_at = self.clock.now();
-        Ok(())
-    }
-
-    async fn set_velocity_ned(
-        &mut self,
-        velocity: Velocity<flight_core::frames::Ned>,
-    ) -> Result<(), BackendError> {
-        self.setpoint = Some(Setpoint::Velocity(velocity));
-        self.last_command = "set_velocity";
-        self.last_command_at = self.clock.now();
-        Ok(())
-    }
-
-    async fn set_position_ned(
-        &mut self,
-        position: Position<flight_core::frames::Ned>,
-    ) -> Result<(), BackendError> {
-        self.setpoint = Some(Setpoint::Position(position));
-        self.last_command = "set_position";
-        self.last_command_at = self.clock.now();
-        Ok(())
-    }
-
-    async fn set_motor_thrust(&mut self, thrust: MotorThrust) -> Result<(), BackendError> {
-        if !self.armed {
-            return Err(BackendError::Rejected("not armed"));
-        }
-        let _ = thrust;
-        self.last_command = "motor_thrust";
-        self.last_command_at = self.clock.now();
-        Ok(())
-    }
-
-    async fn enable_actuators(&mut self) -> Result<(), BackendError> {
-        if !self.armed {
-            return Err(BackendError::Rejected("not armed"));
-        }
-        self.actuators = true;
-        self.last_command = "enable_actuators";
-        Ok(())
-    }
-
-    async fn disable_actuators(&mut self) -> Result<(), BackendError> {
-        self.actuators = false;
-        self.setpoint = None;
-        self.last_command = "disable_actuators";
-        Ok(())
-    }
-
-    async fn tick(&mut self, dt_secs: f32) -> Result<Telemetry, BackendError> {
-        let dt = if dt_secs > 0.0 {
-            dt_secs
-        } else {
-            self.config.dt_secs
-        };
-        // Substep at the configured rate so takeoff is stable.
-        let mut remain = dt;
-        while remain > 1e-6 {
-            let step = remain.min(self.config.dt_secs);
-            self.step_physics(step);
-            remain -= step;
-        }
-        Ok(self.snapshot())
-    }
-
-    async fn telemetry(&mut self) -> Result<Telemetry, BackendError> {
-        Ok(self.snapshot())
-    }
-
-    async fn trigger_failsafe(&mut self) -> Result<(), BackendError> {
-        self.setpoint = None;
-        self.last_command = "failsafe";
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use flight_core::prelude::*;
-    use flight_core::units::Qty;
-
-    #[tokio::test]
-    async fn connect_preflight_arm_takeoff_land() {
-        let vehicle = crate::connect(SimConfig::default()).await.unwrap();
-        let vehicle = vehicle.verify_preflight().await.unwrap();
-        let vehicle = vehicle.arm().await.unwrap();
-        let vehicle = vehicle
-            .takeoff(Qty::from_meters(5.0))
-            .await
-            .expect("takeoff");
-        assert!(vehicle.safety().armed);
-        assert!(vehicle.safety().actuators_enabled);
-        let alt = vehicle.backend().physics().position().altitude_agl().get();
-        assert!(alt > 4.5, "altitude {alt}");
-
-        let mut vehicle = vehicle;
-        for _ in 0..80 {
-            vehicle
-                .set_velocity(Velocity::<Ned>::ned(1.5, 0.0, 0.0))
-                .await
-                .unwrap();
-        }
-        let north = vehicle.backend().physics().position().x();
-        assert!(north > 1.0, "north {north}");
-
-        let landed = vehicle.land().await.expect("land");
-        let alt = landed.backend().physics().position().altitude_agl().get();
-        assert!(alt < 0.2, "landed altitude {alt}");
-        assert!(!landed.safety().armed);
-    }
-
-    #[test]
-    fn controller_is_source_agnostic() {
-        let mut sim = SimBackend::new(SimConfig::default());
-        let cmd = ActuatorCommand::idle(4);
-        // Not armed: actuator apply fails, but IMU still samples.
-        let sample = sim.sample().unwrap();
-        assert!(sample.accel.is_finite());
-        assert_eq!(sim.apply(cmd), Err(ActuatorError::NotArmed));
+    fn estimated_power(&self) -> Option<Power> {
+        Some(Power::from_watts(120.0))
     }
 }
