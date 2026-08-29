@@ -102,7 +102,12 @@ impl Lab {
     /// that grant on handles and return an empty vector keep
     /// `actions_applied == 0`. Stops early if a property fails (the violating
     /// successor was not committed).
-    pub fn research(&mut self, agent: &mut impl ResearchAgent, dt: f32, steps: u32) -> ResearchRun {
+    pub fn research(
+        &mut self,
+        agent: &mut (impl ResearchAgent + ?Sized),
+        dt: f32,
+        steps: u32,
+    ) -> ResearchRun {
         self.research_with(agent, dt, steps, |_| {}, |_| {})
     }
 

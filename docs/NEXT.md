@@ -90,6 +90,8 @@ Goal: an agent can experiment and understand **without** reading kernel source, 
 
 ### A6. Local tool server (optional adapter)
 
+**Status: landed.** `flight-demo` binds `FLIGHT_DEMO_BIND` (default `0.0.0.0:47831`) with no auth. GET `/api/lab/observation`, GET `/api/lab/tools` (A1 `legal_cmds` / `env_cmds`), POST `/api/lab/action` (A1 `act_through_attach`), GET `/api/lab/replay`, POST `/api/lab/research` (closed-loop `Lab::research`, one `WorldSession::step` per tick). No raw NED velocity route. HTML/`include_str` unchanged (no remaining-spec §8 D2).
+
 **Why:** LLM agents speak HTTP/MCP. The lab must not grow auth or cloud.
 
 **Acceptance:**
@@ -230,12 +232,11 @@ Only after A is usable and B1–B2 have a written status (landed or explicitly d
 
 ## Suggested implementation order
 
-1. **A3 → A4 → A5 → A6** (runner, structured rejects, richer observe, local tools).
-2. **B1 / B2** (ground hold, marine DP) — domain-complete control.
-3. **B3 / B4 / B5** (estimation bit, planning, coordination).
-4. **C1–C3** (proofs, traces, scenarios) can overlap A3.
-5. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
-6. **D\*** morphologies last.
+1. **A1–A6 landed.** Next: **B1 / B2** (ground hold, marine DP).
+2. **B3 / B4 / B5** (estimation bit, planning, coordination).
+3. **C1–C3** (proofs, traces, scenarios) can overlap A3.
+4. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
+5. **D\*** morphologies last.
 
 Items in remaining-spec §2 are constraints on **every** step, not a phase.
 

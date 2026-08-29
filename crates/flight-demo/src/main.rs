@@ -6,19 +6,23 @@
 //! offered when those bodies are in the scene. Skiff and AUV failsafe /
 //! recover / dock appear on coastal, harbor, and open water (hidden inland).
 //! Station / resume on each hull and drone airborne / hold sit under return.
-//! POST `/api/hold` queues [`LabCmd::Hold`], which walks [`Lab::attach_hold`]
-//! on the live plant (current NED pose, OffboardControl). POST `/api/failsafe`
-//! queues [`LabCmd::Failsafe`] on the same [`Lab::act_through_attach`] path as
-//! hold, airborne, and station. Other buttons queue [`LabCmd`] through that
-//! path as well.
+//! POST `/api/lab/action` queues [`LabCmd`] through [`Lab::act_through_attach`]
+//! (A1 legal-command gate). GET `/api/lab/observation` is the live snapshot.
+//! GET `/api/lab/tools` lists A1 `(robot, cmd)` tools. GET `/api/lab/replay`
+//! is action-log metadata. POST `/api/lab/research` runs a closed-loop
+//! [`Lab::research`] on a fresh lab with the console scenario/seed (one
+//! `WorldSession::step` per tick). Binds `FLIGHT_DEMO_BIND` (default
+//! `0.0.0.0:47831`). No authentication. No raw NED velocity that skips
+//! `legal_cmds`.
 
 use axum::extract::State;
 use axum::http::header::{HeaderMap, HeaderValue, CACHE_CONTROL};
+use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
-use robot_lab::{AgentAction, Lab, LabCmd, Observation};
+use robot_lab::{named_agent, AgentAction, Lab, LabCmd, LegalTools, Observation, ResearchRun};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -38,6 +42,7 @@ struct App {
     scripted: AtomicBool,
     scenario: Mutex<String>,
     seed: Mutex<u64>,
+    replay: Mutex<ReplayMeta>,
 }
 
 #[derive(Deserialize)]
@@ -45,6 +50,54 @@ struct OpenReq {
     scenario: String,
     #[serde(default = "default_seed")]
     seed: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ReplayMeta {
+    t: f32,
+    actions: usize,
+    cmds: Vec<String>,
+    scenario: String,
+    seed: u64,
+}
+
+impl ReplayMeta {
+    fn from_lab(lab: &Lab) -> Self {
+        let world = lab.world();
+        Self {
+            t: world.t,
+            actions: lab.log.len(),
+            cmds: lab
+                .log
+                .iter()
+                .map(|a| a.action.cmd.as_str().to_string())
+                .collect(),
+            scenario: world.scenario.into(),
+            seed: world.seed,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ResearchReq {
+    #[serde(default = "default_research_agent")]
+    agent: String,
+    #[serde(default = "default_research_steps")]
+    steps: u32,
+    #[serde(default = "default_research_dt")]
+    dt: f32,
+}
+
+fn default_research_agent() -> String {
+    "typed-fleet-hold".into()
+}
+
+fn default_research_steps() -> u32 {
+    8
+}
+
+fn default_research_dt() -> f32 {
+    0.02
 }
 
 fn default_seed() -> u64 {
@@ -76,6 +129,7 @@ async fn main() {
         scripted: AtomicBool::new(true),
         scenario: Mutex::new("coastal".into()),
         seed: Mutex::new(1),
+        replay: Mutex::new(ReplayMeta::from_lab(&lab)),
     });
 
     let worker = app.clone();
@@ -86,10 +140,20 @@ async fn main() {
         }
     });
 
-    let router = Router::new()
+    let bind = std::env::var("FLIGHT_DEMO_BIND").unwrap_or_else(|_| "0.0.0.0:47831".into());
+    let listener = TcpListener::bind(&bind).await.expect("bind");
+    eprintln!("robot-lab listening on http://{bind}");
+    axum::serve(listener, router(app)).await.expect("server");
+}
+
+fn router(app: Arc<App>) -> Router {
+    Router::new()
         .route("/", get(index))
         .route("/api/telemetry", get(observation))
         .route("/api/lab/observation", get(observation))
+        .route("/api/lab/tools", get(tools))
+        .route("/api/lab/replay", get(replay))
+        .route("/api/lab/research", post(research))
         .route("/api/lab/action", post(action))
         .route("/api/lab/reset", post(reset))
         .route("/api/lab/open", post(open))
@@ -115,12 +179,7 @@ async fn main() {
         .route("/api/airborne", post(airborne))
         .route("/api/hold", post(hold))
         .with_state(app)
-        .layer(CorsLayer::permissive());
-
-    let bind = std::env::var("FLIGHT_DEMO_BIND").unwrap_or_else(|_| "0.0.0.0:47831".into());
-    let listener = TcpListener::bind(&bind).await.expect("bind");
-    eprintln!("robot-lab listening on http://{bind}");
-    axum::serve(listener, router).await.expect("server");
+        .layer(CorsLayer::permissive())
 }
 
 async fn index() -> impl IntoResponse {
@@ -131,6 +190,34 @@ async fn index() -> impl IntoResponse {
 
 async fn observation(State(app): State<Arc<App>>) -> Json<Observation> {
     Json(app.rx.borrow().clone())
+}
+
+async fn tools(State(app): State<Arc<App>>) -> Json<LegalTools> {
+    Json(app.rx.borrow().tools())
+}
+
+async fn replay(State(app): State<Arc<App>>) -> Json<ReplayMeta> {
+    Json(app.replay.lock().await.clone())
+}
+
+async fn research(
+    State(app): State<Arc<App>>,
+    Json(req): Json<ResearchReq>,
+) -> Result<Json<ResearchRun>, (StatusCode, Json<OkMsg>)> {
+    let scenario = app.scenario.lock().await.clone();
+    let seed = *app.seed.lock().await;
+    let mut agent = named_agent(&req.agent).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(OkMsg {
+                ok: false,
+                error: Some(e.to_string()),
+                message: None,
+            }),
+        )
+    })?;
+    let mut lab = Lab::open(&scenario, seed).unwrap_or_else(|_| Lab::coastal(seed));
+    Ok(Json(lab.research(&mut *agent, req.dt, req.steps)))
 }
 
 async fn action(State(app): State<Arc<App>>, Json(act): Json<AgentAction>) -> impl IntoResponse {
@@ -280,6 +367,7 @@ async fn run_lab(app: &App) {
     let seed = *app.seed.lock().await;
     let mut lab = Lab::open(&name, seed).unwrap_or_else(|_| Lab::coastal(seed));
     let _ = app.tx.send(lab.observe());
+    *app.replay.lock().await = ReplayMeta::from_lab(&lab);
 
     loop {
         if app.reset.load(Ordering::SeqCst) {
@@ -301,10 +389,142 @@ async fn run_lab(app: &App) {
 
         lab.step(0.02);
         let _ = app.tx.send(lab.observe());
+        *app.replay.lock().await = ReplayMeta::from_lab(&lab);
         sleep(Duration::from_millis(25)).await;
 
         if lab.world().t > 40.0 && app.scripted.load(Ordering::SeqCst) {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    fn test_app() -> Arc<App> {
+        let lab = Lab::coastal(1);
+        let initial = lab.observe();
+        let (tx, rx) = watch::channel(initial);
+        Arc::new(App {
+            tx,
+            rx,
+            pending: Mutex::new(Vec::new()),
+            reset: AtomicBool::new(false),
+            scripted: AtomicBool::new(false),
+            scenario: Mutex::new("coastal".into()),
+            seed: Mutex::new(1),
+            replay: Mutex::new(ReplayMeta::from_lab(&lab)),
+        })
+    }
+
+    async fn body_json(res: axum::response::Response) -> serde_json::Value {
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn tools_route_lists_a1_legal_cmds_not_parked_drive() {
+        let res = router(test_app())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/lab/tools")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let v = body_json(res).await;
+        let env: Vec<_> = v["env_cmds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_str().unwrap())
+            .collect();
+        assert!(env.contains(&"set_wind"));
+        let tools = v["robot_tools"].as_array().unwrap();
+        assert!(tools
+            .iter()
+            .any(|t| t["robot"] == "rover" && t["cmd"] == "release"));
+        assert!(!tools
+            .iter()
+            .any(|t| t["robot"] == "rover" && t["cmd"] == "drive"));
+    }
+
+    #[tokio::test]
+    async fn observation_and_replay_routes() {
+        let app = test_app();
+        let obs = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/lab/observation")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(obs.status(), StatusCode::OK);
+        let o = body_json(obs).await;
+        assert_eq!(o["scenario"], "coastal");
+        assert!(o["broken"].as_array().unwrap().is_empty());
+
+        let replay = router(app)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/lab/replay")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::OK);
+        let r = body_json(replay).await;
+        assert_eq!(r["actions"], 0);
+        assert_eq!(r["scenario"], "coastal");
+    }
+
+    #[tokio::test]
+    async fn research_route_runs_typed_agent_one_step_per_tick() {
+        let res = router(test_app())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/lab/research")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"agent":"typed-fleet-hold","steps":4,"dt":0.02}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let run = body_json(res).await;
+        assert_eq!(run["agent"], "typed_fleet_hold");
+        assert_eq!(run["all_hold"], true);
+        assert_eq!(run["steps"], 4);
+        let t = run["t"].as_f64().unwrap();
+        assert!((t - 0.08).abs() < 1e-3, "P12: 4 × 0.02 ⇒ t≈0.08, got {t}");
+    }
+
+    #[tokio::test]
+    async fn research_route_rejects_unknown_agent() {
+        let res = router(test_app())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/lab/research")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"agent":"not-a-tool"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     }
 }
