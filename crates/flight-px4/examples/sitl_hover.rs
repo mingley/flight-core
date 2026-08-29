@@ -1,10 +1,15 @@
 //! PX4 SITL hover using the typed vehicle API.
 //!
-//! Requires a running PX4 SITL instance that publishes MAVLink on UDP 14540:
+//! Requires a running PX4 SITL instance that publishes MAVLink on UDP 14540.
+//! Headless SIH (no Gazebo) is enough:
 //!
 //! ```text
-//! make px4_sitl gz_x500
+//! PX4_SIM_MODEL=sihsim_quadx px4 -d          # .deb: sudo apt install ./px4_*.deb
+//! docker run --rm --network host -e PX4_SIM_MODEL=sihsim_quadx \
+//!   px4io/px4-sitl:v1.18.0-beta2 -d           # Hub has no v1.17.0 tag
+//! make px4_sitl gz_x500                      # full Gazebo, from a PX4 tree
 //! cargo run -p flight-px4 --example sitl_hover
+//! cargo test -p flight-px4 --test sitl_live -- --ignored
 //! ```
 //!
 //! Without SITL this example exits with a connection error — use
@@ -38,11 +43,14 @@ async fn main() {
         .await
         .expect("takeoff");
 
-    for _ in 0..50 {
+    for _ in 0..20 {
         vehicle
             .set_velocity(Velocity::<Ned>::ned(0.0, 0.0, 0.0))
             .await
-            .expect("hover");
+            .expect("climb settle");
+    }
+    for _ in 0..30 {
+        vehicle.hold().await.expect("hold");
     }
 
     let _ = vehicle.land().await.expect("land");
