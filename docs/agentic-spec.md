@@ -81,7 +81,7 @@ The agent is always a **client of the machines**. `Lab::act` / `act_through_atta
 
 **Today (v0, landed):**
 
-- `Vehicle<S, B>`, `GroundVehicle<S, B>`, `MarineVehicle<S, B>` with 125 trybuild compile-fails
+- `Vehicle<S, B>`, `GroundVehicle<S, B>`, `MarineVehicle<S, B>` with 127 trybuild compile-fails
 - `OffboardControl` gates velocity / position / hold; `MotorsEnabled` gates motor thrust; Recovery is a real aerial typestate
 - `WorldSession` attach walks shared by HITL, ROS 2, PX4 `WorldPlant`, and `robot-lab`
 - Live PX4 SIH companion (`sitl_live`, CI job `sitl`): unpacked `PX4_MAIN_MODE_OFFBOARD`, climb/hold stay in offboard, `NAV_LAND` for land
@@ -106,7 +106,7 @@ The agent is always a **client of the machines**. `Lab::act` / `act_through_atta
 
 - Observation: pose, energy, contact, `legal_cmds`, `hold_ned`, aerial/ground/marine machines, 22 named properties
 - Bags with `/lab/observation` and `/lab/action`
-- Creusot 0.5 on discrete machines (81 libraries); Kani 42 harnesses on f32 facts
+- Creusot 0.5 on discrete machines (81 libraries); Kani 45 harnesses on f32 facts, permit epoch mismatch, and DSL/kernel revoke lockstep
 - Demo console on `FLIGHT_DEMO_BIND` (default `47831`)
 
 **World-class means:**
@@ -199,10 +199,11 @@ New catalogs must declare bodies explicitly and get a typed agent skip list (see
                     │  NED z-down · catalogs · hydro · contact│
                     └─────────────────────────────────────────┘
 
-     flight-core   units, frames, sensors, kernels, typestate, mech, hydro
-     flight-verify Kani harnesses (f32 facts)
+     flight-core   units, frames, geometry, contracts, kernel TCB, typestate
+     flight-verify Kani harnesses (f32 facts + permit epoch + DSL revoke lockstep)
      Creusot       discrete machines (cfg(creusot) subset)
      flight-sim    SimBackend = point-mass demo, not the property vector
+                   scenario lab = contract on world / replay traces
 ```
 
 Rules that do not change:
@@ -269,7 +270,7 @@ A feature is not done because it demos. It is done when:
 5. **Companion** — if the feature is a vehicle command, WorldPlant / ROS 2 / HITL / Lab share the attach walk
 6. **Docs** — README examples, remaining-spec invariants if a new split appears, NEXT box checked with evidence (test name or recorded log)
 
-CI already: fmt, clippy `-D warnings`, workspace tests, no_std check, gpu hydro, kani (42), rclrs Jazzy, creusot (81), sitl SIH. New gates follow the same pattern. `cargo test` still takes **one** filter name. trybuild stays `=1.0.104`.
+CI already: fmt, clippy `-D warnings`, workspace tests, no_std check, gpu hydro, kani (45), rclrs Jazzy, creusot (81), sitl SIH. New gates follow the same pattern. `cargo test` still takes **one** filter name. trybuild stays `=1.0.104`.
 
 ---
 
@@ -294,6 +295,7 @@ These stay out unless a later instruction adds them:
 - Vercel / serverless deploy
 - Publishing to crates.io as a functional gap (version is `0.1.0`)
 - Replacing PX4 firmware or claiming a full EKF/RTK/mission planner
+- Competing with Copper on a deterministic robotics runtime (see [`docs/copper.md`](copper.md))
 - CPU/GPU hydro bit-identity
 - Bumping MSRV to chase Creusot 0.8 or the Kani installer without an explicit decision
 

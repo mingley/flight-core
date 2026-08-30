@@ -1,10 +1,51 @@
 # flight-core
 
-A strongly typed Rust SDK for using, testing, and researching robotics — aerial, ground, surface, and underwater — through **mechanically verified simulation**, and the base for **agentic** tooling (experiment / control / understand) in Rust. Not a C++ wrapper.
+A verified **capability and contract system** for physical autonomy. PX4,
+ArduPilot, and Copper can run the vehicle. flight-core is the high-assurance
+Rust control boundary that makes entire categories of physically invalid or
+unsafe control software difficult or impossible to express.
+
+Not another Rust flight controller. Not another deterministic robotics
+runtime (see [`docs/copper.md`](docs/copper.md)). The distinctive stack is
+typestate **evidence**, revocable [`ActuationPermit`](crates/flight-core/src/contracts/permit.rs)s,
+typed units/frames, a pure safety kernel, deterministic sim/replay, PX4
+integration, and Kani/Creusot verification.
+
+```rust
+let preflight = vehicle.verify_preflight().await?;
+let armed = vehicle.arm().await?;
+let mut control = armed.acquire_offboard_control_now(Duration::from_millis(250))?;
+control.set_velocity(Velocity::<Ned>::ned(1.0, 0.0, 0.0)).await?;
+```
+
+`control` is evidence plus a non-`Clone` lease bound to one vehicle and one
+safety epoch. If PX4 or the verified world enters failsafe, the backend
+increments the epoch. The old permit is still memory. It has no authority.
+
+## Why this exists
+
+```text
+1. Write an unsafe autonomous mission.
+2. cargo check:    FAIL — actuator authority unavailable in this state.
+3. Fix it.
+4. cargo kani:     PROVED — no reachable kernel path enables actuators while unarmed.
+5. flight-test --scenario gps-loss:
+                   TESTED — loss of navigation revokes authority (epoch bump, failsafe).
+6. flight-test --backend world     PASS (same contract)
+7. PX4 SITL companion              PASS (same Vehicle API; HEARTBEAT CRITICAL/RTL revokes epoch)
+8. flight-test --backend replay     PASS — same contract on recorded JSONL
+```
+
+Today: (2) is 127 trybuild compile-fails. (4) is Kani including
+`permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel`, and
+actuators-require-arm. (5–6) are `Scenario::GPS_LOSS` on the verified world.
+(7) is the existing SIH companion path plus failsafe/RTL epoch revocation.
+(8) is `flight-test --backend replay`. HITL deadline miss trips failsafe,
+bumps the same epoch, and still satisfies the contract monitors.
 
 The design principle:
 
-> Don't bind to a C++ robotics API. Create the API robotics should have had if ownership, capabilities, units, reference frames, contact, and legal state transitions were part of the language.
+> Don't bind to a C++ robotics API. Create the API robotics should have had if ownership, capabilities, units, reference frames, contact, and legal state transitions were part of the language. Physical authority is explicit, revocable, replayable, testable, and mechanically checked.
 
 ```rust
 let vehicle: Vehicle<Disarmed, _> = px4.connect().await?;
@@ -172,7 +213,7 @@ Rust does not automatically “verify” a robot. It lets you move physical-syst
 
 | Crate | What it is |
 | --- | --- |
-| `flight-core` | `no_std` units, frames, sensors, safety machines, mech, hydro. Typestate `Vehicle` / `GroundVehicle` / `MarineVehicle` require `std`. |
+| `flight-core` | `no_std` units, frames, geometry, temporal contracts, safety kernel TCB, typestate `Vehicle` / `GroundVehicle` / `MarineVehicle` (`std`) |
 | `flight-sim` | Point-mass `SimBackend` (demo hover, not the property vector) plus `WorldSession` over the verified `robot-world` plant |
 | `robot-world` | Multi-domain world: terrain, wind, current, conserved shallow-water field (CPU or Vulkan compute), sphere contact, battery, rigid spin. Verified `step` |
 | `robot-lab` | Scenarios, property vector, agent observe/act JSON over the same `WorldSession` plant as the typestate fleet, timed-action replay, Foxglove MCAP bags |
@@ -185,7 +226,7 @@ Rust does not automatically “verify” a robot. It lets you move physical-syst
 | `flight-demo` | Live lab console (safety trips, return, station / resume / airborne / hold) |
 
 ```
-flight-core     units / frames / safety / ground / marine / mech / hydro / typestate
+flight-core     units / frames / geometry / contracts / safety kernel / typestate
 robot-world     environment + bodies + shallow water (CPU | Vulkan) + verified step
 robot-lab       scenario + observe/act + WorldSession plant + properties
 flight-mhs      MHS-shaped discover / reference / read / write / chain / MCP
@@ -200,6 +241,9 @@ Requires Rust 1.85+.
 ```bash
 cargo test --workspace
 cargo run -p flight-sim --example hover
+cargo run -p flight-sim --example gps_loss
+cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend world
+cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend replay
 cargo run -p flight-sim --example fleet   # attach now-APIs, one WorldSession::step
 cargo run -p flight-sim --example fuzzed_world  # FuzzedImu around WorldImu; plant still WorldSession::step
 cargo run -p robot-lab --example coastal
@@ -270,12 +314,12 @@ cargo test -p flight-px4 --test sitl_live -- --ignored
 cargo run -p flight-px4 --example world_plant   # verified plant, no PX4 binary
 ```
 
-Kani. CI job `kani` runs `cargo kani -p flight-verify` (**42** harnesses, `kani-verifier` 0.67.0). The `kani-verifier` crate currently needs rustc ≥ 1.88 to *install* (`home` 0.5). This repo's MSRV stays 1.85; Kani then uses its own bundled nightly:
+Kani. CI job `kani` runs `cargo kani -p flight-verify` (**45** harnesses, `kani-verifier` 0.67.0). The `kani-verifier` crate currently needs rustc ≥ 1.88 to *install* (`home` 0.5). This repo's MSRV stays 1.85; Kani then uses its own bundled nightly:
 
 ```bash
 cargo +1.88.0 install --locked --version 0.67.0 kani-verifier
 cargo kani setup
-cargo kani -p flight-verify   # 42 proofs: actuators, drive, thrust, contact, drag, buoyancy, hydro mass, HITL miss, position-hold restore, attach kind (air/ground/marine), land/touchdown, takeoff, halt, estop, dock, failsafe, undock, station, resume, recover, enter-offboard, disarm, mission, release
+cargo kani -p flight-verify   # 45 proofs: actuators, drive, thrust, contact, drag, buoyancy, hydro mass, HITL miss, position-hold restore, permit epoch, DSL revoke lockstep, attach kind (air/ground/marine), land/touchdown, takeoff, halt, estop, dock, failsafe, undock, station, resume, recover, enter-offboard, disarm, mission, release
 ```
 
 Creusot 0.5.0 (install from tag `v0.5.0`; uses `nightly-2025-01-31`, not workspace MSRV):
@@ -394,12 +438,16 @@ PX4 has moved companion-computer control toward ROS 2 external modes. The offici
 
 The v0 use / test / research / proof slice, including a recorded live PX4 SIH companion pass, is landed. Kernel vs typestate splits, catalog bodies, and MSRV stay in [`docs/remaining-spec.md`](docs/remaining-spec.md) (do not “fix” P1–P14).
 
-The product north star is world-class **agentic robotics tooling in Rust** — experimenting, controlling, and understanding every domain and aspect:
+The product north star is a **verified capability and contract system** for
+physical autonomy (agentic experiment / control / understand still applies):
 
 - [`docs/agentic-spec.md`](docs/agentic-spec.md) — spec
-- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase B hold/DP, estimator, paths, fleet-hold certificate, and MHS-shaped driver landed)
+- [`docs/safety-contract.md`](docs/safety-contract.md) — generated-from-tables traceability
+- [`docs/generated/traceability.md`](docs/generated/traceability.md) — ID matrix
+- [`docs/copper.md`](docs/copper.md) — complement Copper; do not compete on runtime
+- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed)
 
-A live PX4 SITL binary is optional locally (`cargo run -p flight-px4 --example sitl_hover`). Default `cargo test` skips `sitl_live` (`#[ignore]`). GitHub CI runs fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, a lavapipe GPU hydro job, `cargo kani -p flight-verify` (42 harnesses, kani-verifier 0.67.0), `cargo test -p flight-ros2 --features rclrs` (ROS 2 Jazzy), `cargo creusot prove -p flight-core` (Creusot 0.5.0, 81 libraries), and job `sitl` (PX4 SIH `px4io/px4-sitl:v1.18.0-beta2` + the ignored companion test).
+A live PX4 SITL binary is optional locally (`cargo run -p flight-px4 --example sitl_hover`). Default `cargo test` skips `sitl_live` (`#[ignore]`). GitHub CI runs fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, a lavapipe GPU hydro job, `cargo kani -p flight-verify` (45 harnesses, kani-verifier 0.67.0), `cargo test -p flight-ros2 --features rclrs` (ROS 2 Jazzy), `cargo creusot prove -p flight-core` (Creusot 0.5.0, 81 libraries), and job `sitl` (PX4 SIH `px4io/px4-sitl:v1.18.0-beta2` + the ignored companion test).
 
 ## License
 

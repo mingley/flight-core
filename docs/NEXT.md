@@ -260,9 +260,99 @@ It ships an **MHS-shaped** driver so agents can use the public shape — standar
 
 ---
 
+## Phase F — Verified physical authority (the control boundary)
+
+flight-core is the high-assurance Rust **control boundary**, not another flight
+controller and not a Copper competitor. See [`docs/copper.md`](copper.md) and
+[`docs/safety-contract.md`](safety-contract.md).
+
+### F1. Revocable capability / evidence model
+
+**Status: landed.** `ActuationPermit` is non-`Clone`, bound to `VehicleId` +
+`SafetyEpoch` + optional lease. `VehicleBackend::authority_epoch` is the live
+plant/PX4 counter. `set_velocity_now` / drive / thrust check the permit
+**before** the local typestate `MissionCommand`. World failsafe on a sibling
+handle increments `Body.authority_epoch`; the old `Vehicle<Offboard>` is still
+typed Offboard and is `StaleAuthority`.
+
+**Acceptance:** NullBackend revoke test; world two-handle failsafe test;
+trybuild `permit_is_not_clone`; Kani `permit_epoch_mismatch_is_stale`.
+
+### F2. Tiny verified safety kernel TCB
+
+**Status: landed.** `safety` / `ground` / `marine` remain `no_std`, no alloc,
+no unsafe, no async, no IO. `event_revokes_authority` /
+`ground_event_revokes_authority` / `marine_event_revokes_authority` are the
+epoch bump predicates. Everything else is untrusted relative to `step`.
+
+### F3. Temporal contracts
+
+**Status: landed.** `Fresh` / `HeartbeatFresh` / `Sequence` / `Estimate` /
+`Observation` / `Rate` / `Deadline` / `Lease` / `Command`. Kernel
+`heartbeat_age_ok` and `VehicleBackend::authority_heartbeat_age_ms` share
+`OFFBOARD_HEARTBEAT_MAX_AGE_MS` with the DSL. PX4 setpoints fail
+`StaleHeartbeat` when the last HEARTBEAT is older than 250 ms.
+
+### F4. Single-source contract DSL
+
+**Status: landed.** `vehicle_contract!` generates capability tables, mermaid,
+Graphviz, monitor list, SPEC text, revoke `const fn`, and traceability ids.
+A unit test fails if the table disagrees with `event_revokes_authority`. Kani
+`dsl_revokes_match_kernel` proves the same. Checked-in
+[`docs/generated/aerial-offboard.mmd`](generated/aerial-offboard.mmd) must
+match `AerialOffboard::MERMAID`. Creusot still discharges the discrete `step`
+contracts, not a second generated file.
+
+### F5. PX4 production-quality backend
+
+**Status: landed.** Failsafe bumps epoch even if the UDP send fails. Telemetry
+`estimator_valid` is `seen_local_position`, `imu_healthy` is `seen_px4`,
+`failsafe` is latched, `heartbeat_age_secs` is elapsed since last PX4
+heartbeat. Ingested HEARTBEAT with `MAV_STATE_CRITICAL` / `EMERGENCY` /
+`FLIGHT_TERMINATION` or AUTO+RTL revokes authority **once**. AUTO+LAND
+(NAV_LAND) does not latch failsafe. `authority_heartbeat_age_ms` feeds the
+permit check.
+
+### F6. Torture laboratory / differential conformance
+
+**Status: landed.** `flight_sim::scenario` (`Scenario::GPS_LOSS`,
+`HEARTBEAT_LOSS`, `scenario!`) injects estimator / heartbeat / wind / battery
+faults on the verified world, evaluates `Requirement`s, writes JSONL, and
+differential-runs two world traces. `cargo run -p flight-sim --bin flight-test`
+runs `--backend world|replay|px4-sitl`. Live Gazebo is still out of scope;
+`--backend px4-sitl` evaluates a converted JSONL. Every DSL revoke event has
+a world test that the plant epoch increments.
+
+### F7. Typed geometry
+
+**Status: landed.** `Transform<A,B> * Transform<B,C>` only; `Displacement`,
+`Point3`, `apply_point` / `apply_displacement`, `Rotation`, `Covariance<T>`.
+trybuild `transform_wrong_frames`. Copper `cu_transform` is interop, not a
+copy (`docs/copper.md`).
+
+### F8. Copper integration
+
+**Status: landed (boundary).** [`docs/copper.md`](copper.md). No Copper
+dependency. Do not add a scheduler/pubsub/physics engine.
+
+### F9. HITL on the same contract
+
+**Status: landed.** Deadline miss already trips attach failsafe; the plant
+epoch now increments. `injected_miss_zeros_command_and_trips_failsafe`
+asserts `authority_epoch > 0` and evaluates `Requirement::ActuatorsImplyArmed`
+on the miss sample.
+
+### F10. Certification-oriented traceability
+
+**Status: landed (tables).** [`docs/safety-contract.md`](safety-contract.md)
+and [`docs/generated/traceability.md`](generated/traceability.md) ids
+FC-CAP-AerialOffboard, FC-INV-001..003. `human_readable_spec()`.
+
+---
+
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B5 landed. E1 landed.** Next: **C1–C3** (proofs, traces, scenarios).
+1. **A1–A6 landed. B1–B5 landed. E1 landed. F1–F10 landed.** Next: **C1–C3** (proofs, traces, richer scenarios) and live Gazebo if someone needs a world renderer.
 2. **C1–C3** (proofs, traces, scenarios) can overlap A3.
 3. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
 4. **D\*** morphologies last.
