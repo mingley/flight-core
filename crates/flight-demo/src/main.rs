@@ -11,17 +11,24 @@
 //! GET `/api/lab/tools` lists A1 `(robot, cmd)` tools. GET `/api/lab/replay`
 //! is action-log metadata. POST `/api/lab/research` runs a closed-loop
 //! [`Lab::research`] on a fresh lab with the console scenario/seed (one
-//! `WorldSession::step` per tick). Binds `FLIGHT_DEMO_BIND` (default
-//! `0.0.0.0:47831`). No authentication. No raw NED velocity that skips
-//! `legal_cmds`.
+//! `WorldSession::step` per tick). MHS-shaped routes: GET `/api/mhs/discover`,
+//! GET `/api/mhs/reference`, GET `/api/mhs/reference/{id}`, POST `/api/mhs/read`,
+//! POST `/api/mhs/write` (A1 gate + driver numeric limits; queued like
+//! `/api/lab/action`). Not official Model Hardware Standard. Binds
+//! `FLIGHT_DEMO_BIND` (default `0.0.0.0:47831`). No authentication. No raw NED
+//! velocity that skips `legal_cmds`.
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::header::{HeaderMap, HeaderValue, CACHE_CONTROL};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
+use flight_mhs::{
+    preview_write, queued_action, read_channel, DeviceReference, Discovery, DriverLimits,
+    WriteRequest,
+};
 use robot_lab::{named_agent, AgentAction, Lab, LabCmd, LegalTools, Observation, ResearchRun};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -158,6 +165,11 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/lab/reset", post(reset))
         .route("/api/lab/open", post(open))
         .route("/api/lab/scenarios", get(scenarios))
+        .route("/api/mhs/discover", get(mhs_discover))
+        .route("/api/mhs/reference", get(mhs_references))
+        .route("/api/mhs/reference/{id}", get(mhs_reference))
+        .route("/api/mhs/read", post(mhs_read))
+        .route("/api/mhs/write", post(mhs_write))
         .route("/api/failsafe", post(trip))
         .route("/api/recover", post(recover))
         .route("/api/estop", post(estop))
@@ -398,6 +410,91 @@ async fn run_lab(app: &App) {
     }
 }
 
+async fn mhs_discover(State(app): State<Arc<App>>) -> Json<Discovery> {
+    Json(Discovery::from_observation(&app.rx.borrow()))
+}
+
+async fn mhs_references(State(app): State<Arc<App>>) -> Json<Vec<DeviceReference>> {
+    let obs = app.rx.borrow().clone();
+    let d = Discovery::from_observation(&obs);
+    Json(
+        d.devices
+            .iter()
+            .filter_map(|s| DeviceReference::compile(&obs, &s.id, &DriverLimits::DEFAULT).ok())
+            .collect(),
+    )
+}
+
+async fn mhs_reference(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+) -> Result<Json<DeviceReference>, (StatusCode, Json<OkMsg>)> {
+    let obs = app.rx.borrow().clone();
+    DeviceReference::compile(&obs, &id, &DriverLimits::DEFAULT)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(OkMsg {
+                    ok: false,
+                    error: Some(e.to_string()),
+                    message: None,
+                }),
+            )
+        })
+}
+
+#[derive(Deserialize)]
+struct MhsReadReq {
+    device: String,
+    channel: String,
+}
+
+async fn mhs_read(
+    State(app): State<Arc<App>>,
+    Json(req): Json<MhsReadReq>,
+) -> Result<Json<flight_mhs::ReadResult>, (StatusCode, Json<OkMsg>)> {
+    let obs = app.rx.borrow().clone();
+    read_channel(&obs, &req.device, &req.channel)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(OkMsg {
+                    ok: false,
+                    error: Some(e.to_string()),
+                    message: None,
+                }),
+            )
+        })
+}
+
+async fn mhs_write(
+    State(app): State<Arc<App>>,
+    Json(req): Json<WriteRequest>,
+) -> impl IntoResponse {
+    let obs = app.rx.borrow().clone();
+    match preview_write(&obs, &req, &DriverLimits::DEFAULT) {
+        Ok(cmd) => {
+            app.scripted.store(false, Ordering::SeqCst);
+            app.pending.lock().await.push(queued_action(&req, cmd));
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "ok": true,
+                    "device": req.device,
+                    "channel": req.channel,
+                    "message": format!("queued {}", req.channel),
+                })),
+            )
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::to_value(e.as_failure(None)).unwrap()),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -526,5 +623,91 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn mhs_discover_is_shaped_not_official() {
+        let res = router(test_app())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/mhs/discover")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let v = body_json(res).await;
+        assert_eq!(v["official"], false);
+        assert_eq!(v["conformance"], "shaped");
+        let ids: Vec<_> = v["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["id"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&"drone"));
+        assert!(ids.contains(&"env"));
+        assert!(ids.contains(&"lab"));
+    }
+
+    #[tokio::test]
+    async fn mhs_write_rejects_parked_drive() {
+        let res = router(test_app())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/mhs/write")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"device":"rover","channel":"drive","vn":-1.0}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let v = body_json(res).await;
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["code"], "not_legal");
+    }
+
+    #[tokio::test]
+    async fn mhs_read_pose_and_reference_rover() {
+        let app = test_app();
+        let read = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/mhs/read")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"device":"drone","channel":"pose.ned"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(read.status(), StatusCode::OK);
+        let pose = body_json(read).await;
+        assert_eq!(pose["channel"], "pose.ned");
+        assert_eq!(pose["value"]["z"], "down");
+
+        let refer = router(app)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/mhs/reference/rover")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refer.status(), StatusCode::OK);
+        let r = body_json(refer).await;
+        assert_eq!(r["id"], "rover");
+        assert_eq!(r["official"], false);
+        assert!(r["writes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["channel"] == "drive"));
     }
 }

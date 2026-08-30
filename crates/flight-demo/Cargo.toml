@@ -9,6 +9,7 @@ description = "Live coastal lab for a mechanically verified multi-domain robot w
 
 [dependencies]
 axum = { workspace = true }
+flight-mhs = { workspace = true }
 robot-lab = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
