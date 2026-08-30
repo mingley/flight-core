@@ -158,10 +158,20 @@ vehicle_contract! {
     }
 }
 
+/// Named leftover contract: one kernel inject plus the scenario require list.
+/// Companion leftover runners (`run_*_leftover_contract`) evaluate this table
+/// so world `Scenario::*` and PX4 / ArduPilot / HITL / ROS 2 cannot drift.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LeftoverContract {
+    pub name: &'static str,
+    pub inject: crate::safety::Event,
+    pub require: &'static [crate::contracts::Requirement],
+}
+
 impl AerialOffboard {
-    /// Leftover GPS-loss monitors (invalid `Estimate` / `EstimatorInvalid`).
-    /// World `Scenario::GPS_LOSS.require` must alias this slice so companion
-    /// leftover runners cannot drift from the scenario lab.
+    /// Leftover GPS-loss / IMU-delay monitors (invalid `Estimate`).
+    /// World `Scenario::GPS_LOSS.require` and `Scenario::IMU_DELAY.require`
+    /// must alias this slice.
     pub const GPS_LOSS_REQUIRE: &'static [crate::contracts::Requirement] = &[
         crate::contracts::Requirement::NeverActuateWhileDisarmed,
         crate::contracts::Requirement::ActuatorsImplyArmed,
@@ -176,6 +186,51 @@ impl AerialOffboard {
             max_ms: crate::safety::COMMAND_MAX_AGE_MS,
         },
         crate::contracts::Requirement::EstimatorTimestampsMonotonic,
+    ];
+
+    /// Failsafe-shaped leftover monitors (heartbeat loss, IMU loss, HITL miss).
+    /// World `Scenario::HEARTBEAT_LOSS.require`, `HITL_MISS.require`, and
+    /// `IMU_LOSS.require` must alias this slice.
+    pub const EPOCH_REVOKE_REQUIRE: &'static [crate::contracts::Requirement] = &[
+        crate::contracts::Requirement::NeverActuateWhileDisarmed,
+        crate::contracts::Requirement::ActuatorsImplyArmed,
+        crate::contracts::Requirement::NoNanCommands,
+        crate::contracts::Requirement::PermitEpochMonotonic,
+        crate::contracts::Requirement::FailsafeWithinMs(
+            crate::safety::OFFBOARD_HEARTBEAT_MAX_AGE_MS,
+        ),
+        crate::contracts::Requirement::EpochBumped,
+    ];
+
+    pub const GPS_LOSS_CONTRACT: LeftoverContract = LeftoverContract {
+        name: "gps-loss",
+        inject: crate::safety::Event::EstimatorInvalid,
+        require: Self::GPS_LOSS_REQUIRE,
+    };
+    pub const HEARTBEAT_LOSS_CONTRACT: LeftoverContract = LeftoverContract {
+        name: "heartbeat-stale",
+        inject: crate::safety::Event::HeartbeatStale,
+        require: Self::EPOCH_REVOKE_REQUIRE,
+    };
+    pub const HITL_MISS_CONTRACT: LeftoverContract = LeftoverContract {
+        name: "hitl-miss",
+        inject: crate::safety::Event::TriggerFailsafe,
+        require: Self::EPOCH_REVOKE_REQUIRE,
+    };
+    pub const IMU_LOSS_CONTRACT: LeftoverContract = LeftoverContract {
+        name: "imu-loss",
+        inject: crate::safety::Event::ImuUnhealthy,
+        require: Self::EPOCH_REVOKE_REQUIRE,
+    };
+
+    /// Distinct leftover `(inject, require)` pairs at the companion boundary.
+    /// World IMU-delay is a delayed Estimate; companion leftover is the same
+    /// `EstimatorInvalid` leftover as gps-loss, so it is not a second row.
+    pub const LEFTOVER_CONTRACTS: &'static [LeftoverContract] = &[
+        Self::GPS_LOSS_CONTRACT,
+        Self::HEARTBEAT_LOSS_CONTRACT,
+        Self::HITL_MISS_CONTRACT,
+        Self::IMU_LOSS_CONTRACT,
     ];
 }
 
@@ -332,10 +387,8 @@ macro_rules! impl_aerial_offboard_now {
 
             /// Leftover Offboard after a revoke: every generated command is
             /// `StaleAuthority` and the handle is still typed Offboard.
-            /// World `run_revoke_table`, PX4 `run_px4_revoke_table` /
-            /// `run_px4_gps_loss`, ArduPilot `run_ardupilot_gps_loss`, HITL
-            /// `run_hitl_gps_loss`, ROS 2 `run_ros2_gps_loss`, HITL
-            /// `run_hitl_revoke_table`, and ROS 2 `run_ros2_revoke_table` share this.
+            /// World `run_revoke_table`, PX4 / ArduPilot / HITL / ROS 2
+            /// leftover tables, and `run_*_leftover_contracts` share this.
             pub fn leftover_commands_stale(&mut self) -> Result<(), ErrorKind> {
                 let expected = $crate::contracts::AerialOffboard::COMMANDS;
                 let mut i = 0usize;
@@ -445,7 +498,8 @@ pub fn human_readable_spec() -> &'static str {
         "  command.age < 100 ms at actuation  [FC-INV-004]\n",
         "  estimator timestamps monotonic  [FC-INV-005]\n",
         "  admit_offboard := heartbeat.age < 250 && command.age < 100\n",
-        "}\n"
+        "}\n",
+        "leftover_contracts [gps-loss, heartbeat-stale, hitl-miss, imu-loss]\n"
     )
 }
 
@@ -538,6 +592,32 @@ mod tests {
                 max_ms: COMMAND_MAX_AGE_MS
             })
         );
+        assert!(core::ptr::eq(
+            AerialOffboard::GPS_LOSS_CONTRACT.require,
+            AerialOffboard::GPS_LOSS_REQUIRE
+        ));
+        assert!(core::ptr::eq(
+            AerialOffboard::HEARTBEAT_LOSS_CONTRACT.require,
+            AerialOffboard::EPOCH_REVOKE_REQUIRE
+        ));
+        assert_eq!(AerialOffboard::LEFTOVER_CONTRACTS.len(), 4);
+        let mut seen_inject = [false; 4];
+        for (i, c) in AerialOffboard::LEFTOVER_CONTRACTS.iter().enumerate() {
+            assert!(
+                AerialOffboard::revokes(c.inject),
+                "leftover contract {} inject is not a revoke",
+                c.name
+            );
+            assert!(!c.name.is_empty());
+            for (j, other) in AerialOffboard::LEFTOVER_CONTRACTS.iter().enumerate() {
+                if i != j {
+                    assert_ne!(c.name, other.name);
+                    assert_ne!(c.inject, other.inject);
+                }
+            }
+            seen_inject[i] = true;
+        }
+        assert!(seen_inject.iter().all(|s| *s));
         let generated = include_str!("../../../../docs/generated/aerial-offboard.mmd");
         fn tokens(s: &str) -> Vec<&str> {
             s.split_whitespace().collect()
@@ -551,7 +631,8 @@ mod tests {
         assert!(human_readable_spec().contains("FC-INV-004"));
         assert!(human_readable_spec().contains("command.age < 100"));
         assert!(human_readable_spec().contains("commands [set_velocity"));
-        assert!(human_readable_spec().contains("admit_offboard"));
+        assert!(human_readable_spec().contains("leftover_contracts"));
+        assert!(human_readable_spec().contains("gps-loss"));
         let spec_tokens = tokens(AerialOffboard::SPEC);
         let human_tokens = tokens(human_readable_spec());
         assert!(

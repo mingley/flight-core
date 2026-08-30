@@ -8,7 +8,7 @@ use flight_core::contracts::{
     evaluate_trace, parse_trace_jsonl, AerialOffboard, MonitorFail, Requirement, TraceSample,
 };
 use flight_core::frames::Ned;
-use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
+use flight_core::safety::{Event, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use flight_core::temporal::{
     estimate_revoke_event, heartbeat_revoke_event, Estimate, Observation, Sequence,
     ESTIMATE_MAX_AGE_MS,
@@ -101,14 +101,7 @@ impl Scenario {
         dt: 0.02,
         duration_secs: 0.6,
         inject: &[Fault::HeartbeatStale { at_secs: 0.1 }],
-        require: &[
-            Requirement::NeverActuateWhileDisarmed,
-            Requirement::ActuatorsImplyArmed,
-            Requirement::NoNanCommands,
-            Requirement::PermitEpochMonotonic,
-            Requirement::FailsafeWithinMs(250),
-            Requirement::EpochBumped,
-        ],
+        require: AerialOffboard::EPOCH_REVOKE_REQUIRE,
     };
 
     /// Deadline miss / attach failsafe: same epoch revoke as the HITL rack.
@@ -119,14 +112,7 @@ impl Scenario {
         dt: 0.02,
         duration_secs: 0.4,
         inject: &[Fault::Failsafe { at_secs: 0.1 }],
-        require: &[
-            Requirement::NeverActuateWhileDisarmed,
-            Requirement::ActuatorsImplyArmed,
-            Requirement::NoNanCommands,
-            Requirement::PermitEpochMonotonic,
-            Requirement::FailsafeWithinMs(250),
-            Requirement::EpochBumped,
-        ],
+        require: AerialOffboard::EPOCH_REVOKE_REQUIRE,
     };
 
     /// IMU health bit clear: same leftover Offboard story as heartbeat loss.
@@ -137,14 +123,7 @@ impl Scenario {
         dt: 0.02,
         duration_secs: 0.6,
         inject: &[Fault::ImuUnhealthy { at_secs: 0.1 }],
-        require: &[
-            Requirement::NeverActuateWhileDisarmed,
-            Requirement::ActuatorsImplyArmed,
-            Requirement::NoNanCommands,
-            Requirement::PermitEpochMonotonic,
-            Requirement::FailsafeWithinMs(250),
-            Requirement::EpochBumped,
-        ],
+        require: AerialOffboard::EPOCH_REVOKE_REQUIRE,
     };
 
     /// IMU transport delay ≥ [`ESTIMATE_MAX_AGE_MS`] is a stale Estimate.
@@ -158,19 +137,7 @@ impl Scenario {
             at_secs: 0.2,
             delay_ms: ESTIMATE_MAX_AGE_MS.saturating_add(50),
         }],
-        require: &[
-            Requirement::NeverActuateWhileDisarmed,
-            Requirement::ActuatorsImplyArmed,
-            Requirement::NoNanCommands,
-            Requirement::AltitudeBelow { meters: 120.0 },
-            Requirement::PermitEpochMonotonic,
-            Requirement::FailsafeWithinMs(250),
-            Requirement::EpochBumped,
-            Requirement::CommandAgeMs {
-                max_ms: COMMAND_MAX_AGE_MS,
-            },
-            Requirement::EstimatorTimestampsMonotonic,
-        ],
+        require: AerialOffboard::GPS_LOSS_REQUIRE,
     };
 
     /// Motor efficiency is plant-only. It does not bump the safety epoch.
@@ -585,6 +552,38 @@ mod tests {
             Scenario::GPS_LOSS.require,
             AerialOffboard::GPS_LOSS_REQUIRE
         ));
+        assert!(core::ptr::eq(
+            Scenario::IMU_DELAY.require,
+            AerialOffboard::GPS_LOSS_REQUIRE
+        ));
+        assert_eq!(
+            Scenario::GPS_LOSS.name,
+            AerialOffboard::GPS_LOSS_CONTRACT.name
+        );
+        assert!(core::ptr::eq(
+            Scenario::HEARTBEAT_LOSS.require,
+            AerialOffboard::EPOCH_REVOKE_REQUIRE
+        ));
+        assert_eq!(
+            Scenario::HEARTBEAT_LOSS.name,
+            AerialOffboard::HEARTBEAT_LOSS_CONTRACT.name
+        );
+        assert!(core::ptr::eq(
+            Scenario::HITL_MISS.require,
+            AerialOffboard::EPOCH_REVOKE_REQUIRE
+        ));
+        assert_eq!(
+            Scenario::HITL_MISS.name,
+            AerialOffboard::HITL_MISS_CONTRACT.name
+        );
+        assert!(core::ptr::eq(
+            Scenario::IMU_LOSS.require,
+            AerialOffboard::EPOCH_REVOKE_REQUIRE
+        ));
+        assert_eq!(
+            Scenario::IMU_LOSS.name,
+            AerialOffboard::IMU_LOSS_CONTRACT.name
+        );
         assert!(report.samples.iter().any(|s| s.failsafe));
         assert!(report.samples.iter().any(|s| s.epoch > 0));
         report

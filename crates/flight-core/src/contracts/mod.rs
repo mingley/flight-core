@@ -15,6 +15,6 @@ pub use monitor::parse_trace_jsonl;
 pub use monitor::{evaluate_trace, MonitorFail, Requirement, TraceSample};
 pub use permit::{ActuationPermit, AuthorityReject, SafetyEpoch, VehicleId};
 pub use spec::{
-    human_readable_spec, AerialOffboard, INV_ACTUATORS_IMPLY_ARMED, INV_COMMAND_AGE,
-    INV_ESTIMATOR_TS, INV_OFFBOARD_HEARTBEAT, INV_PERMIT_EPOCH,
+    human_readable_spec, AerialOffboard, LeftoverContract, INV_ACTUATORS_IMPLY_ARMED,
+    INV_COMMAND_AGE, INV_ESTIMATOR_TS, INV_OFFBOARD_HEARTBEAT, INV_PERMIT_EPOCH,
 };

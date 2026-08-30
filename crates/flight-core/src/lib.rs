@@ -85,8 +85,8 @@ pub mod prelude {
     pub use crate::contracts::parse_trace_jsonl;
     #[cfg(not(creusot))]
     pub use crate::contracts::{
-        evaluate_trace, ActuationPermit, AerialOffboard, AuthorityReject, Requirement, SafetyEpoch,
-        TraceSample, VehicleId,
+        evaluate_trace, ActuationPermit, AerialOffboard, AuthorityReject, LeftoverContract,
+        Requirement, SafetyEpoch, TraceSample, VehicleId,
     };
     #[cfg(not(creusot))]
     pub use crate::domain::{Domain, Medium};
