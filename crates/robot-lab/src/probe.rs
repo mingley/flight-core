@@ -168,6 +168,8 @@ fn legal_abuse() -> Vec<AgentAction> {
         action("drone", LabCmd::Offboard, 0.0, 0.0, 0.0),
         action("drone", LabCmd::EnableActuators, 0.0, 0.0, 0.0),
         action("drone", LabCmd::Takeoff, 0.0, 0.0, 0.0),
+        action("drone", LabCmd::Position, 10.0, 0.0, -2.0),
+        action("drone", LabCmd::Position, 10.0, 2.0, -2.0),
         action("drone", LabCmd::Hold, 0.0, 0.0, 0.0),
         action("drone", LabCmd::Velocity, 0.0, 0.0, -2.0),
         action("drone", LabCmd::SetCharge, 0.0, 0.0, 0.0),

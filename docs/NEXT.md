@@ -142,6 +142,8 @@ Goal: every domain can **hold and move** under the same typestate story; compani
 
 ### B4. Typed planning layer
 
+**Status: landed.** `flight_core::plan::{Waypoint, NedPath}` are NED-meter data (eight-point capacity, no allocation). Execution is attach + `set_position` / `set_velocity` / drive / thrust: aerial OffboardControl only, ground Moving only, marine `CanThrust` only. `TypedPathFollow` takes off and follows a two-point path; properties hold; the log replays. JSON probe twin is two `LabCmd::Position` acts after takeoff. No kernel path event.
+
 **Acceptance:**
 
 1. A path/waypoint type in Rust (NED, units).
@@ -234,8 +236,8 @@ Only after A is usable and B1–B2 have a written status (landed or explicitly d
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B3 landed.** Next: **B4 / B5** (planning, coordination).
-2. **B4 / B5** (planning, coordination).
+1. **A1–A6 landed. B1–B4 landed.** Next: **B5** (coordination certificates).
+2. **B5** (coordination).
 3. **C1–C3** (proofs, traces, scenarios) can overlap A3.
 4. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
 5. **D\*** morphologies last.

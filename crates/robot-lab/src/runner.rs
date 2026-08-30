@@ -11,8 +11,8 @@ use crate::{
     TypedAerialFailsafe, TypedAttachFleet, TypedCollisionSweep, TypedFailsafeTouchdown, TypedFleet,
     TypedFleetHold, TypedFleetReturn, TypedGroundEstop, TypedGroundHalt, TypedGroundHold,
     TypedHold, TypedHullDock, TypedHullFailsafe, TypedMarineHold, TypedPadDisarm, TypedPadFailsafe,
-    TypedPadLanding, TypedPositionHold, TypedStationDock, TypedStationFailsafe, TypedStationResume,
-    TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
+    TypedPadLanding, TypedPathFollow, TypedPositionHold, TypedStationDock, TypedStationFailsafe,
+    TypedStationResume, TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
     TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
 };
 use serde::Serialize;
@@ -335,6 +335,7 @@ pub fn named_agent(name: &str) -> Result<Box<dyn ResearchAgent>, RunError> {
         "typed_aerial_disarm" => Box::new(TypedAerialDisarm::default()),
         "typed_aerial_airborne" => Box::new(TypedAerialAirborne::default()),
         "typed_position_hold" => Box::new(TypedPositionHold::default()),
+        "typed_path_follow" => Box::new(TypedPathFollow::default()),
         "typed_hold" => Box::new(TypedHold::default()),
         "typed_pad_disarm" => Box::new(TypedPadDisarm::default()),
         "typed_pad_failsafe" => Box::new(TypedPadFailsafe::default()),

@@ -42,6 +42,8 @@
 //! Underway or StationKeep — not the StationKeep machine).
 //! [`Lab::replay_until`] walks
 //! the same attach helpers without re-logging; Protocol falls back to JSON.
+//! [`TypedPathFollow`] follows a two-point NED path through OffboardControl
+//! `set_position_now` (ground seek is Moving drive; marine seek is CanThrust).
 
 #![deny(unsafe_code)]
 
@@ -77,7 +79,7 @@ pub use research::{
     TypedCollisionSweep, TypedFailsafeTouchdown, TypedFleet, TypedFleetHold, TypedFleetReturn,
     TypedGroundEstop, TypedGroundHalt, TypedGroundHold, TypedHold, TypedHullDock,
     TypedHullFailsafe, TypedMarineHold, TypedPadDisarm, TypedPadFailsafe, TypedPadLanding,
-    TypedPositionHold, TypedStationDock, TypedStationFailsafe, TypedStationResume,
+    TypedPathFollow, TypedPositionHold, TypedStationDock, TypedStationFailsafe, TypedStationResume,
     TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
     TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
 };

@@ -2,9 +2,10 @@ use crate::{AerialKind, AgentAction, Lab, LabCmd, Observation};
 
 use super::support::{
     cmd, drone_hold_attached, drone_position_attached, drone_velocity_attached,
-    grant_drone_attached, note, robot,
+    grant_drone_attached, note, robot, seek_waypoint,
 };
 use super::ResearchAgent;
+use flight_core::plan::{NedPath, Waypoint};
 
 /// Pad landing through consume-self typestate. First tick probes a disarmed
 /// velocity (JSON, must bounce). Legal climb / airborne / land / touchdown never
@@ -339,6 +340,78 @@ impl ResearchAgent for TypedHold {
         ) {
             if drone_hold_attached(lab) {
                 self.done = true;
+            }
+            return Vec::new();
+        }
+        if matches!(a.kind, AerialKind::PreflightReady | AerialKind::Armed) {
+            grant_drone_attached(lab);
+        }
+        Vec::new()
+    }
+}
+
+const PATH_ARRIVE_M: f32 = 1.5;
+
+/// Pad drone: probe Ready velocity, then takeoff and follow a two-point
+/// NED path through OffboardControl `set_position_now`. Legal motion never
+/// goes through [`Lab::act`]. Distinct from [`TypedPositionHold`], which
+/// holds a single d=−2 target without sequencing waypoints.
+#[derive(Default)]
+pub struct TypedPathFollow {
+    pub(crate) probed: bool,
+    pub(crate) path: Option<NedPath>,
+    pub(crate) index: usize,
+    pub(crate) done: bool,
+}
+
+impl TypedPathFollow {
+    fn ensure_path(&mut self, n: f32, e: f32, d: f32) -> NedPath {
+        *self.path.get_or_insert_with(|| {
+            NedPath::two(
+                Waypoint::ned(n, e, d - 2.0),
+                Waypoint::ned(n, e + 2.0, d - 2.0),
+            )
+        })
+    }
+}
+
+impl ResearchAgent for TypedPathFollow {
+    fn name(&self) -> &'static str {
+        "typed_path_follow"
+    }
+
+    fn act(&mut self, lab: &mut Lab, obs: &Observation) -> Vec<AgentAction> {
+        let Some(drone) = robot(obs, "drone") else {
+            return Vec::new();
+        };
+        let Some(a) = drone.aerial.as_ref() else {
+            return Vec::new();
+        };
+        if a.failsafe {
+            return Vec::new();
+        }
+        if !self.probed {
+            self.probed = true;
+            if a.kind == AerialKind::PreflightReady {
+                return vec![cmd("drone", LabCmd::Velocity, 0.0, 0.0, -1.2)];
+            }
+        }
+        let path = self.ensure_path(drone.n, drone.e, drone.d);
+        if matches!(
+            a.kind,
+            AerialKind::Offboard | AerialKind::Takeoff | AerialKind::Airborne | AerialKind::Landing
+        ) {
+            let last = path.len().saturating_sub(1);
+            let i = self.index.min(last);
+            if let Some(wp) = path.get(i) {
+                seek_waypoint(lab, "drone", wp);
+                if wp.distance_m(drone.n, drone.e, drone.d) < PATH_ARRIVE_M && !self.done {
+                    if self.index < last {
+                        self.index += 1;
+                    } else {
+                        self.done = true;
+                    }
+                }
             }
             return Vec::new();
         }

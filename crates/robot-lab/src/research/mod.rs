@@ -13,7 +13,7 @@ mod tests;
 pub use json::{CoastalFleet, CollisionSweep, PadLanding, RoverProbe, ScriptedCoastal};
 pub use typed_aerial::{
     TypedAerialAirborne, TypedAerialDisarm, TypedAerialFailsafe, TypedFailsafeTouchdown, TypedHold,
-    TypedPadDisarm, TypedPadFailsafe, TypedPadLanding, TypedPositionHold,
+    TypedPadDisarm, TypedPadFailsafe, TypedPadLanding, TypedPathFollow, TypedPositionHold,
 };
 pub use typed_fleet::{TypedAttachFleet, TypedFleet, TypedFleetHold, TypedFleetReturn};
 pub use typed_ground::{TypedCollisionSweep, TypedGroundEstop, TypedGroundHalt, TypedGroundHold};

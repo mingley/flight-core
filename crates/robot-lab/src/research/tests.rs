@@ -1095,6 +1095,96 @@ fn typed_position_hold_log_replays_on_a_fresh_lab() {
 }
 
 #[test]
+fn typed_path_follow_visits_two_ned_waypoints() {
+    for name in ["inland", "coastal", "harbor", "open_water"] {
+        let mut lab = Lab::open(name, 3).unwrap();
+        let mut agent = TypedPathFollow::default();
+        let run = lab.research(&mut agent, 0.02, 200);
+        assert!(run.ok(), "{name} {run} broken={:?}", run.broken);
+        assert_eq!(run.actions_applied, 0, "{name}");
+        assert!(run.actions_rejected >= 1, "{name}");
+        assert!(agent.done, "{name}");
+        assert!(
+            lab.log.iter().any(|a| a.action.cmd == LabCmd::Takeoff),
+            "{name}"
+        );
+        let positions: Vec<_> = lab
+            .log
+            .iter()
+            .filter(|a| a.action.cmd == LabCmd::Position)
+            .collect();
+        assert!(
+            positions.len() >= 2,
+            "{name} path must command two waypoints"
+        );
+        assert!(
+            lab.log.iter().all(|a| a.action.cmd != LabCmd::Failsafe
+                && a.action.cmd != LabCmd::Recover
+                && a.action.cmd != LabCmd::Disarm
+                && a.action.cmd != LabCmd::Land
+                && a.action.cmd != LabCmd::Airborne
+                && a.action.cmd != LabCmd::Touchdown),
+            "{name} path follow must not land, airborne, failsafe, or disarm"
+        );
+        let end = lab.observe();
+        let drone = robot(&end, "drone").unwrap();
+        let path = agent.path.expect("path is recorded on first seek");
+        let target = path.get(path.len() - 1).unwrap();
+        assert!(
+            target.distance_m(drone.n, drone.e, drone.d) < 1.6,
+            "{name} end pose n={} e={} d={} want ~ n={} e={} d={}",
+            drone.n,
+            drone.e,
+            drone.d,
+            target.n(),
+            target.e(),
+            target.d()
+        );
+        let a = drone.aerial.as_ref().unwrap();
+        assert!(a.armed, "{name}");
+        assert!(!a.failsafe, "{name}");
+    }
+}
+
+#[test]
+fn typed_path_follow_log_replays_on_a_fresh_lab() {
+    let mut live = Lab::open("inland", 3).unwrap();
+    let mut agent = TypedPathFollow::default();
+    let run = live.research(&mut agent, 0.02, 200);
+    assert!(run.ok(), "{run} broken={:?}", run.broken);
+    assert!(agent.done);
+
+    let mut replayed = Lab::open("inland", 3).unwrap();
+    replayed
+        .replay_until(&live.log, 0.02, live.world().t)
+        .unwrap();
+    assert!(replayed.all_hold());
+    assert!(replayed.log.is_empty(), "replay must not re-log");
+    let end = replayed.observe();
+    let a = robot(&end, "drone").unwrap().aerial.as_ref().unwrap();
+    assert!(a.armed);
+    assert!(!a.failsafe);
+}
+
+#[test]
+fn path_seek_is_legal_only_on_granted_machines() {
+    use super::support::seek_waypoint;
+    use flight_core::plan::Waypoint;
+
+    let mut lab = Lab::coastal(1);
+    let wp = Waypoint::ned(10.0, 0.0, -2.0);
+    assert!(!seek_waypoint(&mut lab, "drone", wp));
+    assert!(!seek_waypoint(&mut lab, "rover", wp));
+    assert!(!seek_waypoint(&mut lab, "skiff", wp));
+    lab.attach_drive("rover").unwrap();
+    assert!(seek_waypoint(&mut lab, "rover", wp));
+    lab.attach_undock("skiff").unwrap();
+    assert!(seek_waypoint(&mut lab, "skiff", wp));
+    lab.attach_takeoff("drone").unwrap();
+    assert!(seek_waypoint(&mut lab, "drone", wp));
+}
+
+#[test]
 fn typed_hold_takes_off_then_holds_current_pose() {
     for name in ["inland", "coastal", "harbor", "open_water"] {
         let mut lab = Lab::open(name, 3).unwrap();

@@ -391,7 +391,7 @@ The v0 use / test / research / proof slice, including a recorded live PX4 SIH co
 The product north star is world-class **agentic robotics tooling in Rust** — experimenting, controlling, and understanding every domain and aspect:
 
 - [`docs/agentic-spec.md`](docs/agentic-spec.md) — spec
-- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase B: planning, coordination; hold/DP and estimator trip landed)
+- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase B: coordination; hold/DP, estimator trip, and typed paths landed)
 
 A live PX4 SITL binary is optional locally (`cargo run -p flight-px4 --example sitl_hover`). Default `cargo test` skips `sitl_live` (`#[ignore]`). GitHub CI runs fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, a lavapipe GPU hydro job, `cargo kani -p flight-verify` (42 harnesses, kani-verifier 0.67.0), `cargo test -p flight-ros2 --features rclrs` (ROS 2 Jazzy), `cargo creusot prove -p flight-core` (Creusot 0.5.0, 81 libraries), and job `sitl` (PX4 SIH `px4io/px4-sitl:v1.18.0-beta2` + the ignored companion test).
 

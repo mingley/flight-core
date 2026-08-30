@@ -161,8 +161,8 @@ New catalogs must declare bodies explicitly and get a typed agent skip list (see
 | Energy | battery gates thrust | Power/thermal models as properties when added |
 | Sensing | `Imu` traits, `WorldImu`, fuzz, jsonl replay | Camera/GNSS/DVL as typed samples feeding estimation, not replacing the plant |
 | Estimation | `estimator_valid` bit; complementary filter not in `try_step`; `update_nav` may trip the bit | ESKF/GNSS fusion is a navigation crate, plant pose stays physics-truth until a written decision |
-| Control | velocity / position / aerial hold / twists / wrenches | Ground hold, marine DP, allocation, actuator limits as machines |
-| Planning | none as a crate | Paths that execute only through legal attach |
+| Control | velocity / position / aerial hold / twists / wrenches / ground hold / marine DP | Allocation, actuator limits as machines |
+| Planning | `Waypoint` / `NedPath`; execute through legal attach | Richer planners still Offboard / Moving / CanThrust |
 | Comms | MAVLink, ROS 2 CDR/`rclrs`, HITL FCH1, demo HTTP | More autopilots; still Rust. No cloud bus required |
 | Verification | trybuild, exhaustive packed machines, Kani, Creusot, 22 plant properties | Proofs as agent artifacts; new properties for new physics |
 | Human I/O | `flight-demo` console | Keep; not a second product. Native GUIs stay optional |

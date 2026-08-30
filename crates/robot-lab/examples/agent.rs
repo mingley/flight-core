@@ -23,6 +23,8 @@
 //! (`Lab::attach_takeoff` / `attach_airborne` / `attach_land` — no touchdown).
 //! `typed-position-hold` uses [`TypedPositionHold`]
 //! (`Lab::attach_takeoff` / `set_position_now` — no airborne or land).
+//! `typed-path-follow` uses [`TypedPathFollow`]
+//! (`Lab::attach_takeoff` / two NED waypoints through `set_position_now`).
 //! `typed-hold` uses [`TypedHold`]
 //! (`Lab::attach_takeoff` / `attach_hold` — current pose, not d=−2).
 //! `typed-fleet-hold` uses [`TypedFleetHold`] (`Lab::attach_takeoff` /
@@ -65,9 +67,10 @@ use robot_lab::{
     TypedAerialDisarm, TypedAerialFailsafe, TypedAttachFleet, TypedCollisionSweep,
     TypedFailsafeTouchdown, TypedFleet, TypedFleetHold, TypedFleetReturn, TypedGroundEstop,
     TypedGroundHalt, TypedGroundHold, TypedHold, TypedHullDock, TypedHullFailsafe, TypedMarineHold,
-    TypedPadDisarm, TypedPadFailsafe, TypedPadLanding, TypedPositionHold, TypedStationDock,
-    TypedStationFailsafe, TypedStationResume, TypedSurveyorDock, TypedSurveyorFailsafe,
-    TypedSurveyorStationDock, TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
+    TypedPadDisarm, TypedPadFailsafe, TypedPadLanding, TypedPathFollow, TypedPositionHold,
+    TypedStationDock, TypedStationFailsafe, TypedStationResume, TypedSurveyorDock,
+    TypedSurveyorFailsafe, TypedSurveyorStationDock, TypedSurveyorStationFailsafe,
+    TypedSurveyorStationResume,
 };
 
 fn main() {
@@ -123,6 +126,10 @@ fn main() {
         "typed-position-hold" => (
             args.next().unwrap_or_else(|| "inland".into()),
             Kind::TypedPositionHold,
+        ),
+        "typed-path-follow" => (
+            args.next().unwrap_or_else(|| "inland".into()),
+            Kind::TypedPathFollow,
         ),
         "typed-hold" => (
             args.next().unwrap_or_else(|| "inland".into()),
@@ -213,6 +220,7 @@ fn main() {
         Kind::TypedAerialDisarm => lab.research(&mut TypedAerialDisarm::default(), 0.02, 40),
         Kind::TypedAerialAirborne => lab.research(&mut TypedAerialAirborne::default(), 0.02, 40),
         Kind::TypedPositionHold => lab.research(&mut TypedPositionHold::default(), 0.02, 40),
+        Kind::TypedPathFollow => lab.research(&mut TypedPathFollow::default(), 0.02, 200),
         Kind::TypedHold => lab.research(&mut TypedHold::default(), 0.02, 40),
         Kind::TypedFleetHold => lab.research(&mut TypedFleetHold::default(), 0.02, 40),
         Kind::TypedPadDisarm => lab.research(&mut TypedPadDisarm::default(), 0.02, 40),
@@ -262,6 +270,7 @@ enum Kind {
     TypedAerialDisarm,
     TypedAerialAirborne,
     TypedPositionHold,
+    TypedPathFollow,
     TypedHold,
     TypedFleetHold,
     TypedPadDisarm,

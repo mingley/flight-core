@@ -2,6 +2,8 @@ use crate::{
     AerialKind, AerialMachine, AgentAction, GroundHandle, Lab, LabCmd, MarineHandle, MarineKind,
     Observation, RobotView, VehicleHandle,
 };
+use flight_core::domain::Domain;
+use flight_core::plan::Waypoint;
 
 pub(crate) fn cmd(robot: &str, cmd: LabCmd, vn: f32, ve: f32, vd: f32) -> AgentAction {
     AgentAction::new(robot, cmd).ned(vn, ve, vd)
@@ -325,6 +327,91 @@ pub(crate) fn drone_position_attached(lab: &mut Lab, n: f32, e: f32, d: f32) -> 
     };
     if flushed {
         note(lab, cmd("drone", LabCmd::Position, n, e, d));
+    }
+    flushed
+}
+
+/// Command `id` toward `wp` through the legal setpoint for its domain.
+/// Aerial: OffboardControl position. Ground: Moving drive. Marine: CanThrust.
+pub(crate) fn seek_waypoint(lab: &mut Lab, id: &'static str, wp: Waypoint) -> bool {
+    let domain = {
+        let world = lab.world();
+        let Some(body) = world.body(id) else {
+            return false;
+        };
+        body.domain
+    };
+    match domain {
+        Domain::Aerial => seek_waypoint_aerial(lab, wp),
+        Domain::Ground => seek_waypoint_ground(lab, wp),
+        Domain::Surface | Domain::Underwater => seek_waypoint_marine(lab, id, wp),
+    }
+}
+
+/// Command the drone to a NED waypoint through OffboardControl
+/// `set_position_now`. Ready / Armed / Failsafe do not compile that method;
+/// those handles return false here.
+pub(crate) fn seek_waypoint_aerial(lab: &mut Lab, wp: Waypoint) -> bool {
+    drone_position_attached(lab, wp.n(), wp.e(), wp.d())
+}
+
+/// Command the rover toward a NED waypoint through Moving `set_velocity_ned_now`.
+/// Parked / EStop return false.
+pub(crate) fn seek_waypoint_ground(lab: &mut Lab, wp: Waypoint) -> bool {
+    use flight_core::frames::Ned;
+    use flight_core::vector::Velocity;
+
+    let pose = {
+        let world = lab.world();
+        let Some(rover) = world.body("rover") else {
+            return false;
+        };
+        rover.position_m
+    };
+    let vn = (wp.n() - pose[0]).clamp(-1.2, 1.2);
+    let ve = (wp.e() - pose[1]).clamp(-1.2, 1.2);
+    if let Ok(GroundHandle::Moving(mut rover)) = lab.ground_vehicle("rover") {
+        if rover
+            .set_velocity_ned_now(Velocity::<Ned>::ned(vn, ve, 0.0))
+            .is_ok()
+            && rover.backend().flush().is_ok()
+        {
+            note(lab, cmd("rover", LabCmd::Drive, vn, ve, 0.0));
+            return true;
+        }
+    }
+    false
+}
+
+/// Command a hull toward a NED waypoint through CanThrust `set_ned_velocity_now`.
+/// Docked / Failsafe return false.
+pub(crate) fn seek_waypoint_marine(lab: &mut Lab, id: &'static str, wp: Waypoint) -> bool {
+    use flight_core::frames::Ned;
+    use flight_core::vector::Velocity;
+
+    let pose = {
+        let world = lab.world();
+        let Some(hull) = world.body(id) else {
+            return false;
+        };
+        hull.position_m
+    };
+    let vn = (wp.n() - pose[0]).clamp(-1.2, 1.2);
+    let ve = (wp.e() - pose[1]).clamp(-1.2, 1.2);
+    let vd = (wp.d() - pose[2]).clamp(-1.2, 1.2);
+    let v = Velocity::<Ned>::ned(vn, ve, vd);
+    let cmd_name = LabCmd::Thrust;
+    let flushed = match lab.marine_vehicle(id) {
+        Ok(MarineHandle::Underway(mut hull)) => {
+            hull.set_ned_velocity_now(v).is_ok() && hull.backend().flush().is_ok()
+        }
+        Ok(MarineHandle::StationKeep(mut hull)) => {
+            hull.set_ned_velocity_now(v).is_ok() && hull.backend().flush().is_ok()
+        }
+        _ => false,
+    };
+    if flushed {
+        note(lab, cmd(id, cmd_name, vn, ve, vd));
     }
     flushed
 }

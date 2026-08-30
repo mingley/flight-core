@@ -29,6 +29,7 @@ The workspace already has a usable slice of that goal. In-scope functional items
 - Ground pose hold: same plant `hold_ned` / `position_hold_restores_pose` / Kani restore fact; `GroundVehicle<Moving>::hold_now`; `WorldSession::attach_ground_hold`; `TypedGroundHold`. Parked / EStop compile-fail. `LabCmd::Position` stays aerial-only.
 - Marine NED DP: same plant field; `MarineVehicle` `hold_now` on `CanThrust`; `attach_marine_hold`; `TypedMarineHold`. Docked / Failsafe compile-fail. Distinct from `StationKeep`.
 - Aerial nav trip: `WorldSession::update_nav` / `Lab::update_nav` feed `ComplementaryAttitude`. Unusable IMU posts `Event::EstimatorInvalid` (clears `estimator_valid`, latches failsafe if armed) and never writes the plant quaternion. Filter warm-up does not trip. `unit_attitude` stays `mech::quat_integrate`.
+- Typed NED paths: `Waypoint` / `NedPath` execute through OffboardControl / Moving / CanThrust attach. `TypedPathFollow` is the two-point aerial agent.
 - Research loop: `Lab::observe` / `act_through_attach` / `research` / `replay_until` / `research_probe`, typed agents with `actions_applied == 0` for legal motion, JSONL + Foxglove-shaped MCAP. `WorldImu` + `FuzzedImu` read noisy samples without replacing `WorldSession::step`.
 - Live PX4 SIH companion path: `sitl_live --ignored` recorded pass (14.59s, `px4io/px4-sitl:v1.18.0-beta2`); CI job `sitl`.
 
