@@ -338,7 +338,11 @@ plant/PX4 counter. Setpoints **and** physical-authority mode changes
 the backend. World failsafe on a sibling handle increments `Body.authority_epoch`;
 the old `Vehicle<Offboard>` is still typed Offboard and is `StaleAuthority`.
 An async PX4 disarm HEARTBEAT bumps the epoch; leftover `Vehicle<Armed>` cannot
-`enter_offboard_now`. Failsafe / disarm / recover stay ungated (safety actions).
+`enter_offboard_now` **or** `set_motor_thrust_now` (permit is checked **before**
+kernel `EnableActuators`). PX4 / ArduPilot `enter_offboard`, climb,
+`enable_actuators`, and motor thrust refuse at the backend after
+`actuation_revoked`. Failsafe / disarm / recover / land stay ungated (safety
+actions). `pump_setpoint` stays ungated.
 
 **Acceptance:** NullBackend revoke test; world two-handle failsafe test;
 trybuild `permit_is_not_clone`; Kani `permit_epoch_mismatch_is_stale`.
@@ -414,9 +418,12 @@ heartbeat. Ingested HEARTBEAT with `MAV_STATE_CRITICAL` / `EMERGENCY` /
 `FLIGHT_TERMINATION` or AUTO+RTL revokes authority **once**. AUTO+LAND
 (NAV_LAND) does not latch failsafe. `authority_heartbeat_age_ms` feeds the
 permit check. After failsafe is latched, `set_velocity_ned` /
-`set_position_ned` return `BackendError::Rejected` at this backend (the
-pre-offboard `pump_setpoint` stream is not gated). After an unexpected
-disarm HEARTBEAT, `actuation_revoked` refuses those same setpoints — `hold_now`
+`set_position_ned` / `enter_offboard` / `takeoff_now` / `enable_actuators` /
+`set_motor_thrust` return `BackendError::Rejected` at this backend (the
+pre-offboard `pump_setpoint` stream is not gated; land stays ungated). After an unexpected
+disarm HEARTBEAT, `actuation_revoked` refuses those same physical-authority
+commands — leftover `Vehicle<Armed>` cannot `enter_offboard_now` or
+`set_motor_thrust_now`. `hold_now`
 before arm, and after a first `connect` that never armed, is not revoked.
 `begin_session` / `connect` bump the epoch so leftover `Vehicle` permits are
 stale. After a local-position sample older than
