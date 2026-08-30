@@ -53,7 +53,10 @@ pub(crate) fn apply_action_world(
                     ground(body, GroundEvent::DriveCommand)?;
                     body.set_position_hold(p);
                 }
-                Domain::Surface | Domain::Underwater => return Err(LabError::WrongDomain),
+                Domain::Surface | Domain::Underwater => {
+                    marine(body, MarineEvent::ThrustCommand)?;
+                    body.set_position_hold(p);
+                }
             }
             body.yaw_cmd = action.yaw_rate;
         }

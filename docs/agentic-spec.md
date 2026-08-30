@@ -86,7 +86,7 @@ The agent is always a **client of the machines**. `Lab::act` / `act_through_atta
 - `WorldSession` attach walks shared by HITL, ROS 2, PX4 `WorldPlant`, and `robot-lab`
 - Live PX4 SIH companion (`sitl_live`, CI job `sitl`): unpacked `PX4_MAIN_MODE_OFFBOARD`, climb/hold stay in offboard, `NAV_LAND` for land
 - ROS 2 `rclrs` plant nodes; HITL FCH1 framing with miss ⇒ zero command
-- Aerial NED pose hold on the plant (`hold_ned`, `position_hold_restores_pose`); ground Moving hold uses the same field and Kani restore fact
+- Aerial NED pose hold on the plant (`hold_ned`, `position_hold_restores_pose`); ground Moving hold and marine Underway/StationKeep DP use the same field and Kani restore fact
 
 **World-class means:**
 

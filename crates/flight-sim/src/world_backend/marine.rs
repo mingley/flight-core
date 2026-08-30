@@ -2,8 +2,8 @@ use flight_core::marine::{MarineEvent, MarineState};
 use flight_core::time::{Clock, MonotonicInstant};
 use flight_core::vector::{Position, Velocity};
 use flight_core::vehicle::{
-    AutopilotKind, BackendError, CanDock, CanTripMarineFailsafe, ConnectionInfo, MarineVehicle,
-    MotorThrust, PreflightReport, Telemetry, VehicleBackend,
+    AutopilotKind, BackendError, CanDock, CanThrust, CanTripMarineFailsafe, ConnectionInfo,
+    MarineVehicle, MotorThrust, PreflightReport, Telemetry, VehicleBackend,
 };
 use robot_world::World;
 
@@ -153,6 +153,15 @@ pub(crate) fn marine_dock<S: CanDock>(
     v: MarineVehicle<S, MarineWorldBackend>,
 ) -> MarineWorldBackend {
     v.dock_now().into_backend()
+}
+
+pub(crate) fn marine_hold<S: CanThrust>(
+    mut v: MarineVehicle<S, MarineWorldBackend>,
+) -> Result<MarineWorldBackend, BackendError> {
+    v.hold_now().map_err(|e| e.into_backend())?;
+    let backend = v.into_backend();
+    backend.flush()?;
+    Ok(backend)
 }
 
 impl Clock for MarineWorldBackend {

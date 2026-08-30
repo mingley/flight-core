@@ -10,7 +10,7 @@ use super::aerial::{
     aerial_disarm, aerial_failsafe, aerial_hold, aerial_land, aerial_touchdown, WorldBackend,
 };
 use super::ground::{ground_estop, ground_hold, GroundWorldBackend};
-use super::marine::{marine_dock, marine_failsafe, MarineWorldBackend};
+use super::marine::{marine_dock, marine_failsafe, marine_hold, MarineWorldBackend};
 use super::shared::{body_imu, clamp_dt, Plant};
 
 /// Shared verified scene. Clone to put several typestate vehicles in one world.
@@ -180,6 +180,19 @@ impl WorldSession {
                 let station = underway.hold_station().map_err(|e| e.into_backend())?;
                 Ok(station.into_backend())
             }
+            _ => Err(BackendError::Protocol),
+        }
+    }
+
+    /// Hold at the current NED pose while the hull is Underway or StationKeep.
+    /// Distinct from [`Self::attach_station`]. Docked / Failsafe are Protocol.
+    pub fn attach_marine_hold(
+        &self,
+        body_id: &'static str,
+    ) -> Result<MarineWorldBackend, BackendError> {
+        match self.marine(body_id).attach()? {
+            MarineHandle::Underway(v) => marine_hold(v),
+            MarineHandle::StationKeep(v) => marine_hold(v),
             _ => Err(BackendError::Protocol),
         }
     }

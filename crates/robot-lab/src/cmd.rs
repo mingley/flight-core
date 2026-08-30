@@ -142,7 +142,7 @@ impl LabCmd {
                     aerial_ok_seq(body, &[Event::HeartbeatFresh, Event::MissionCommand])
                 }
                 Domain::Ground => ground_ok(body, GroundEvent::DriveCommand),
-                Domain::Surface | Domain::Underwater => false,
+                Domain::Surface | Domain::Underwater => marine_ok(body, MarineEvent::ThrustCommand),
             },
             Self::Release => ground_ok(body, GroundEvent::Release),
             Self::Halt | Self::Park => ground_ok(body, GroundEvent::Halt),
@@ -172,7 +172,7 @@ impl LabCmd {
             Self::Park => false,
             Self::Failsafe if body.domain == Domain::Ground => false,
             Self::Velocity | Self::Position => body.domain == Domain::Aerial,
-            Self::Hold => matches!(body.domain, Domain::Aerial | Domain::Ground),
+            Self::Hold => true,
             Self::Drive => body.domain == Domain::Ground,
             Self::Thrust => matches!(body.domain, Domain::Surface | Domain::Underwater),
             _ => true,

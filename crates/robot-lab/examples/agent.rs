@@ -37,6 +37,8 @@
 //! `attach_park` — no E-stop).
 //! `typed-ground-hold` uses [`TypedGroundHold`] (`Lab::attach_drive` /
 //! `attach_ground_hold` — current NED pose).
+//! `typed-marine-hold` uses [`TypedMarineHold`] (`Lab::attach_undock` /
+//! `attach_marine_hold` — NED pose, not StationKeep).
 //! `typed-fleet-return` uses [`TypedFleetReturn`] (`Lab::attach_takeoff` /
 //! `attach_drive` / `attach_undock`, then `attach_land` / `attach_touchdown` /
 //! `attach_park` / `attach_dock`).
@@ -62,10 +64,10 @@ use robot_lab::{
     CollisionSweep, Lab, PadLanding, RoverProbe, ScriptedCoastal, TypedAerialAirborne,
     TypedAerialDisarm, TypedAerialFailsafe, TypedAttachFleet, TypedCollisionSweep,
     TypedFailsafeTouchdown, TypedFleet, TypedFleetHold, TypedFleetReturn, TypedGroundEstop,
-    TypedGroundHalt, TypedGroundHold, TypedHold, TypedHullDock, TypedHullFailsafe, TypedPadDisarm,
-    TypedPadFailsafe, TypedPadLanding, TypedPositionHold, TypedStationDock, TypedStationFailsafe,
-    TypedStationResume, TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
-    TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
+    TypedGroundHalt, TypedGroundHold, TypedHold, TypedHullDock, TypedHullFailsafe, TypedMarineHold,
+    TypedPadDisarm, TypedPadFailsafe, TypedPadLanding, TypedPositionHold, TypedStationDock,
+    TypedStationFailsafe, TypedStationResume, TypedSurveyorDock, TypedSurveyorFailsafe,
+    TypedSurveyorStationDock, TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
 };
 
 fn main() {
@@ -150,6 +152,10 @@ fn main() {
             args.next().unwrap_or_else(|| "inland".into()),
             Kind::TypedGroundHold,
         ),
+        "typed-marine-hold" => (
+            args.next().unwrap_or_else(|| "coastal".into()),
+            Kind::TypedMarineHold,
+        ),
         "typed-fleet-return" => (
             args.next().unwrap_or_else(|| "coastal".into()),
             Kind::TypedFleetReturn,
@@ -214,6 +220,7 @@ fn main() {
         Kind::TypedGroundEstop => lab.research(&mut TypedGroundEstop::default(), 0.02, 40),
         Kind::TypedGroundHalt => lab.research(&mut TypedGroundHalt::default(), 0.02, 40),
         Kind::TypedGroundHold => lab.research(&mut TypedGroundHold::default(), 0.02, 40),
+        Kind::TypedMarineHold => lab.research(&mut TypedMarineHold::default(), 0.02, 40),
         Kind::TypedFleetReturn => lab.research(&mut TypedFleetReturn::default(), 0.02, 40),
         Kind::TypedStationFailsafe => lab.research(&mut TypedStationFailsafe::default(), 0.02, 40),
         Kind::TypedFailsafeTouchdown => {
@@ -262,6 +269,7 @@ enum Kind {
     TypedGroundEstop,
     TypedGroundHalt,
     TypedGroundHold,
+    TypedMarineHold,
     TypedFleetReturn,
     TypedStationFailsafe,
     TypedFailsafeTouchdown,

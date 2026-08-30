@@ -1,6 +1,8 @@
 use crate::{AgentAction, Lab, LabCmd, MarineKind, Observation};
 
-use super::support::{cmd, note, robot, skiff_thrust_attached, surveyor_thrust_attached};
+use super::support::{
+    cmd, hull_hold_attached, note, robot, skiff_thrust_attached, surveyor_thrust_attached,
+};
 use super::ResearchAgent;
 
 /// Coastal skiff: probe docked thrust, then attach undock, station-keep, and
@@ -541,5 +543,81 @@ impl ResearchAgent for TypedSurveyorStationResume {
             self.done = true;
         }
         Vec::new()
+    }
+}
+
+/// Coastal, harbor, or open_water hulls: probe docked thrust, undock, then
+/// hold the current NED pose. Distinct from [`TypedStationDock`] (StationKeep
+/// machine). Inland has no hulls (P11). Legal motion never goes through
+/// [`Lab::act`].
+#[derive(Default)]
+pub struct TypedMarineHold {
+    pub(crate) probed: bool,
+    pub(crate) skiff_done: bool,
+    pub(crate) surveyor_done: bool,
+}
+
+impl TypedMarineHold {
+    pub fn done(&self) -> bool {
+        self.skiff_done && self.surveyor_done
+    }
+}
+
+impl ResearchAgent for TypedMarineHold {
+    fn name(&self) -> &'static str {
+        "typed_marine_hold"
+    }
+
+    fn act(&mut self, lab: &mut Lab, obs: &Observation) -> Vec<AgentAction> {
+        if !self.probed {
+            self.probed = true;
+            if let Some(skiff) = robot(obs, "skiff") {
+                if skiff
+                    .marine
+                    .as_ref()
+                    .is_some_and(|m| m.kind == MarineKind::Docked)
+                {
+                    return vec![cmd("skiff", LabCmd::Thrust, 0.8, 0.0, 0.0)];
+                }
+            }
+            if let Some(surveyor) = robot(obs, "surveyor") {
+                if surveyor
+                    .marine
+                    .as_ref()
+                    .is_some_and(|m| m.kind == MarineKind::Docked)
+                {
+                    return vec![cmd("surveyor", LabCmd::Thrust, 0.0, 0.0, 0.4)];
+                }
+            }
+        }
+        grant_hull_hold(lab, obs, "skiff", &mut self.skiff_done);
+        grant_hull_hold(lab, obs, "surveyor", &mut self.surveyor_done);
+        Vec::new()
+    }
+}
+
+fn grant_hull_hold(lab: &mut Lab, obs: &Observation, id: &'static str, done: &mut bool) {
+    if *done {
+        return;
+    }
+    let Some(hull) = robot(obs, id) else {
+        return;
+    };
+    let Some(m) = hull.marine.as_ref() else {
+        return;
+    };
+    if m.failsafe {
+        return;
+    }
+    if m.kind == MarineKind::Docked {
+        if lab.attach_undock(id).is_ok() {
+            note(lab, cmd(id, LabCmd::Undock, 0.0, 0.0, 0.0));
+        }
+        return;
+    }
+    if matches!(m.kind, MarineKind::Underway | MarineKind::StationKeep)
+        && (hull.hold_ned.is_some() || hull_hold_attached(lab, id))
+    {
+        *done = true;
     }
 }

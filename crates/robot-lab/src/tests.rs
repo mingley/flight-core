@@ -835,6 +835,82 @@ fn rover_hold_wiped_when_battery_empty() {
 }
 
 #[test]
+fn hold_is_legal_on_underway_hull_not_docked() {
+    let mut lab = Lab::open("coastal", 1).unwrap();
+    assert!(!view(&lab, "skiff").allows(LabCmd::Hold));
+    lab.act_through_attach(AgentAction::new("skiff", LabCmd::Undock))
+        .unwrap();
+    assert!(view(&lab, "skiff").allows(LabCmd::Hold));
+    assert!(!view(&lab, "skiff").allows(LabCmd::Position));
+    let pose = body(&lab, "skiff").position_m;
+    lab.act_through_attach(AgentAction::new("skiff", LabCmd::Hold))
+        .unwrap();
+    assert_eq!(body(&lab, "skiff").hold_ned, Some(pose));
+    assert!(lab.all_hold());
+    lab.act_through_attach(AgentAction::new("skiff", LabCmd::Dock))
+        .unwrap();
+    assert!(body(&lab, "skiff").hold_ned.is_none());
+}
+
+#[test]
+fn json_hold_from_docked_hull_is_not_legal() {
+    let mut lab = Lab::open("coastal", 1).unwrap();
+    let err = lab
+        .act(AgentAction::new("skiff", LabCmd::Hold))
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            LabError::NotLegal {
+                cmd: LabCmd::Hold,
+                ..
+            }
+        ),
+        "{err}"
+    );
+    lab.act_through_attach(AgentAction::new("skiff", LabCmd::Undock))
+        .unwrap();
+    let pose = body(&lab, "skiff").position_m;
+    lab.act(AgentAction::new("skiff", LabCmd::Hold)).unwrap();
+    assert_eq!(body(&lab, "skiff").hold_ned, Some(pose));
+}
+
+#[test]
+fn act_through_attach_marine_hold_walks_attach_marine_hold() {
+    let mut lab = Lab::open("coastal", 1).unwrap();
+    lab.act_through_attach(AgentAction::new("surveyor", LabCmd::Undock))
+        .unwrap();
+    let pose = body(&lab, "surveyor").position_m;
+    lab.act_through_attach(AgentAction::new("surveyor", LabCmd::Hold))
+        .unwrap();
+    assert!(
+        lab.log.iter().any(|a| a.action.cmd == LabCmd::Hold),
+        "attach marine hold must log Hold"
+    );
+    assert_eq!(body(&lab, "surveyor").hold_ned, Some(pose));
+    assert!(lab.all_hold());
+
+    let mut replayed = Lab::open("coastal", 1).unwrap();
+    replayed
+        .replay_until(&lab.log, 0.02, lab.world().t.max(0.02))
+        .unwrap();
+    assert!(replayed.all_hold());
+    assert_eq!(body(&replayed, "surveyor").hold_ned, Some(pose));
+    assert!(replayed.log.is_empty(), "replay must not re-log");
+}
+
+#[test]
+fn hull_hold_wiped_by_failsafe() {
+    let lab = Lab::open("coastal", 1).unwrap();
+    lab.attach_undock("skiff").unwrap();
+    lab.attach_marine_hold("skiff").unwrap();
+    assert!(body(&lab, "skiff").hold_ned.is_some());
+    lab.attach_marine_failsafe("skiff").unwrap();
+    assert!(body(&lab, "skiff").hold_ned.is_none());
+    assert!(body(&lab, "skiff").command.is_none());
+}
+
+#[test]
 fn replay_until_walks_attach_without_relogging() {
     use flight_core::safety::Phase;
 

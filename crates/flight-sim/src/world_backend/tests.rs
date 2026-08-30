@@ -1389,6 +1389,53 @@ fn attach_ground_hold_sets_ned_pose_from_moving() {
 }
 
 #[test]
+fn attach_marine_hold_sets_ned_pose_from_underway_and_station() {
+    let session = WorldSession::coastal(1);
+    assert_eq!(
+        session.attach_marine_hold("skiff").unwrap_err(),
+        BackendError::Protocol
+    );
+    session.attach_undock("skiff").unwrap();
+    let pose = session.world().body("skiff").unwrap().position_m;
+    session.attach_marine_hold("skiff").unwrap();
+    assert_eq!(session.world().body("skiff").unwrap().hold_ned, Some(pose));
+    session.step(0.02).unwrap();
+    assert!(session.world().body("skiff").unwrap().hold_ned.is_some());
+    assert!(session.world().all_hold());
+    session.attach_dock("skiff").unwrap();
+    assert!(session.world().body("skiff").unwrap().hold_ned.is_none());
+    assert_eq!(
+        session.attach_marine_hold("skiff").unwrap_err(),
+        BackendError::Protocol
+    );
+
+    session.attach_undock("surveyor").unwrap();
+    session.attach_station("surveyor").unwrap();
+    let pose = session.world().body("surveyor").unwrap().position_m;
+    session.attach_marine_hold("surveyor").unwrap();
+    assert_eq!(
+        session.world().body("surveyor").unwrap().hold_ned,
+        Some(pose)
+    );
+    assert_eq!(
+        session
+            .world()
+            .body("surveyor")
+            .unwrap()
+            .marine
+            .unwrap()
+            .phase,
+        MarinePhase::StationKeep
+    );
+    session.attach_marine_failsafe("surveyor").unwrap();
+    assert!(session.world().body("surveyor").unwrap().hold_ned.is_none());
+    assert_eq!(
+        session.attach_marine_hold("surveyor").unwrap_err(),
+        BackendError::Protocol
+    );
+}
+
+#[test]
 fn fuzzed_world_imu_hold_keeps_properties() {
     use crate::FuzzedImu;
     use flight_core::sensors::Imu;

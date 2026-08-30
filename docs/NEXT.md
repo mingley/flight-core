@@ -121,7 +121,7 @@ Goal: every domain can **hold and move** under the same typestate story; compani
 
 ### B2. Marine dynamic positioning (NED pose hold)
 
-Distinct from `StationKeep` heading/station machine (keep that machine; P3 stands).
+**Status: landed.** Distinct from `StationKeep`. `MarineVehicle` `hold_now` on `CanThrust` (Underway or StationKeep); Docked / Failsafe compile-fail. Plant field is `hold_ned` / `position_hold_restores_pose`; Kani `hold_velocity_restores_pose` (no second f32 harness). `LabCmd::Hold` + `attach_marine_hold` + `TypedMarineHold` + JSON probe. Inland skips hulls; coastal / harbor / open_water include skiff and surveyor. Dock, failsafe, and ungranted `clear_command()` wipe hold. P3 stands: no `declare_failsafe` on Docked; no dock from Failsafe.
 
 **Acceptance:**
 
@@ -232,7 +232,7 @@ Only after A is usable and B1–B2 have a written status (landed or explicitly d
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1 landed.** Next: **B2** (marine DP).
+1. **A1–A6 landed. B1–B2 landed.** Next: **B3 / B4 / B5** (estimation bit, planning, coordination).
 2. **B3 / B4 / B5** (estimation bit, planning, coordination).
 3. **C1–C3** (proofs, traces, scenarios) can overlap A3.
 4. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.

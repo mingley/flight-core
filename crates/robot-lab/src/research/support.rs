@@ -347,6 +347,15 @@ pub(crate) fn rover_hold_attached(lab: &mut Lab) -> bool {
     }
 }
 
+pub(crate) fn hull_hold_attached(lab: &mut Lab, id: &'static str) -> bool {
+    if lab.attach_marine_hold(id).is_ok() {
+        note(lab, cmd(id, LabCmd::Hold, 0.0, 0.0, 0.0));
+        true
+    } else {
+        false
+    }
+}
+
 pub(crate) fn rover_drive_attached(lab: &mut Lab, vn: f32, ve: f32, vd: f32) {
     use flight_core::frames::Ned;
     use flight_core::vector::Velocity;

@@ -10,8 +10,8 @@ use crate::{
     RoverProbe, ScriptedCoastal, TimedAction, TypedAerialAirborne, TypedAerialDisarm,
     TypedAerialFailsafe, TypedAttachFleet, TypedCollisionSweep, TypedFailsafeTouchdown, TypedFleet,
     TypedFleetHold, TypedFleetReturn, TypedGroundEstop, TypedGroundHalt, TypedGroundHold,
-    TypedHold, TypedHullDock, TypedHullFailsafe, TypedPadDisarm, TypedPadFailsafe, TypedPadLanding,
-    TypedPositionHold, TypedStationDock, TypedStationFailsafe, TypedStationResume,
+    TypedHold, TypedHullDock, TypedHullFailsafe, TypedMarineHold, TypedPadDisarm, TypedPadFailsafe,
+    TypedPadLanding, TypedPositionHold, TypedStationDock, TypedStationFailsafe, TypedStationResume,
     TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
     TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
 };
@@ -343,6 +343,7 @@ pub fn named_agent(name: &str) -> Result<Box<dyn ResearchAgent>, RunError> {
         "typed_ground_estop" => Box::new(TypedGroundEstop::default()),
         "typed_ground_halt" => Box::new(TypedGroundHalt::default()),
         "typed_ground_hold" => Box::new(TypedGroundHold::default()),
+        "typed_marine_hold" => Box::new(TypedMarineHold::default()),
         "typed_hull_dock" => Box::new(TypedHullDock::default()),
         "typed_hull_failsafe" => Box::new(TypedHullFailsafe::default()),
         "typed_station_dock" => Box::new(TypedStationDock::default()),

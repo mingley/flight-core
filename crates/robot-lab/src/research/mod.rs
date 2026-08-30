@@ -18,8 +18,8 @@ pub use typed_aerial::{
 pub use typed_fleet::{TypedAttachFleet, TypedFleet, TypedFleetHold, TypedFleetReturn};
 pub use typed_ground::{TypedCollisionSweep, TypedGroundEstop, TypedGroundHalt, TypedGroundHold};
 pub use typed_marine::{
-    TypedHullDock, TypedHullFailsafe, TypedStationDock, TypedStationFailsafe, TypedStationResume,
-    TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
+    TypedHullDock, TypedHullFailsafe, TypedMarineHold, TypedStationDock, TypedStationFailsafe,
+    TypedStationResume, TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
     TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
 };
 

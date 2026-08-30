@@ -194,6 +194,11 @@ impl Lab {
         self.session.attach_ground_hold(id)
     }
 
+    /// Underway or StationKeep → current NED pose hold. Docked / Failsafe are Protocol.
+    pub fn attach_marine_hold(&self, id: &'static str) -> Result<MarineWorldBackend, BackendError> {
+        self.session.attach_marine_hold(id)
+    }
+
     /// Ready, Armed, Offboard, Takeoff, Airborne, or Landing → Failsafe.
     pub fn attach_failsafe(&self, id: &'static str) -> Result<WorldBackend, BackendError> {
         self.session.attach_failsafe(id)
@@ -398,7 +403,10 @@ impl Lab {
                 Some(Domain::Ground) => {
                     self.attach_apply(t, action, self.session.attach_ground_hold(id), log)
                 }
-                _ => Ok(false),
+                Some(Domain::Surface | Domain::Underwater) => {
+                    self.attach_apply(t, action, self.session.attach_marine_hold(id), log)
+                }
+                None => Ok(false),
             },
             LabCmd::Drive => self.try_ground_drive(t, id, action, log),
             LabCmd::Thrust => self.try_marine_thrust(t, id, action, log),

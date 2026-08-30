@@ -2164,3 +2164,92 @@ fn typed_surveyor_station_resume_skips_inland() {
     assert_eq!(run.actions_applied, 0);
     assert!(lab.observe().robots.iter().all(|r| r.id != "surveyor"));
 }
+
+#[test]
+fn typed_marine_hold_holds_skiff_and_surveyor() {
+    for name in ["coastal", "harbor", "open_water"] {
+        let mut lab = Lab::open(name, 3).unwrap();
+        let mut agent = TypedMarineHold::default();
+        let run = lab.research(&mut agent, 0.02, 40);
+        assert!(run.ok(), "{name} {run} broken={:?}", run.broken);
+        assert_eq!(run.actions_applied, 0, "{name}");
+        assert!(run.actions_rejected >= 1, "{name}");
+        assert!(agent.done(), "{name}");
+        assert!(
+            lab.log
+                .iter()
+                .any(|a| a.action.robot == "skiff" && a.action.cmd == LabCmd::Undock),
+            "{name}"
+        );
+        assert!(
+            lab.log
+                .iter()
+                .any(|a| a.action.robot == "surveyor" && a.action.cmd == LabCmd::Undock),
+            "{name}"
+        );
+        assert!(
+            lab.log
+                .iter()
+                .any(|a| a.action.robot == "skiff" && a.action.cmd == LabCmd::Hold),
+            "{name}"
+        );
+        assert!(
+            lab.log
+                .iter()
+                .any(|a| a.action.robot == "surveyor" && a.action.cmd == LabCmd::Hold),
+            "{name}"
+        );
+        assert!(
+            lab.log
+                .iter()
+                .all(|a| a.action.cmd != LabCmd::Station && a.action.cmd != LabCmd::Failsafe),
+            "{name} DP must not enter StationKeep or failsafe"
+        );
+        let end = lab.observe();
+        let skiff = robot(&end, "skiff").unwrap();
+        assert_eq!(
+            skiff.marine.as_ref().unwrap().kind,
+            MarineKind::Underway,
+            "{name}"
+        );
+        assert!(skiff.hold_ned.is_some(), "{name} skiff hold_ned");
+        let surveyor = robot(&end, "surveyor").unwrap();
+        assert_eq!(
+            surveyor.marine.as_ref().unwrap().kind,
+            MarineKind::Underway,
+            "{name}"
+        );
+        assert!(surveyor.hold_ned.is_some(), "{name} surveyor hold_ned");
+        assert!(run.holds("position_hold_restores_pose"), "{name}");
+    }
+}
+
+#[test]
+fn typed_marine_hold_log_replays_on_a_fresh_lab() {
+    let mut live = Lab::open("coastal", 3).unwrap();
+    let mut agent = TypedMarineHold::default();
+    let run = live.research(&mut agent, 0.02, 40);
+    assert!(run.ok(), "{run} broken={:?}", run.broken);
+    assert!(agent.done());
+
+    let mut replayed = Lab::open("coastal", 3).unwrap();
+    replayed
+        .replay_until(&live.log, 0.02, live.world().t)
+        .unwrap();
+    let obs = replayed.observe();
+    assert!(robot(&obs, "skiff").unwrap().hold_ned.is_some());
+    assert!(robot(&obs, "surveyor").unwrap().hold_ned.is_some());
+    assert!(replayed.all_hold());
+    assert!(replayed.log.is_empty(), "replay must not re-log");
+}
+
+#[test]
+fn typed_marine_hold_skips_inland() {
+    let mut lab = Lab::open("inland", 3).unwrap();
+    let mut agent = TypedMarineHold::default();
+    let run = lab.research(&mut agent, 0.02, 20);
+    assert!(run.ok(), "{run} broken={:?}", run.broken);
+    assert!(!agent.done());
+    assert_eq!(run.actions_applied, 0);
+    assert!(lab.observe().robots.iter().all(|r| r.id != "skiff"));
+}
