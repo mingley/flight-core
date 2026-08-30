@@ -11,6 +11,7 @@
 
 use flight_core::prelude::*;
 use flight_core::units::Qty;
+use flight_core::vehicle::{ErrorKind, VehicleBackend};
 use flight_px4::{vehicle, Px4Config};
 
 #[tokio::test]
@@ -78,4 +79,66 @@ async fn sitl_takeoff_hold_land() {
     vehicle.set_position(target).await.expect("position");
 
     let _ = vehicle.land().await.expect("land");
+}
+
+#[tokio::test]
+#[ignore = "needs a live PX4 SITL on UDP 14540 (CI job sitl)"]
+async fn sitl_gps_loss_revokes_leftover_offboard() {
+    let cfg = Px4Config::default();
+    let vehicle = match vehicle(cfg.clone()).connect().await {
+        Ok(v) => v,
+        Err(e) => panic!("could not reach PX4 SITL at {}: {}", cfg.endpoint, e.error),
+    };
+
+    let vehicle = vehicle.verify_preflight().await.expect("preflight");
+    let mut vehicle = vehicle
+        .arm()
+        .await
+        .expect("arm")
+        .enter_offboard()
+        .await
+        .expect("offboard");
+
+    assert!(
+        vehicle.leftover_commands_stale().is_err(),
+        "live Offboard must have authority before GPS-loss inject"
+    );
+    let epoch0 = vehicle.backend().authority_epoch();
+    let before = vehicle
+        .telemetry()
+        .await
+        .expect("telemetry before")
+        .to_trace_sample(epoch0);
+
+    vehicle
+        .backend_mut()
+        .inject_revoke(Event::EstimatorInvalid)
+        .expect("live EstimatorInvalid");
+    vehicle
+        .leftover_commands_stale()
+        .expect("leftover Offboard after live GPS-loss inject");
+
+    let epoch1 = vehicle.backend().authority_epoch();
+    assert!(epoch1 > epoch0, "live GPS-loss must bump epoch");
+    let after = vehicle
+        .telemetry()
+        .await
+        .expect("telemetry after")
+        .to_trace_sample(epoch1);
+    assert!(after.failsafe, "live GPS-loss must latch failsafe");
+
+    let err = vehicle
+        .set_position(Position::<Ned>::ned(0.0, 0.0, -3.0))
+        .await
+        .expect_err("leftover set_position after GPS-loss");
+    assert!(
+        matches!(err, ErrorKind::StaleAuthority(_)),
+        "leftover set_position must be StaleAuthority, got {err:?}"
+    );
+
+    evaluate_trace(&[before, after], flight_sim::Scenario::GPS_LOSS.require)
+        .expect("live GPS_LOSS require");
+    AerialOffboard::evaluate(&[before, after]).expect("live GPS_LOSS capability");
+
+    let _ = vehicle.backend_mut().disarm().await;
 }
