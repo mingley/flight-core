@@ -265,9 +265,16 @@ impl<S: State, B: VehicleBackend> Vehicle<S, B> {
         self.inner.permit = Some(super::authority::issue(&self.inner.backend));
     }
 
-    fn require_live_permit(&self) -> Result<(), ErrorKind> {
+    /// Permit epoch, vehicle id, and lease. Heartbeat age is not part of this
+    /// check: entering offboard applies `HeartbeatFresh` and must not require
+    /// the bit it is about to set.
+    fn require_permit(&self) -> Result<(), ErrorKind> {
         super::authority::require(self.inner.permit.as_ref(), &self.inner.backend)
-            .map_err(ErrorKind::StaleAuthority)?;
+            .map_err(ErrorKind::StaleAuthority)
+    }
+
+    fn require_live_permit(&self) -> Result<(), ErrorKind> {
+        self.require_permit()?;
         if let Some(age) = self.inner.backend.authority_heartbeat_age_ms() {
             if !safety::heartbeat_age_ok(age) {
                 return Err(ErrorKind::StaleAuthority(AuthorityReject::StaleHeartbeat));
@@ -386,8 +393,12 @@ impl<B: VehicleBackend> Vehicle<Armed, B> {
 
     /// Same as [`Self::enter_offboard`] when the backend completes without parking.
     /// Compiles only from Armed (`tests/ui/ready_offboard.rs` and siblings).
+    ///
+    /// Checks the permit **epoch** so a leftover `Vehicle<Armed>` after failsafe
+    /// or an async PX4 disarm cannot switch modes. Heartbeat freshness is
+    /// applied next (`HeartbeatFresh`); it is not a precondition of entry.
     pub fn enter_offboard_now(mut self) -> Result<Vehicle<Offboard, B>, TransitionError<Armed, B>> {
-        if let Err(error) = self.require_live_permit() {
+        if let Err(error) = self.require_permit() {
             return Err(self.fail(error));
         }
         if let Err(error) = self.apply_event(Event::HeartbeatFresh) {
