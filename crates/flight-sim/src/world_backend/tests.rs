@@ -583,14 +583,24 @@ fn now_setpoints_refuse_the_same_illegal_grants_as_lab_act() {
     assert!(rover
         .set_velocity_now(Velocity::<Ned>::ned(-0.8, 0.0, 0.0))
         .is_err());
+    assert!(rover
+        .set_position_now(Position::<Ned>::ned(0.0, 0.0, 0.0))
+        .is_err());
     let mut rover = inland.attach_drive("rover").unwrap();
     rover
         .set_velocity_now(Velocity::<Ned>::ned(-0.8, 0.0, 0.0))
         .unwrap();
+    rover
+        .set_position_now(Position::<Ned>::ned(10.0, 0.0, 0.0))
+        .unwrap();
     rover.flush().unwrap();
     rover.halt_now().unwrap();
+    assert!(!rover.actuation_revoked());
     assert!(rover
         .set_velocity_now(Velocity::<Ned>::ned(-0.8, 0.0, 0.0))
+        .is_err());
+    assert!(rover
+        .set_position_now(Position::<Ned>::ned(0.0, 0.0, 0.0))
         .is_err());
 
     let coastal = WorldSession::coastal(1);
@@ -598,14 +608,24 @@ fn now_setpoints_refuse_the_same_illegal_grants_as_lab_act() {
     assert!(skiff
         .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.6, 0.0))
         .is_err());
+    assert!(skiff
+        .set_position_now(Position::<Ned>::ned(0.0, 0.0, 0.0))
+        .is_err());
     let mut skiff = coastal.attach_undock("skiff").unwrap();
     skiff
         .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.6, 0.0))
         .unwrap();
+    skiff
+        .set_position_now(Position::<Ned>::ned(0.0, 2.0, 0.0))
+        .unwrap();
     skiff.flush().unwrap();
     skiff.dock_now().unwrap();
+    assert!(!skiff.actuation_revoked());
     assert!(skiff
         .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.6, 0.0))
+        .is_err());
+    assert!(skiff
+        .set_position_now(Position::<Ned>::ned(0.0, 0.0, 0.0))
         .is_err());
 
     let mut drone = coastal.aerial("drone");
@@ -1040,6 +1060,107 @@ fn world_failsafe_refuses_backend_direct_physical_authority() {
         matches!(err, Err(BackendError::Rejected(_))),
         "hold_now uses set_position: {err:?}"
     );
+}
+
+fn assert_actuation_revoked(err: Result<(), BackendError>, what: &str) {
+    match err {
+        Err(BackendError::Rejected("actuation authority revoked")) => {}
+        other => panic!("{what} must refuse at the hardware boundary: {other:?}"),
+    }
+}
+
+#[test]
+fn world_estop_refuses_backend_direct_ground_authority() {
+    let session = WorldSession::inland(1);
+    let mut rover = session.ground("rover");
+    rover.grant_drive().unwrap();
+    assert!(
+        !rover.actuation_revoked(),
+        "granted Moving is not a revoked session"
+    );
+    rover
+        .set_velocity_now(Velocity::<Ned>::ned(-0.4, 0.0, 0.0))
+        .unwrap();
+    rover
+        .set_position_now(Position::<Ned>::ned(10.0, 0.0, 0.0))
+        .unwrap();
+    rover.set_yaw_rate(0.2).unwrap();
+    rover.failsafe_now().unwrap();
+    assert!(rover.actuation_revoked());
+    assert!(session.world().body("rover").unwrap().command.is_none());
+    assert_actuation_revoked(
+        rover.set_velocity_now(Velocity::<Ned>::ned(-0.8, 0.0, 0.0)),
+        "set_velocity",
+    );
+    assert_actuation_revoked(
+        rover.set_position_now(Position::<Ned>::ned(0.0, 0.0, 0.0)),
+        "set_position",
+    );
+    assert_actuation_revoked(rover.hold_now(), "hold_now uses set_position");
+    assert_actuation_revoked(rover.set_yaw_rate(0.4), "set_yaw_rate");
+    rover.flush().unwrap();
+    assert!(
+        session.world().body("rover").unwrap().command.is_none(),
+        "leftover pose must not land on the plant after estop"
+    );
+
+    session.attach_reset("rover").unwrap();
+    assert!(!session.ground("rover").actuation_revoked());
+    let mut rover = session.attach_drive("rover").unwrap();
+    rover
+        .set_velocity_now(Velocity::<Ned>::ned(-0.4, 0.0, 0.0))
+        .unwrap();
+    rover
+        .set_position_now(Position::<Ned>::ned(10.0, 0.0, 0.0))
+        .unwrap();
+    rover.set_yaw_rate(0.1).unwrap();
+}
+
+#[test]
+fn world_failsafe_refuses_backend_direct_marine_authority() {
+    let session = WorldSession::coastal(1);
+    let mut skiff = session.marine("skiff");
+    skiff.grant_undock().unwrap();
+    assert!(
+        !skiff.actuation_revoked(),
+        "granted Underway is not a revoked session"
+    );
+    skiff
+        .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.4, 0.0))
+        .unwrap();
+    skiff
+        .set_position_now(Position::<Ned>::ned(0.0, 2.0, 0.0))
+        .unwrap();
+    skiff.set_yaw_rate(0.2).unwrap();
+    skiff.failsafe_now().unwrap();
+    assert!(skiff.actuation_revoked());
+    assert!(session.world().body("skiff").unwrap().command.is_none());
+    assert_actuation_revoked(
+        skiff.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.8, 0.0)),
+        "set_velocity",
+    );
+    assert_actuation_revoked(
+        skiff.set_position_now(Position::<Ned>::ned(0.0, 0.0, 0.0)),
+        "set_position",
+    );
+    assert_actuation_revoked(skiff.hold_now(), "hold_now uses set_position");
+    assert_actuation_revoked(skiff.set_yaw_rate(0.4), "set_yaw_rate");
+    skiff.flush().unwrap();
+    assert!(
+        session.world().body("skiff").unwrap().command.is_none(),
+        "leftover pose must not land on the plant after failsafe"
+    );
+
+    session.attach_recover("skiff").unwrap();
+    assert!(!session.marine("skiff").actuation_revoked());
+    let mut skiff = session.attach_undock("skiff").unwrap();
+    skiff
+        .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.4, 0.0))
+        .unwrap();
+    skiff
+        .set_position_now(Position::<Ned>::ned(0.0, 2.0, 0.0))
+        .unwrap();
+    skiff.set_yaw_rate(0.1).unwrap();
 }
 
 #[test]

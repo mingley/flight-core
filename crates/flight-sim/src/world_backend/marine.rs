@@ -91,21 +91,53 @@ impl MarineWorldBackend {
     pub fn failsafe_now(&mut self) -> Result<(), BackendError> {
         marine_event(&self.session, self.body_id, MarineEvent::Failsafe)?;
         self.setpoint = None;
+        self.yaw_rate = 0.0;
         self.last_command = "failsafe";
+        Ok(())
+    }
+
+    fn plant_failsafe(&self) -> bool {
+        self.session
+            .lock()
+            .world
+            .body(self.body_id)
+            .and_then(|b| b.marine)
+            .map(|s| s.failsafe)
+            .unwrap_or(false)
+    }
+
+    fn accept_thrust(
+        &mut self,
+        setpoint: Setpoint,
+        last: &'static str,
+    ) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
+        marine_event(&self.session, self.body_id, MarineEvent::ThrustCommand)?;
+        self.setpoint = Some(setpoint);
+        self.last_command = last;
         Ok(())
     }
 
     /// NED velocity without an async context.
     ///
-    /// Fires `ThrustCommand`. Docked or failsafe hulls are `Rejected`.
+    /// Fires `ThrustCommand`. Docked hulls are kernel-rejected. Failsafe
+    /// leftover handles refuse at this backend (`actuation_revoked`).
     pub fn set_velocity_now(
         &mut self,
         velocity: Velocity<flight_core::frames::Ned>,
     ) -> Result<(), BackendError> {
-        marine_event(&self.session, self.body_id, MarineEvent::ThrustCommand)?;
-        self.setpoint = Some(Setpoint::Velocity(velocity));
-        self.last_command = "set_velocity";
-        Ok(())
+        self.accept_thrust(Setpoint::Velocity(velocity), "set_velocity")
+    }
+
+    /// NED pose hold without an async context.
+    ///
+    /// Same grant as [`Self::set_velocity_now`]. Docked leftover pose hold
+    /// cannot skip the kernel.
+    pub fn set_position_now(
+        &mut self,
+        position: Position<flight_core::frames::Ned>,
+    ) -> Result<(), BackendError> {
+        self.accept_thrust(Setpoint::Position(position), "set_position")
     }
 
     /// Underway → StationKeep. Thrust remains granted for a hold.
@@ -122,11 +154,12 @@ impl MarineWorldBackend {
         Ok(())
     }
 
-    /// Underway / station / failsafe → Docked. Clears the handle setpoint
-    /// and the body's command so thrust stops with the grant.
+    /// Underway / station / failsafe → Docked. Clears the handle setpoint,
+    /// yaw command, and the body's command so thrust stops with the grant.
     pub fn dock_now(&mut self) -> Result<(), BackendError> {
         marine_event(&self.session, self.body_id, MarineEvent::Dock)?;
         self.setpoint = None;
+        self.yaw_rate = 0.0;
         self.last_command = "dock";
         Ok(())
     }
@@ -196,6 +229,7 @@ impl VehicleBackend for MarineWorldBackend {
     async fn disarm(&mut self) -> Result<(), BackendError> {
         marine_event(&self.session, self.body_id, MarineEvent::Dock)?;
         self.setpoint = None;
+        self.yaw_rate = 0.0;
         self.last_command = "disarm";
         Ok(())
     }
@@ -215,9 +249,7 @@ impl VehicleBackend for MarineWorldBackend {
         &mut self,
         position: Position<flight_core::frames::Ned>,
     ) -> Result<(), BackendError> {
-        self.setpoint = Some(Setpoint::Position(position));
-        self.last_command = "set_position";
-        Ok(())
+        self.set_position_now(position)
     }
 
     async fn set_motor_thrust(&mut self, _thrust: MotorThrust) -> Result<(), BackendError> {
@@ -230,6 +262,7 @@ impl VehicleBackend for MarineWorldBackend {
 
     async fn disable_actuators(&mut self) -> Result<(), BackendError> {
         self.setpoint = None;
+        self.yaw_rate = 0.0;
         Ok(())
     }
 
@@ -267,6 +300,10 @@ impl VehicleBackend for MarineWorldBackend {
             .unwrap_or(0)
     }
 
+    fn actuation_revoked(&self) -> bool {
+        self.plant_failsafe()
+    }
+
     fn authority_vehicle_id(&self) -> u8 {
         flight_core::contracts::VehicleId::from_name(self.body_id).raw()
     }
@@ -293,11 +330,14 @@ impl VehicleBackend for MarineWorldBackend {
         if !safety.thrust_enabled {
             body.clear_command();
             self.setpoint = None;
+            self.yaw_rate = 0.0;
         }
         Ok(())
     }
 
     fn set_yaw_rate(&mut self, yaw_rate: f32) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
+        marine_event(&self.session, self.body_id, MarineEvent::ThrustCommand)?;
         self.yaw_rate = yaw_rate;
         Ok(())
     }

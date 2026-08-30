@@ -244,6 +244,17 @@ pub trait VehicleBackend: Send {
         false
     }
 
+    /// Physical-authority commands after failsafe or a revoking disarm must
+    /// refuse at this backend. Default is [`Self::actuation_revoked`]. PX4 /
+    /// ArduPilot also latch failsafe without that bit.
+    fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
+        if self.actuation_revoked() {
+            Err(BackendError::Rejected("actuation authority revoked"))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Admit physical-authority commands again. Arm, aerial recover, ground
     /// ClearEstop, and marine Recover call this. Does not decrement the epoch,
     /// so leftover `Vehicle` permits stay stale. Default is a no-op.

@@ -86,27 +86,57 @@ impl GroundWorldBackend {
     pub fn failsafe_now(&mut self) -> Result<(), BackendError> {
         ground_event(&self.session, self.body_id, GroundEvent::EStop)?;
         self.setpoint = None;
+        self.yaw_rate = 0.0;
         self.last_command = "estop";
+        Ok(())
+    }
+
+    fn plant_estop(&self) -> bool {
+        self.session
+            .lock()
+            .world
+            .body(self.body_id)
+            .and_then(|b| b.ground)
+            .map(|s| s.estop)
+            .unwrap_or(false)
+    }
+
+    fn accept_drive(&mut self, setpoint: Setpoint, last: &'static str) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
+        ground_event(&self.session, self.body_id, GroundEvent::DriveCommand)?;
+        self.setpoint = Some(setpoint);
+        self.last_command = last;
         Ok(())
     }
 
     /// NED velocity without an async context.
     ///
-    /// Fires `DriveCommand`. Parked or E-stopped chassis are `Rejected`.
+    /// Fires `DriveCommand`. Parked chassis are kernel-rejected. E-stopped
+    /// leftover handles refuse at this backend (`actuation_revoked`).
     pub fn set_velocity_now(
         &mut self,
         velocity: Velocity<flight_core::frames::Ned>,
     ) -> Result<(), BackendError> {
-        ground_event(&self.session, self.body_id, GroundEvent::DriveCommand)?;
-        self.setpoint = Some(Setpoint::Velocity(velocity));
-        self.last_command = "set_velocity";
-        Ok(())
+        self.accept_drive(Setpoint::Velocity(velocity), "set_velocity")
     }
 
-    /// Moving → Parked. Clears the handle setpoint and the body's command.
+    /// NED pose hold without an async context.
+    ///
+    /// Same grant as [`Self::set_velocity_now`]. Parked leftover pose hold
+    /// cannot skip the kernel.
+    pub fn set_position_now(
+        &mut self,
+        position: Position<flight_core::frames::Ned>,
+    ) -> Result<(), BackendError> {
+        self.accept_drive(Setpoint::Position(position), "set_position")
+    }
+
+    /// Moving → Parked. Clears the handle setpoint, yaw command, and the
+    /// body's command.
     pub fn halt_now(&mut self) -> Result<(), BackendError> {
         ground_event(&self.session, self.body_id, GroundEvent::Halt)?;
         self.setpoint = None;
+        self.yaw_rate = 0.0;
         self.last_command = "halt";
         Ok(())
     }
@@ -183,6 +213,7 @@ impl VehicleBackend for GroundWorldBackend {
             GroundPhase::Parked => {}
         }
         self.setpoint = None;
+        self.yaw_rate = 0.0;
         self.last_command = "disarm";
         Ok(())
     }
@@ -202,9 +233,7 @@ impl VehicleBackend for GroundWorldBackend {
         &mut self,
         position: Position<flight_core::frames::Ned>,
     ) -> Result<(), BackendError> {
-        self.setpoint = Some(Setpoint::Position(position));
-        self.last_command = "set_position";
-        Ok(())
+        self.set_position_now(position)
     }
 
     async fn set_motor_thrust(&mut self, _thrust: MotorThrust) -> Result<(), BackendError> {
@@ -217,6 +246,7 @@ impl VehicleBackend for GroundWorldBackend {
 
     async fn disable_actuators(&mut self) -> Result<(), BackendError> {
         self.setpoint = None;
+        self.yaw_rate = 0.0;
         Ok(())
     }
 
@@ -254,6 +284,10 @@ impl VehicleBackend for GroundWorldBackend {
             .unwrap_or(0)
     }
 
+    fn actuation_revoked(&self) -> bool {
+        self.plant_estop()
+    }
+
     fn authority_vehicle_id(&self) -> u8 {
         flight_core::contracts::VehicleId::from_name(self.body_id).raw()
     }
@@ -280,11 +314,14 @@ impl VehicleBackend for GroundWorldBackend {
         if !safety.drive_enabled {
             body.clear_command();
             self.setpoint = None;
+            self.yaw_rate = 0.0;
         }
         Ok(())
     }
 
     fn set_yaw_rate(&mut self, yaw_rate: f32) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
+        ground_event(&self.session, self.body_id, GroundEvent::DriveCommand)?;
         self.yaw_rate = yaw_rate;
         Ok(())
     }
