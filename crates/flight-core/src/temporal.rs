@@ -9,6 +9,60 @@ use crate::time::{Duration, MonotonicInstant};
 use core::fmt;
 use core::marker::PhantomData;
 
+/// Explicit timestamp. Distinct from a raw integer so age and order are typed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Timestamp {
+    inner: MonotonicInstant,
+}
+
+impl Timestamp {
+    pub const ZERO: Self = Self {
+        inner: MonotonicInstant::ZERO,
+    };
+
+    pub const fn from_instant(now: MonotonicInstant) -> Self {
+        Self { inner: now }
+    }
+
+    pub const fn from_millis(ms: u64) -> Self {
+        Self {
+            inner: MonotonicInstant::from_millis(ms),
+        }
+    }
+
+    pub const fn from_micros(us: u64) -> Self {
+        Self {
+            inner: MonotonicInstant::from_micros(us),
+        }
+    }
+
+    pub const fn instant(self) -> MonotonicInstant {
+        self.inner
+    }
+
+    pub const fn as_nanos(self) -> u64 {
+        self.inner.as_nanos()
+    }
+
+    pub const fn as_millis(self) -> u64 {
+        self.inner.as_nanos() / 1_000_000
+    }
+
+    pub fn age_ms(self, now: MonotonicInstant) -> u32 {
+        let ms = now.saturating_duration_since(self.inner).as_nanos() / 1_000_000;
+        if ms > u32::MAX as u64 {
+            u32::MAX
+        } else {
+            ms as u32
+        }
+    }
+
+    /// `true` when `self` is not strictly after `later` (monotonic, equal allowed).
+    pub const fn precedes(self, later: Self) -> bool {
+        self.inner.as_nanos() <= later.inner.as_nanos()
+    }
+}
+
 /// A value that is only readable while younger than `MAX_AGE_MS`.
 #[derive(Clone, Copy, Debug)]
 pub struct Fresh<T, const MAX_AGE_MS: u32> {
@@ -200,6 +254,14 @@ impl<T> Command<T> {
     pub fn within(&self, now: MonotonicInstant, max_age: Duration) -> bool {
         now.saturating_duration_since(self.issued_at) < max_age
     }
+
+    pub fn age_ms(&self, now: MonotonicInstant) -> u32 {
+        Timestamp::from_instant(self.issued_at).age_ms(now)
+    }
+
+    pub fn within_command_bound(&self, now: MonotonicInstant) -> bool {
+        crate::safety::command_age_ok(self.age_ms(now))
+    }
 }
 
 /// Named rate in integer hertz. Used by deadline / loop contracts.
@@ -264,5 +326,12 @@ mod tests {
         let cmd = Command::new(1u8, MonotonicInstant::ZERO);
         assert!(cmd.within(MonotonicInstant::from_millis(5), Duration::from_millis(10)));
         assert!(!cmd.within(MonotonicInstant::from_millis(10), Duration::from_millis(10)));
+        assert!(cmd.within_command_bound(MonotonicInstant::from_millis(99)));
+        assert!(!cmd.within_command_bound(MonotonicInstant::from_millis(100)));
+        let ts = Timestamp::from_millis(5);
+        assert!(ts.precedes(Timestamp::from_millis(5)));
+        assert!(ts.precedes(Timestamp::from_millis(6)));
+        assert!(!Timestamp::from_millis(6).precedes(ts));
+        assert_eq!(ts.age_ms(MonotonicInstant::from_millis(9)), 4);
     }
 }

@@ -131,6 +131,8 @@ impl Telemetry {
             heartbeat_age_ms,
             command: None,
             altitude_m: self.position.altitude_agl().get(),
+            command_age_ms: 0,
+            estimator_ts_ms: self.timestamp.as_nanos() / 1_000_000,
         }
     }
 }

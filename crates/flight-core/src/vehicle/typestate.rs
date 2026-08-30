@@ -22,6 +22,7 @@ use super::backend::{BackendError, MotorThrust, NullBackend, Telemetry, VehicleB
 use crate::contracts::{ActuationPermit, AuthorityReject};
 use crate::frames::Ned;
 use crate::safety::{self, Event, Phase, Reject, SafetyState};
+use crate::temporal::Command;
 use crate::time::Duration;
 use crate::units::{Meter, Qty};
 use crate::vector::{Position, Velocity};
@@ -271,6 +272,13 @@ impl<S: State, B: VehicleBackend> Vehicle<S, B> {
             if !safety::heartbeat_age_ok(age) {
                 return Err(ErrorKind::StaleAuthority(AuthorityReject::StaleHeartbeat));
             }
+        }
+        Ok(())
+    }
+
+    fn require_command_age(&self, command_age_ms: u32) -> Result<(), ErrorKind> {
+        if !safety::command_age_ok(command_age_ms) {
+            return Err(ErrorKind::StaleAuthority(AuthorityReject::StaleCommand));
         }
         Ok(())
     }
@@ -574,6 +582,17 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
             .backend
             .set_velocity_ned_now(velocity)
             .map_err(ErrorKind::Backend)
+    }
+
+    /// Apply a stamped planner command. The permit must still be live **and**
+    /// the command younger than [`crate::safety::COMMAND_MAX_AGE_MS`].
+    pub fn apply_velocity_command_now(
+        &mut self,
+        command: Command<Velocity<Ned>>,
+    ) -> Result<(), ErrorKind> {
+        self.require_live_permit()?;
+        self.require_command_age(command.age_ms(self.inner.backend.authority_now()))?;
+        self.set_velocity_now(command.payload)
     }
 
     pub async fn set_position(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
@@ -1460,5 +1479,27 @@ mod tests {
             err,
             ErrorKind::StaleAuthority(AuthorityReject::Expired)
         ));
+    }
+
+    #[test]
+    fn stamped_command_older_than_bound_has_no_actuation_authority() {
+        use crate::temporal::Command;
+        use crate::time::MonotonicInstant;
+        let VehicleHandle::PreflightReady(drone) =
+            VehicleHandle::from_state(NullBackend::default(), ready_safety())
+        else {
+            panic!("ready maps to PreflightReady");
+        };
+        let mut v = drone.arm_now().unwrap().enter_offboard_now().unwrap();
+        let fresh = Command::new(Velocity::<Ned>::ned(0.2, 0.0, 0.0), MonotonicInstant::ZERO);
+        v.apply_velocity_command_now(fresh).unwrap();
+        v.backend_mut().ticks = 10; // 100 ms; command_age_ok is age < 100
+        let stale = Command::new(Velocity::<Ned>::ned(0.2, 0.0, 0.0), MonotonicInstant::ZERO);
+        let err = v.apply_velocity_command_now(stale).unwrap_err();
+        assert!(matches!(
+            err,
+            ErrorKind::StaleAuthority(AuthorityReject::StaleCommand)
+        ));
+        assert!(v.safety().offboard);
     }
 }

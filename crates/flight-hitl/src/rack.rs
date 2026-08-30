@@ -787,6 +787,8 @@ mod tests {
             heartbeat_age_ms: 0,
             command: drone.command,
             altitude_m: drone.altitude_agl(),
+            command_age_ms: 0,
+            estimator_ts_ms: (w.t * 1000.0) as u64,
         };
         flight_core::contracts::evaluate_trace(
             &[sample],

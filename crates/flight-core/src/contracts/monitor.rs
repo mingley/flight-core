@@ -4,7 +4,7 @@
 //! evaluate a recorded or live trace against the same invariants the kernel
 //! and [`super::spec`] describe.
 
-use crate::safety::OFFBOARD_HEARTBEAT_MAX_AGE_MS;
+use crate::safety::{command_age_ok, estimator_ts_monotonic, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 
 /// One sample of physical/control state for contract evaluation.
 #[derive(Clone, Copy, Debug)]
@@ -17,6 +17,27 @@ pub struct TraceSample {
     pub heartbeat_age_ms: u32,
     pub command: Option<[f32; 3]>,
     pub altitude_m: f32,
+    /// Age of the last planner command at this sample. `0` if none.
+    pub command_age_ms: u32,
+    /// Estimator timestamp in milliseconds. `0` if the log did not carry one.
+    pub estimator_ts_ms: u64,
+}
+
+impl Default for TraceSample {
+    fn default() -> Self {
+        Self {
+            t_secs: 0.0,
+            armed: false,
+            actuators_enabled: false,
+            failsafe: false,
+            epoch: 0,
+            heartbeat_age_ms: 0,
+            command: None,
+            altitude_m: 0.0,
+            command_age_ms: 0,
+            estimator_ts_ms: 0,
+        }
+    }
 }
 
 impl TraceSample {
@@ -41,8 +62,18 @@ pub enum Requirement {
     PermitEpochMonotonic,
     FailsafeWithinMs(u32),
     NoNanCommands,
-    AltitudeBelow { meters: f32 },
+    AltitudeBelow {
+        meters: f32,
+    },
     OffboardHeartbeatFresh,
+    /// Some sample's epoch is greater than the first sample (authority revoked).
+    EpochBumped,
+    /// When a command is present, its age is inside `max_ms`.
+    CommandAgeMs {
+        max_ms: u32,
+    },
+    /// Estimator timestamps never jump backward.
+    EstimatorTimestampsMonotonic,
 }
 
 /// Why a trace failed a requirement.
@@ -146,6 +177,48 @@ pub fn evaluate_trace(samples: &[TraceSample], reqs: &[Requirement]) -> Result<(
                     }
                 }
             }
+            Requirement::EpochBumped => {
+                let first = samples[0].epoch;
+                let ok = samples.iter().any(|s| s.epoch > first);
+                if !ok {
+                    return Err(MonitorFail {
+                        requirement: "epoch_bumped",
+                        index: 0,
+                    });
+                }
+            }
+            Requirement::CommandAgeMs { max_ms } => {
+                for (i, s) in samples.iter().enumerate() {
+                    if s.command.is_none() {
+                        continue;
+                    }
+                    if max_ms == crate::safety::COMMAND_MAX_AGE_MS {
+                        if !command_age_ok(s.command_age_ms) {
+                            return Err(MonitorFail {
+                                requirement: "command_age",
+                                index: i,
+                            });
+                        }
+                    } else if s.command_age_ms >= max_ms {
+                        return Err(MonitorFail {
+                            requirement: "command_age",
+                            index: i,
+                        });
+                    }
+                }
+            }
+            Requirement::EstimatorTimestampsMonotonic => {
+                let mut prev = samples[0].estimator_ts_ms;
+                for (i, s) in samples.iter().enumerate().skip(1) {
+                    if !estimator_ts_monotonic(prev, s.estimator_ts_ms) {
+                        return Err(MonitorFail {
+                            requirement: "estimator_ts_monotonic",
+                            index: i,
+                        });
+                    }
+                    prev = s.estimator_ts_ms;
+                }
+            }
         }
     }
     Ok(())
@@ -200,6 +273,13 @@ fn parse_trace_line(line: &str) -> Result<TraceSample, &'static str> {
     let heartbeat_age_ms: u32 = num_after(line, "\"heartbeat_age_ms\"")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
+    let command_age_ms: u32 = num_after(line, "\"command_age_ms\"")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let estimator_ts_ms: u64 = num_after(line, "\"estimator_ts_ms\"")
+        .or_else(|| num_after(line, "\"estimator_ts\""))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let command = if line.contains("\"cmd\":null") || line.contains("\"command\":null") {
         None
     } else if let Some(i) = line.find("\"cmd\":[") {
@@ -216,6 +296,8 @@ fn parse_trace_line(line: &str) -> Result<TraceSample, &'static str> {
         heartbeat_age_ms,
         command,
         altitude_m,
+        command_age_ms,
+        estimator_ts_ms,
     })
 }
 
@@ -235,14 +317,10 @@ mod tests {
 
     fn sample(armed: bool, actuators: bool) -> TraceSample {
         TraceSample {
-            t_secs: 0.0,
             armed,
             actuators_enabled: actuators,
-            failsafe: false,
-            epoch: 0,
-            heartbeat_age_ms: 0,
-            command: None,
             altitude_m: 1.0,
+            ..TraceSample::default()
         }
     }
 
@@ -284,12 +362,55 @@ mod tests {
     }
 
     #[test]
+    fn epoch_bump_and_command_age_and_estimator() {
+        let a = TraceSample {
+            epoch: 0,
+            estimator_ts_ms: 10,
+            command: Some([0.0, 0.0, 0.0]),
+            command_age_ms: 0,
+            ..sample(true, true)
+        };
+        let b = TraceSample {
+            t_secs: 0.2,
+            epoch: 1,
+            failsafe: true,
+            estimator_ts_ms: 210,
+            command: None,
+            command_age_ms: 0,
+            ..sample(true, false)
+        };
+        assert!(evaluate_trace(&[a, b], &[Requirement::EpochBumped]).is_ok());
+        assert!(evaluate_trace(&[a], &[Requirement::EpochBumped]).is_err());
+        assert!(evaluate_trace(
+            &[a, b],
+            &[
+                Requirement::CommandAgeMs { max_ms: 100 },
+                Requirement::EstimatorTimestampsMonotonic
+            ]
+        )
+        .is_ok());
+        let back = TraceSample {
+            estimator_ts_ms: 5,
+            ..b
+        };
+        assert!(evaluate_trace(&[a, back], &[Requirement::EstimatorTimestampsMonotonic]).is_err());
+        let stale = TraceSample {
+            command: Some([1.0, 0.0, 0.0]),
+            command_age_ms: 100,
+            ..a
+        };
+        assert!(evaluate_trace(&[stale], &[Requirement::CommandAgeMs { max_ms: 100 }]).is_err());
+    }
+
+    #[test]
     fn parse_jsonl_roundtrip_fields() {
-        let line = "{\"t\":0.2,\"armed\":true,\"actuators\":false,\"failsafe\":true,\"epoch\":1,\"alt\":2.5,\"cmd\":null}\n";
+        let line = "{\"t\":0.2,\"armed\":true,\"actuators\":false,\"failsafe\":true,\"epoch\":1,\"alt\":2.5,\"cmd\":null,\"command_age_ms\":3,\"estimator_ts_ms\":200}\n";
         let s = parse_trace_jsonl(line).unwrap();
         assert_eq!(s.len(), 1);
         assert!(s[0].failsafe);
         assert_eq!(s[0].epoch, 1);
         assert!((s[0].t_secs - 0.2).abs() < 1e-6);
+        assert_eq!(s[0].command_age_ms, 3);
+        assert_eq!(s[0].estimator_ts_ms, 200);
     }
 }

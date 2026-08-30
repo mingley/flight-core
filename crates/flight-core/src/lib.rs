@@ -119,14 +119,15 @@ pub mod prelude {
     #[cfg(not(creusot))]
     pub use crate::plan::{NedPath, Waypoint};
     pub use crate::safety::{
-        event_revokes_authority, heartbeat_age_ok, step, Event, Phase, Reject, SafetyState,
-        OFFBOARD_HEARTBEAT_MAX_AGE_MS,
+        command_age_ok, estimator_ts_monotonic, event_revokes_authority, heartbeat_age_ok, step,
+        Event, Phase, Reject, SafetyState, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS,
     };
     #[cfg(not(creusot))]
     pub use crate::sensors::{ActuatorCommand, Actuators, Imu, ImuSample, SensorHealth};
     #[cfg(not(creusot))]
     pub use crate::temporal::{
         Command, Deadline, Estimate, Fresh, HeartbeatFresh, Lease, Observation, Rate, Sequence,
+        Timestamp,
     };
     #[cfg(not(creusot))]
     pub use crate::time::{Clock, Duration, MonotonicInstant, VirtualClock};

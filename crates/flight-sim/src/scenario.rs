@@ -7,7 +7,7 @@
 use flight_core::contracts::{
     evaluate_trace, parse_trace_jsonl, MonitorFail, Requirement, TraceSample,
 };
-use flight_core::safety::{Event, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
+use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use robot_world::World;
 
 use super::world_backend::shared::aerial_event;
@@ -79,6 +79,11 @@ impl Scenario {
             Requirement::AltitudeBelow { meters: 120.0 },
             Requirement::PermitEpochMonotonic,
             Requirement::FailsafeWithinMs(250),
+            Requirement::EpochBumped,
+            Requirement::CommandAgeMs {
+                max_ms: COMMAND_MAX_AGE_MS,
+            },
+            Requirement::EstimatorTimestampsMonotonic,
         ],
     };
 
@@ -96,6 +101,7 @@ impl Scenario {
             Requirement::NoNanCommands,
             Requirement::PermitEpochMonotonic,
             Requirement::FailsafeWithinMs(250),
+            Requirement::EpochBumped,
         ],
     };
 
@@ -148,8 +154,9 @@ impl ScenarioReport {
                 None => "null".into(),
             };
             out.push_str(&format!(
-                "{{\"t\":{},\"armed\":{},\"actuators\":{},\"failsafe\":{},\"epoch\":{},\"alt\":{},\"cmd\":{cmd}}}\n",
-                s.t_secs, s.armed, s.actuators_enabled, s.failsafe, s.epoch, s.altitude_m
+                "{{\"t\":{},\"armed\":{},\"actuators\":{},\"failsafe\":{},\"epoch\":{},\"alt\":{},\"heartbeat_age_ms\":{},\"command_age_ms\":{},\"estimator_ts_ms\":{},\"cmd\":{cmd}}}\n",
+                s.t_secs, s.armed, s.actuators_enabled, s.failsafe, s.epoch, s.altitude_m,
+                s.heartbeat_age_ms, s.command_age_ms, s.estimator_ts_ms
             ));
         }
         out
@@ -260,6 +267,12 @@ fn sample_drone(world: &World) -> TraceSample {
         },
         command: body.command,
         altitude_m: body.altitude_agl(),
+        command_age_ms: 0,
+        estimator_ts_ms: if world.t <= 0.0 {
+            0
+        } else {
+            (world.t * 1000.0) as u64
+        },
     }
 }
 
@@ -280,6 +293,18 @@ mod tests {
         let jsonl = report.to_jsonl();
         assert!(jsonl.contains("failsafe"));
         replay_jsonl(&jsonl, Scenario::GPS_LOSS.require).expect("jsonl replay");
+        let ulog = crate::write_ulog(&report.samples);
+        let from_ulog = crate::parse_ulog(&ulog).expect("ulog");
+        assert_eq!(from_ulog.len(), report.samples.len());
+        crate::replay_report(
+            &ScenarioReport {
+                name: report.name,
+                backend: "ulog",
+                samples: from_ulog,
+            },
+            Scenario::GPS_LOSS.require,
+        )
+        .expect("ulog replay");
     }
 
     #[test]
@@ -315,5 +340,11 @@ mod tests {
         };
         assert_eq!(s.name, "gps-loss-macro");
         assert_eq!(Scenario::by_name("gps-loss").unwrap().name, "gps-loss");
+    }
+
+    #[test]
+    fn px4_sitl_converter_corpus_satisfies_gps_loss_contract() {
+        let jsonl = include_str!("../corpus/px4_sitl_gps_loss.jsonl");
+        replay_jsonl(jsonl, Scenario::GPS_LOSS.require).expect("sitl corpus");
     }
 }

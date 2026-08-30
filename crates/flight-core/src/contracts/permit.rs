@@ -60,6 +60,7 @@ pub enum AuthorityReject {
     Expired,
     WrongVehicle,
     StaleHeartbeat,
+    StaleCommand,
 }
 
 impl AuthorityReject {
@@ -70,6 +71,7 @@ impl AuthorityReject {
             Self::Expired => "permit_expired",
             Self::WrongVehicle => "wrong_vehicle",
             Self::StaleHeartbeat => "stale_heartbeat",
+            Self::StaleCommand => "stale_command",
         }
     }
 }

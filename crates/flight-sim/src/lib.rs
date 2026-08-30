@@ -16,6 +16,7 @@ pub mod fuzz;
 pub mod physics;
 pub mod replay;
 pub mod scenario;
+pub mod ulog;
 pub mod world_backend;
 
 pub use backend::{SimBackend, SimConfig};
@@ -25,6 +26,7 @@ pub use replay::{JsonlReplay, RecordedSample};
 pub use scenario::{
     differential_world, replay_jsonl, replay_report, run_world, Fault, Scenario, ScenarioReport,
 };
+pub use ulog::{is_ulog, parse_ulog, write_ulog};
 pub use world_backend::{
     GroundWorldBackend, MarineWorldBackend, WorldBackend, WorldImu, WorldSession,
 };

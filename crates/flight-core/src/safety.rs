@@ -258,26 +258,101 @@ impl Event {
     }
 }
 
-/// Offboard heartbeat bound. Shared by the contract DSL, `Fresh`, and monitors.
-pub const OFFBOARD_HEARTBEAT_MAX_AGE_MS: u32 = 250;
+/// Single source for aerial offboard authority: heartbeat bound, command-age
+/// bound, and the revoke event list. Expands the kernel predicates, Creusot
+/// `ensures`, capability diagram strings, and the slice the contract DSL aliases.
+macro_rules! define_aerial_authority {
+    (
+        heartbeat_age_ms: $hb:expr,
+        command_age_ms: $cmd:expr,
+        revokes_on: [$($ev:ident),+ $(,)?]
+    ) => {
+        /// Offboard heartbeat bound. Shared by the contract DSL, `Fresh`, and monitors.
+        pub const OFFBOARD_HEARTBEAT_MAX_AGE_MS: u32 = $hb;
+        /// Planner command must be younger than this at the actuation boundary.
+        pub const COMMAND_MAX_AGE_MS: u32 = $cmd;
 
-/// Events that revoke actuation authority. A successful [`step`] of one of
-/// these (or a failsafe latch they cause) must increment the backend safety epoch.
-pub const fn event_revokes_authority(event: Event) -> bool {
-    matches!(
-        event,
-        Event::TriggerFailsafe
-            | Event::Disarm
-            | Event::Disconnect
-            | Event::HeartbeatStale
-            | Event::EstimatorInvalid
-            | Event::ImuUnhealthy
-    )
+        /// Events that revoke actuation authority. A successful [`step`] of one of
+        /// these (or a failsafe latch they cause) must increment the backend safety epoch.
+        #[cfg(not(creusot))]
+        pub const AUTHORITY_REVOKE_EVENTS: &[Event] = &[$(Event::$ev),+];
+
+        #[cfg(not(creusot))]
+        pub const AERIAL_OFFBOARD_MERMAID: &'static str = concat!(
+            "stateDiagram-v2\n",
+            "    [*] --> Disarmed\n",
+            "    Disarmed --> PreflightReady: verify_preflight\n",
+            "    PreflightReady --> Armed: arm\n",
+            "    Armed --> Offboard: acquire_offboard_control\n",
+            "    Offboard --> Failsafe: ",
+            stringify!($($ev)|*),
+            "\n"
+        );
+
+        #[cfg(not(creusot))]
+        pub const AERIAL_OFFBOARD_GRAPHVIZ: &'static str = concat!(
+            "digraph AerialOffboard {\n",
+            "  rankdir=LR;\n",
+            "  Disarmed -> PreflightReady [label=verify_preflight];\n",
+            "  PreflightReady -> Armed [label=arm];\n",
+            "  Armed -> Offboard [label=acquire_offboard_control];\n",
+            "  Offboard -> Failsafe [label=\"",
+            stringify!($($ev)|*),
+            "\"];\n",
+            "}\n"
+        );
+
+        #[cfg(not(creusot))]
+        pub const AERIAL_OFFBOARD_SPEC: &'static str = concat!(
+            "capability AerialOffboard {\n",
+            "  requires heartbeat.age < ",
+            stringify!($hb),
+            ".ms();\n",
+            "  requires command.age < ",
+            stringify!($cmd),
+            ".ms();\n",
+            "  revokes_on [",
+            stringify!($($ev),+),
+            "]\n",
+            "}\n"
+        );
+
+        #[cfg_attr(
+            feature = "creusot",
+            creusot_contracts::ensures(result == ($(event == Event::$ev)||+))
+        )]
+        pub const fn event_revokes_authority(event: Event) -> bool {
+            matches!(event, $(Event::$ev)|+)
+        }
+
+        /// Runtime heartbeat age against [`OFFBOARD_HEARTBEAT_MAX_AGE_MS`].
+        pub const fn heartbeat_age_ok(age_ms: u32) -> bool {
+            age_ms < OFFBOARD_HEARTBEAT_MAX_AGE_MS
+        }
+
+        /// Runtime command age against [`COMMAND_MAX_AGE_MS`].
+        pub const fn command_age_ok(age_ms: u32) -> bool {
+            age_ms < COMMAND_MAX_AGE_MS
+        }
+
+        /// Estimator timestamps must not jump backward (replay / clock fault).
+        pub const fn estimator_ts_monotonic(prev_us: u64, next_us: u64) -> bool {
+            next_us >= prev_us
+        }
+    };
 }
 
-/// Runtime heartbeat age against [`OFFBOARD_HEARTBEAT_MAX_AGE_MS`].
-pub const fn heartbeat_age_ok(age_ms: u32) -> bool {
-    age_ms < OFFBOARD_HEARTBEAT_MAX_AGE_MS
+define_aerial_authority! {
+    heartbeat_age_ms: 250,
+    command_age_ms: 100,
+    revokes_on: [
+        TriggerFailsafe,
+        Disarm,
+        Disconnect,
+        HeartbeatStale,
+        EstimatorInvalid,
+        ImuUnhealthy
+    ]
 }
 
 #[derive(Copy)]
@@ -746,6 +821,15 @@ mod tests {
         assert!(!event_revokes_authority(Event::Arm));
         assert!(heartbeat_age_ok(249));
         assert!(!heartbeat_age_ok(250));
+        assert!(command_age_ok(99));
+        assert!(!command_age_ok(100));
+        assert!(estimator_ts_monotonic(10, 10));
+        assert!(estimator_ts_monotonic(10, 11));
+        assert!(!estimator_ts_monotonic(11, 10));
+        for e in Event::ALL {
+            let in_table = AUTHORITY_REVOKE_EVENTS.contains(&e);
+            assert_eq!(event_revokes_authority(e), in_table, "{e:?}");
+        }
     }
 
     #[test]

@@ -1,22 +1,49 @@
-//! Contract lab: the same requirements on world, replay JSONL, or a
+//! Contract lab: the same requirements on world, replay JSONL, ULog, or a
 //! converted PX4/ulog trace.
 //!
 //! ```text
 //! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend world
 //! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend replay
 //! cargo run -p flight-sim --bin flight-test -- --backend replay --replay trace.jsonl
+//! cargo run -p flight-sim --bin flight-test -- --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
+//! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
 //! ```
 //!
-//! `--backend px4-sitl` evaluates a converted HEARTBEAT/ulog JSONL (`--replay`).
-//! Live SIH is `cargo test -p flight-px4 --test sitl_live -- --ignored`.
+//! `--backend px4-sitl` evaluates a converted HEARTBEAT/ulog JSONL or `.ulg`
+//! (`--replay`). Live SIH is `cargo test -p flight-px4 --test sitl_live -- --ignored`.
 
-use flight_sim::{replay_jsonl, run_world, Scenario};
+use flight_core::contracts::{evaluate_trace, parse_trace_jsonl, Requirement};
+use flight_sim::{is_ulog, parse_ulog, replay_jsonl, run_world, write_ulog, Scenario};
 
 fn usage() -> ! {
     eprintln!(
-        "flight-test --scenario gps-loss|heartbeat-stale [--backend world|replay|px4-sitl] [--replay FILE]"
+        "flight-test --scenario gps-loss|heartbeat-stale [--backend world|replay|px4-sitl|ulog] [--replay FILE] [--write-ulog FILE]"
     );
     std::process::exit(2);
+}
+
+fn scenario_from_args(name: &str) -> &'static Scenario {
+    Scenario::by_name(name).unwrap_or_else(|| {
+        eprintln!("unknown scenario {name}");
+        usage();
+    })
+}
+
+fn load_trace(path: &str) -> (Vec<flight_core::contracts::TraceSample>, &'static str) {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    if is_ulog(&bytes) || path.ends_with(".ulg") || path.ends_with(".ulog") {
+        let samples = parse_ulog(&bytes).unwrap_or_else(|e| panic!("ulog {path}: {e}"));
+        (samples, "ulog")
+    } else {
+        let text = String::from_utf8(bytes).unwrap_or_else(|e| panic!("utf8 {path}: {e}"));
+        let samples = parse_trace_jsonl(&text).unwrap_or_else(|e| panic!("jsonl {path}: {e}"));
+        (samples, "jsonl")
+    }
+}
+
+fn evaluate_samples(samples: &[flight_core::contracts::TraceSample], reqs: &[Requirement]) {
+    evaluate_trace(samples, reqs)
+        .unwrap_or_else(|e| panic!("contract {} at sample {}", e.requirement, e.index));
 }
 
 fn main() {
@@ -24,6 +51,7 @@ fn main() {
     let mut scenario_name = "gps-loss";
     let mut backend = "world";
     let mut replay: Option<String> = None;
+    let mut write_ulog_path: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -45,6 +73,10 @@ fn main() {
                 replay = args.get(i + 1).cloned();
                 i += 2;
             }
+            "--write-ulog" => {
+                write_ulog_path = args.get(i + 1).cloned();
+                i += 2;
+            }
             "-h" | "--help" => usage(),
             other => {
                 eprintln!("unknown arg {other}");
@@ -53,15 +85,16 @@ fn main() {
         }
     }
 
-    let scenario = Scenario::by_name(scenario_name).unwrap_or_else(|| {
-        eprintln!("unknown scenario {scenario_name}");
-        usage();
-    });
+    let scenario = scenario_from_args(scenario_name);
 
     match backend {
         "world" | "sim" => {
             let report = run_world(scenario).expect("world run");
             report.evaluate(scenario.require).expect("contract");
+            if let Some(path) = write_ulog_path.as_ref() {
+                std::fs::write(path, write_ulog(&report.samples))
+                    .unwrap_or_else(|e| panic!("write {path}: {e}"));
+            }
             println!(
                 "PASS scenario={} backend=world samples={} failsafe={} epoch_final={}",
                 report.name,
@@ -70,35 +103,53 @@ fn main() {
                 report.samples.last().map(|s| s.epoch).unwrap_or(0)
             );
         }
-        "replay" => {
-            let jsonl = if let Some(path) = replay {
-                std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+        "replay" | "ulog" => {
+            if let Some(path) = replay {
+                let (samples, kind) = load_trace(&path);
+                evaluate_samples(&samples, scenario.require);
+                println!(
+                    "PASS scenario={} backend={backend} format={kind} file={path} samples={}",
+                    scenario.name,
+                    samples.len()
+                );
             } else {
                 let report = run_world(scenario).expect("world run");
                 report.evaluate(scenario.require).expect("live contract");
-                report.to_jsonl()
-            };
-            replay_jsonl(&jsonl, scenario.require).expect("replay contract");
-            println!(
-                "PASS scenario={} backend=replay lines={}",
-                scenario.name,
-                jsonl.lines().count()
-            );
+                if backend == "ulog" {
+                    let bytes = write_ulog(&report.samples);
+                    let samples = parse_ulog(&bytes).expect("ulog roundtrip");
+                    evaluate_samples(&samples, scenario.require);
+                    println!(
+                        "PASS scenario={} backend=ulog samples={}",
+                        scenario.name,
+                        samples.len()
+                    );
+                } else {
+                    replay_jsonl(&report.to_jsonl(), scenario.require).expect("replay contract");
+                    println!(
+                        "PASS scenario={} backend=replay lines={}",
+                        scenario.name,
+                        report.samples.len()
+                    );
+                }
+            }
         }
         "px4-sitl" => {
             let Some(path) = replay else {
                 eprintln!(
-                    "px4-sitl backend needs --replay FILE.jsonl (ulog/HEARTBEAT converted to TraceSample JSONL).\n\
+                    "px4-sitl backend needs --replay FILE.jsonl or FILE.ulg \
+                     (ulog/HEARTBEAT converted to TraceSample).\n\
+                     Checked-in converter corpus: crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl\n\
                      Live SIH: cargo test -p flight-px4 --test sitl_live -- --ignored"
                 );
                 std::process::exit(2);
             };
-            let jsonl =
-                std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
-            replay_jsonl(&jsonl, scenario.require).expect("px4-sitl contract");
+            let (samples, kind) = load_trace(&path);
+            evaluate_samples(&samples, scenario.require);
             println!(
-                "PASS scenario={} backend=px4-sitl file={path}",
-                scenario.name
+                "PASS scenario={} backend=px4-sitl format={kind} file={path} samples={}",
+                scenario.name,
+                samples.len()
             );
         }
         other => {

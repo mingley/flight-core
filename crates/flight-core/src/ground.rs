@@ -143,10 +143,15 @@ impl GroundEvent {
     }
 }
 
-/// E-stop and halt revoke chassis drive authority.
+/// E-stop and halt revoke chassis drive authority. Same table as
+/// [`GROUND_AUTHORITY_REVOKE_EVENTS`].
 pub const fn ground_event_revokes_authority(event: GroundEvent) -> bool {
     matches!(event, GroundEvent::EStop | GroundEvent::Halt)
 }
+
+/// Events that revoke ground drive authority.
+#[cfg(not(creusot))]
+pub const GROUND_AUTHORITY_REVOKE_EVENTS: &[GroundEvent] = &[GroundEvent::EStop, GroundEvent::Halt];
 
 #[derive(Copy)]
 #[cfg_attr(not(creusot), derive(Clone, Debug, PartialEq, Eq))]
