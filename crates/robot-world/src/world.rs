@@ -175,6 +175,7 @@ impl World {
             body.last_angular_ke = angular_kinetic_energy(body.inertia_diag, body.omega_body);
         }
         self.t += dt;
+        stamp_estimators(&mut self.bodies, self.t);
         self.last_properties = properties::evaluate_parts(&self.env, &self.bodies, &self.hydro);
     }
 }
@@ -378,6 +379,8 @@ fn step_body(env: &Environment, hydro: &HydroField, b: &mut Body, dt: f32) {
     if let Some(f_des) = underwater_des {
         thrust = body_axis_wrench(b.quat, f_des, underwater_limit);
     }
+    let scale = b.thrust_scale.clamp(0.0, 1.0);
+    thrust = [thrust[0] * scale, thrust[1] * scale, thrust[2] * scale];
     b.yaw_rate = b.omega_body[2];
     b.yaw_rad = yaw_from_quat(b.quat);
     force[0] += thrust[0];
@@ -410,6 +413,16 @@ fn step_body(env: &Environment, hydro: &HydroField, b: &mut Body, dt: f32) {
     b.last_drag_power = relative_power(v_rel, drag);
     b.last_charge_j = b.charge_j;
     b.charge_j = drain_from_thrust(b.charge_j, thrust, dt, 0.08);
+}
+
+/// Estimator timestamps lag by [`Body::imu_delay_ms`] and never jump backward
+/// when that delay steps up (Requirement::EstimatorTimestampsMonotonic).
+fn stamp_estimators(bodies: &mut [Body], t: f32) {
+    let now_ms = if t <= 0.0 { 0 } else { (t * 1000.0) as u64 };
+    for b in bodies {
+        let delayed = now_ms.saturating_sub(u64::from(b.imu_delay_ms));
+        b.last_estimator_ts_ms = b.last_estimator_ts_ms.max(delayed);
+    }
 }
 
 fn resolve_body_contacts(bodies: &mut [Body], hits: &mut Vec<SphereHit>, reset_impulse: bool) {

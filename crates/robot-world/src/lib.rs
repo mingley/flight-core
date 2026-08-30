@@ -431,6 +431,67 @@ mod tests {
     }
 
     #[test]
+    fn zero_motor_efficiency_blocks_granted_thrust() {
+        use flight_core::safety::{self, Event};
+        let mut world = World::inland(1);
+        {
+            let drone = world.body_mut("drone").unwrap();
+            let s = drone.aerial.unwrap();
+            let s = safety::step_all(
+                s,
+                &[
+                    Event::Arm,
+                    Event::HeartbeatFresh,
+                    Event::EnterOffboard,
+                    Event::EnableActuators,
+                    Event::Takeoff,
+                ],
+            )
+            .unwrap();
+            drone.aerial = Some(s);
+            drone.thrust_scale = 0.0;
+            drone.command = Some([0.0, 0.0, -1.2]);
+            assert!(drone.actuators_granted());
+            assert!(drone.propulsion_live());
+        }
+        for _ in 0..120 {
+            world.step(0.02);
+        }
+        let drone = world.body("drone").unwrap();
+        assert!(
+            drone.altitude_agl() < 0.3,
+            "zero-efficiency pack climbed {}",
+            drone.altitude_agl()
+        );
+        assert!(drone.last_thrust.iter().all(|c| c.abs() < 1e-9));
+        assert!(flight_core::mech::thrust_along_minus_body_z(
+            drone.quat,
+            drone.last_thrust
+        ));
+        assert!(world.all_hold(), "{:?}", world.last_properties);
+    }
+
+    #[test]
+    fn imu_delay_step_change_does_not_rewind_estimator_ts() {
+        let mut world = World::inland(1);
+        world.step(0.02);
+        let before = world.body("drone").unwrap().last_estimator_ts_ms;
+        assert!(before > 0);
+        {
+            let drone = world.body_mut("drone").unwrap();
+            drone.imu_delay_ms = 300;
+        }
+        world.step(0.02);
+        let after = world.body("drone").unwrap().last_estimator_ts_ms;
+        assert!(
+            after >= before,
+            "estimator ts jumped backward {before} -> {after}"
+        );
+        assert_eq!(after, before);
+        assert!(world.all_hold());
+    }
+
+    #[test]
     fn named_scenarios_exist() {
         assert_eq!(World::SCENARIOS.len(), 4);
         for name in World::SCENARIOS {

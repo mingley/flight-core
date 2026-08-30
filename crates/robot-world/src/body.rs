@@ -65,6 +65,12 @@ pub struct Body {
     pub marine: Option<MarineState>,
     /// Revocation counter for actuation permits. Not a kernel packed bit.
     pub authority_epoch: u32,
+    /// Plant IMU transport delay. Stamps lag wall time; not a property-vector field.
+    pub imu_delay_ms: u32,
+    /// Last estimator stamp (ms). Monotonic even if [`Self::imu_delay_ms`] jumps.
+    pub last_estimator_ts_ms: u64,
+    /// Motor efficiency in `[0, 1]`. Scales granted thrust before `last_thrust`.
+    pub thrust_scale: f32,
 }
 
 impl Body {
@@ -122,6 +128,9 @@ impl Body {
             ground: None,
             marine: None,
             authority_epoch: 0,
+            imu_delay_ms: 0,
+            last_estimator_ts_ms: 0,
+            thrust_scale: 1.0,
         }
     }
 
@@ -167,6 +176,9 @@ impl Body {
             ground: Some(GroundState::parked()),
             marine: None,
             authority_epoch: 0,
+            imu_delay_ms: 0,
+            last_estimator_ts_ms: 0,
+            thrust_scale: 1.0,
         }
     }
 
@@ -212,6 +224,9 @@ impl Body {
             ground: None,
             marine: Some(flight_core::marine::MarineState::docked()),
             authority_epoch: 0,
+            imu_delay_ms: 0,
+            last_estimator_ts_ms: 0,
+            thrust_scale: 1.0,
         }
     }
 
@@ -259,6 +274,9 @@ impl Body {
             ground: None,
             marine: Some(flight_core::marine::MarineState::docked()),
             authority_epoch: 0,
+            imu_delay_ms: 0,
+            last_estimator_ts_ms: 0,
+            thrust_scale: 1.0,
         }
     }
 
