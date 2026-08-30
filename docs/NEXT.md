@@ -313,6 +313,7 @@ if those disagree with the kernel predicates.
 `AUTHORITY_REVOKE_EVENTS`, `AERIAL_OFFBOARD_TRANSITIONS`.
 `vehicle_contract! { from_kernel }` aliases that table (`AerialOffboard::revokes`
 **is** the kernel function; `admit` **is** `admit_offboard_command`;
+`inject` is `Some(event)` iff `revokes`;
 `COMMANDS` **is** `AERIAL_OFFBOARD_COMMANDS`; `TRANSITIONS` / `GATE` /
 `UI_FORBIDDEN` are the capability surface). `impl_aerial_offboard_now!`
 generates `admit_offboard_now` / `set_velocity_now` / `set_position_now` /
@@ -322,7 +323,8 @@ generates `admit_offboard_now` / `set_velocity_now` / `set_position_now` /
 `prove_aerial_authority!` expands to Kani `dsl_revokes_match_kernel`.
 Checked-in generated artifacts under [`docs/generated/`](generated/) must
 match the table (`SPEC`, mermaid, Graphviz, `CREUSOT`, `FAULTS`). The macro
-does not emit a second Creusot proof file.
+does not emit a second Creusot proof file. `run_revoke_table` uses
+`inject` so a leftover `Vehicle<Offboard>` refuses every `COMMANDS` method.
 
 ### F5. PX4 production-quality backend
 
@@ -355,7 +357,8 @@ JSONL or `.ulg` (checked-in `crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl`).
 scenario (world + JSONL replay + ULog round-trip; gps-loss also the checked-in
 ULog and converted PX4 SITL JSONL). GPS-loss posts `Estimate::revoke_event` and
 a bound `Vehicle<Offboard>` cannot `set_position_now`. Every DSL revoke event has a world
-test that the plant epoch increments.
+test that the plant epoch increments and that a leftover Offboard handle
+cannot run `set_velocity` / `set_position` / `hold`.
 
 ### F7. Typed geometry
 

@@ -405,9 +405,17 @@ macro_rules! define_aerial_authority {
             "  next >= prev\n"
         );
 
-        /// Fault-injection events generated from `revokes_on`.
+        /// Fault-injection listing generated from `revokes_on` and `commands`.
+        /// `run_revoke_table` injects each event, then a leftover Offboard handle
+        /// must refuse every named command.
         #[cfg(not(creusot))]
-        pub const AERIAL_OFFBOARD_FAULTS: &'static str = concat!("inject ", stringify!($($ev),+), "\n");
+        pub const AERIAL_OFFBOARD_FAULTS: &'static str = concat!(
+            "inject ",
+            stringify!($($ev),+),
+            "\nrefuse ",
+            stringify!($($cmd_name),+),
+            "\n"
+        );
 
         #[cfg_attr(
             feature = "creusot",

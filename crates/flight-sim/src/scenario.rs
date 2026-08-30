@@ -11,10 +11,12 @@ use flight_core::frames::Ned;
 use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use flight_core::temporal::{heartbeat_revoke_event, Estimate, Observation};
 use flight_core::time::MonotonicInstant;
+use flight_core::vector::{Position, Velocity};
+use flight_core::vehicle::{ErrorKind, Offboard, Vehicle, VehicleHandle};
 use robot_world::World;
 
 use super::world_backend::shared::aerial_event;
-use super::world_backend::WorldSession;
+use super::world_backend::{WorldBackend, WorldSession};
 
 /// Fault injected at a simulation time.
 #[derive(Clone, Copy, Debug)]
@@ -239,18 +241,33 @@ pub fn run_hitl_miss() -> Result<ScenarioReport, String> {
 }
 
 /// Inject every DSL revoke event from offboard. Fault-injection generated
-/// from [`flight_core::contracts::AerialOffboard::REVOKE_ON`].
+/// from [`flight_core::contracts::AerialOffboard::REVOKE_ON`] /
+/// [`AerialOffboard::inject`]. A leftover `Vehicle<Offboard>` bound before
+/// the inject must refuse every [`AerialOffboard::COMMANDS`] method.
 pub fn run_revoke_table() -> Result<ScenarioReport, String> {
-    use flight_core::contracts::AerialOffboard;
     let mut samples = Vec::new();
     for (i, e) in AerialOffboard::REVOKE_ON.iter().enumerate() {
+        let inject = AerialOffboard::inject(*e)
+            .ok_or_else(|| format!("{e:?} is in REVOKE_ON but inject returned None"))?;
         let session =
             WorldSession::named("inland", 1).ok_or_else(|| "unknown catalog inland".to_string())?;
         session
             .attach_offboard("drone")
             .map_err(|err| format!("grant: {e:?}: {err}"))?;
-        aerial_event(session.aerial("drone").session(), "drone", *e)
+        let VehicleHandle::Offboard(mut v) = session
+            .aerial("drone")
+            .attach()
+            .map_err(|err| format!("bind Offboard before {e:?}: {err}"))?
+        else {
+            return Err(format!("attach_offboard must bind Offboard before {e:?}"));
+        };
+        v.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+            .map_err(|err| format!("live set_velocity before {e:?}: {err}"))?;
+        aerial_event(session.aerial("drone").session(), "drone", inject)
             .map_err(|err| format!("inject {e:?}: {err}"))?;
+        leftover_offboard_refuses_commands(&mut v, inject)?;
+        // Step after leftover checks so P13 can wipe an ungranted command
+        // before the contract sample (Disarm/Disconnect do not clear it).
         session.step(0.02).map_err(|err| format!("step: {err}"))?;
         let mut s = sample_drone(&session.world());
         s.t_secs = (i as f32) * 0.02;
@@ -264,6 +281,39 @@ pub fn run_revoke_table() -> Result<ScenarioReport, String> {
         backend: "world",
         samples,
     })
+}
+
+/// Lockstep: adding a name to [`AerialOffboard::COMMANDS`] without covering
+/// it here fails this runner. Leftover typestate stays Offboard.
+fn leftover_offboard_refuses_commands(
+    v: &mut Vehicle<Offboard, WorldBackend>,
+    event: Event,
+) -> Result<(), String> {
+    const COVERED: &[&str] = &["set_velocity", "set_position", "hold"];
+    if AerialOffboard::COMMANDS != COVERED {
+        return Err(format!(
+            "AerialOffboard::COMMANDS {:?} must be exercised after inject ({COVERED:?})",
+            AerialOffboard::COMMANDS
+        ));
+    }
+    let vel = v.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2));
+    if !matches!(vel, Err(ErrorKind::StaleAuthority(_))) {
+        return Err(format!("set_velocity after {event:?}: {vel:?}"));
+    }
+    let pos = v.set_position_now(Position::<Ned>::ned(0.0, 0.0, -2.0));
+    if !matches!(pos, Err(ErrorKind::StaleAuthority(_))) {
+        return Err(format!("set_position after {event:?}: {pos:?}"));
+    }
+    let hold = v.hold_now();
+    if !matches!(hold, Err(ErrorKind::StaleAuthority(_))) {
+        return Err(format!("hold after {event:?}: {hold:?}"));
+    }
+    if !v.safety().offboard {
+        return Err(format!(
+            "leftover handle after {event:?} must still be typed Offboard"
+        ));
+    }
+    Ok(())
 }
 
 /// Re-evaluate a previously recorded report (replay / ulog-shaped JSONL is
@@ -473,9 +523,7 @@ mod tests {
 
     #[test]
     fn gps_loss_revokes_position_control_authority() {
-        use flight_core::frames::Ned;
-        use flight_core::vector::{Position, Velocity};
-        use flight_core::vehicle::{ErrorKind, VehicleHandle};
+        use flight_core::vehicle::VehicleHandle;
 
         let session = WorldSession::inland(1);
         session.attach_offboard("drone").expect("grant");
@@ -486,20 +534,8 @@ mod tests {
             .unwrap();
         apply_fault(&session, Fault::GpsDropout { at_secs: 0.0 }).expect("gps dropout");
         assert!(session.world().body("drone").unwrap().authority_epoch > 0);
-        let pos_err = v
-            .set_position_now(Position::<Ned>::ned(0.0, 0.0, -2.0))
-            .unwrap_err();
-        assert!(
-            matches!(pos_err, ErrorKind::StaleAuthority(_)),
-            "set_position after gps-loss: {pos_err:?}"
-        );
-        let vel_err = v
-            .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
-            .unwrap_err();
-        assert!(matches!(vel_err, ErrorKind::StaleAuthority(_)));
-        let hold_err = v.hold_now().unwrap_err();
-        assert!(matches!(hold_err, ErrorKind::StaleAuthority(_)));
-        assert!(v.safety().offboard);
+        leftover_offboard_refuses_commands(&mut v, Event::EstimatorInvalid)
+            .expect("leftover Offboard after gps-loss");
     }
 
     #[test]
@@ -544,14 +580,16 @@ mod tests {
             ],
         )
         .expect("contract");
+        report.evaluate_capability().expect("capability monitors");
     }
 
     #[test]
     fn each_dsl_revoke_event_bumps_epoch_from_offboard() {
         for e in AerialOffboard::REVOKE_ON {
+            let inject = AerialOffboard::inject(*e).expect("REVOKE_ON is injectable");
             let session = WorldSession::named("inland", 1).expect("catalog");
             session.attach_offboard("drone").expect("grant");
-            aerial_event(session.aerial("drone").session(), "drone", *e)
+            aerial_event(session.aerial("drone").session(), "drone", inject)
                 .unwrap_or_else(|err| panic!("inject {e:?}: {err}"));
             assert!(
                 session.world().body("drone").unwrap().authority_epoch > 0,

@@ -1,1 +1,2 @@
 inject TriggerFailsafe, Disarm, Disconnect, HeartbeatStale, EstimatorInvalid, ImuUnhealthy
+refuse set_velocity, set_position, hold

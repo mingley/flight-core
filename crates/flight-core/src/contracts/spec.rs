@@ -32,6 +32,16 @@ macro_rules! vehicle_contract {
                 $crate::safety::event_revokes_authority(event)
             }
 
+            /// Fault-lab inject: only kernel revoke events are injectable.
+            /// `None` means the event is not a generated fault (e.g. `MissionCommand`).
+            pub const fn inject(event: $crate::safety::Event) -> Option<$crate::safety::Event> {
+                if Self::revokes(event) {
+                    Some(event)
+                } else {
+                    None
+                }
+            }
+
             /// Kernel admission for this capability (heartbeat ∧ command age).
             pub const fn admit(heartbeat_age_ms: u32, command_age_ms: u32) -> bool {
                 $crate::safety::admit_offboard_command(heartbeat_age_ms, command_age_ms)
@@ -113,6 +123,14 @@ macro_rules! vehicle_contract {
                 match event {
                     $($crate::safety::Event::$ev => true,)*
                     _ => false,
+                }
+            }
+
+            pub const fn inject(event: $crate::safety::Event) -> Option<$crate::safety::Event> {
+                if Self::revokes(event) {
+                    Some(event)
+                } else {
+                    None
                 }
             }
 
@@ -267,6 +285,13 @@ macro_rules! prove_aerial_authority {
             }
             assert_eq!(event_revokes_authority(e), in_table);
             assert_eq!(AerialOffboard::revokes(e), event_revokes_authority(e));
+            assert_eq!(
+                AerialOffboard::inject(e).is_some(),
+                event_revokes_authority(e)
+            );
+            if let Some(inj) = AerialOffboard::inject(e) {
+                assert_eq!(inj, e);
+            }
             let age: u32 = kani::any();
             assert_eq!(heartbeat_age_ok(age), age < OFFBOARD_HEARTBEAT_MAX_AGE_MS);
             assert_eq!(command_age_ok(age), age < COMMAND_MAX_AGE_MS);
@@ -348,7 +373,18 @@ mod tests {
                 event_revokes_authority(e),
                 "event {e:?} disagrees between capability and kernel"
             );
+            assert_eq!(
+                AerialOffboard::inject(e).is_some(),
+                AerialOffboard::revokes(e),
+                "inject({e:?}) must track revokes"
+            );
+            if AerialOffboard::revokes(e) {
+                assert_eq!(AerialOffboard::inject(e), Some(e));
+            } else {
+                assert_eq!(AerialOffboard::inject(e), None);
+            }
         }
+        assert_eq!(AerialOffboard::inject(Event::MissionCommand), None);
     }
 
     #[test]
@@ -457,6 +493,28 @@ mod tests {
             tokens(generated_faults),
             "docs/generated/aerial-offboard.faults.txt must match AerialOffboard::FAULTS"
         );
+        assert!(AerialOffboard::FAULTS.starts_with("inject "));
+        assert!(AerialOffboard::FAULTS.contains("refuse "));
+        for c in AerialOffboard::COMMANDS {
+            assert!(
+                AerialOffboard::FAULTS.contains(c),
+                "FAULTS listing missing command {c}"
+            );
+        }
+        let faults_md = include_str!("../../../../docs/generated/aerial-offboard.faults.md");
+        for e in AerialOffboard::REVOKE_ON {
+            assert!(
+                faults_md.contains(e.name()),
+                "docs/generated/aerial-offboard.faults.md missing {}",
+                e.name()
+            );
+        }
+        for c in AerialOffboard::COMMANDS {
+            assert!(
+                faults_md.contains(c),
+                "docs/generated/aerial-offboard.faults.md missing leftover refuse {c}"
+            );
+        }
         assert_eq!(
             AerialOffboard::TRANSITIONS.len(),
             3 + AerialOffboard::REVOKE_ON.len()
@@ -468,14 +526,6 @@ mod tests {
             assert!(
                 transitions_md.contains(&row),
                 "docs/generated/aerial-offboard.transitions.md missing {row}"
-            );
-        }
-        let faults_md = include_str!("../../../../docs/generated/aerial-offboard.faults.md");
-        for e in AerialOffboard::REVOKE_ON {
-            assert!(
-                faults_md.contains(e.name()),
-                "docs/generated/aerial-offboard.faults.md missing {}",
-                e.name()
             );
         }
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
