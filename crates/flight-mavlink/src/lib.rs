@@ -1,7 +1,9 @@
-//! MAVLink helpers for talking to PX4 (and a UDP link).
+//! MAVLink helpers for talking to PX4 and ArduPilot (and a UDP link).
 //!
-//! This is not a C++ binding. It builds the messages a typed vehicle backend
-//! needs: heartbeat, arm, offboard mode, NAV takeoff/land/loiter, flight termination, and NED velocity / position setpoints.
+//! This is not a C++ binding and not a second protocol stack. It builds the
+//! messages typed vehicle backends need: heartbeat, arm, PX4 offboard /
+//! ArduPilot GUIDED, NAV land, flight termination, and NED velocity / position
+//! setpoints.
 
 #![deny(unsafe_code)]
 
@@ -17,6 +19,13 @@ pub const PX4_MAIN_MODE_AUTO: u8 = 4;
 pub const PX4_SUB_MODE_AUTO_RTL: u8 = 5;
 /// PX4 `PX4_CUSTOM_SUB_MODE_AUTO_LAND`.
 pub const PX4_SUB_MODE_AUTO_LAND: u8 = 6;
+
+/// ArduCopter `ModeGuided`. Companion offboard is this mode, not AUTO takeoff.
+pub const ARDUPILOT_COPTER_GUIDED: u8 = 4;
+/// ArduCopter `ModeRTL`. Failsafe-shaped for leftover Offboard, like PX4 AUTO+RTL.
+pub const ARDUPILOT_COPTER_RTL: u8 = 6;
+/// ArduCopter `ModeLand`. Land is not failsafe (same split as PX4 AUTO+LAND).
+pub const ARDUPILOT_COPTER_LAND: u8 = 9;
 
 /// Pack a PX4 custom_mode uint32 (`sub_mode << 24 | main_mode << 16`).
 pub const fn px4_custom_mode(main_mode: u8, sub_mode: u8) -> u32 {
@@ -96,6 +105,30 @@ pub fn arm_disarm(target_system: u8, target_component: u8, arm: bool) -> MavMess
         param6: 0.0,
         param7: 0.0,
         command: MavCmd::MAV_CMD_COMPONENT_ARM_DISARM,
+        target_system,
+        target_component,
+        confirmation: 0,
+    })
+}
+
+/// ArduCopter GUIDED via `MAV_CMD_DO_SET_MODE`. `param2` is the Copter mode
+/// number, not a PX4 packed `custom_mode`. Companion `takeoff_now` must
+/// re-assert this, not `MAV_CMD_NAV_TAKEOFF` (AUTO).
+pub fn set_guided_mode(target_system: u8, target_component: u8, armed: bool) -> MavMessage {
+    let mut base =
+        MavModeFlag::MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MavModeFlag::MAV_MODE_FLAG_GUIDED_ENABLED;
+    if armed {
+        base |= MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED;
+    }
+    MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
+        param1: base.bits() as f32,
+        param2: f32::from(ARDUPILOT_COPTER_GUIDED),
+        param3: 0.0,
+        param4: 0.0,
+        param5: 0.0,
+        param6: 0.0,
+        param7: 0.0,
+        command: MavCmd::MAV_CMD_DO_SET_MODE,
         target_system,
         target_component,
         confirmation: 0,
@@ -301,6 +334,43 @@ pub fn local_position_ned(
     })
 }
 
+/// Copter HEARTBEAT: critical/emergency/termination, or RTL. LAND is not
+/// failsafe. Uses Copter `custom_mode` numbers, not PX4 packed AUTO+RTL.
+pub fn ardupilot_heartbeat_revokes_authority(h: &HEARTBEAT_DATA) -> bool {
+    matches!(
+        h.system_status,
+        MavState::MAV_STATE_CRITICAL
+            | MavState::MAV_STATE_EMERGENCY
+            | MavState::MAV_STATE_FLIGHT_TERMINATION
+    ) || h.custom_mode == u32::from(ARDUPILOT_COPTER_RTL)
+}
+
+/// Heartbeat an ArduCopter-shaped plant publishes.
+pub fn ardupilot_vehicle_heartbeat(armed: bool, custom_mode: u32) -> MavMessage {
+    ardupilot_vehicle_heartbeat_status(armed, custom_mode, MavState::MAV_STATE_ACTIVE)
+}
+
+/// Same as [`ardupilot_vehicle_heartbeat`] with an explicit `system_status`.
+pub fn ardupilot_vehicle_heartbeat_status(
+    armed: bool,
+    custom_mode: u32,
+    system_status: MavState,
+) -> MavMessage {
+    let mut base =
+        MavModeFlag::MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MavModeFlag::MAV_MODE_FLAG_GUIDED_ENABLED;
+    if armed {
+        base |= MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED;
+    }
+    MavMessage::HEARTBEAT(HEARTBEAT_DATA {
+        custom_mode,
+        mavtype: MavType::MAV_TYPE_QUADROTOR,
+        autopilot: MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA,
+        base_mode: base,
+        system_status,
+        mavlink_version: 3,
+    })
+}
+
 /// Heartbeat a PX4-shaped plant publishes (quadrotor + PX4 autopilot).
 pub fn px4_vehicle_heartbeat(armed: bool, custom_mode: u32) -> MavMessage {
     px4_vehicle_heartbeat_status(armed, custom_mode, MavState::MAV_STATE_ACTIVE)
@@ -428,6 +498,51 @@ mod tests {
     }
 
     #[test]
+    fn ardupilot_revokes_on_rtl_and_critical_not_on_guided_or_land() {
+        let MavMessage::HEARTBEAT(ok) =
+            ardupilot_vehicle_heartbeat(true, u32::from(ARDUPILOT_COPTER_GUIDED))
+        else {
+            panic!("hb");
+        };
+        assert!(!ardupilot_heartbeat_revokes_authority(&ok));
+        assert!(heartbeat_reports_armed(&ok));
+        assert_eq!(ok.autopilot, MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA);
+        let MavMessage::HEARTBEAT(crit) = ardupilot_vehicle_heartbeat_status(
+            true,
+            u32::from(ARDUPILOT_COPTER_GUIDED),
+            MavState::MAV_STATE_CRITICAL,
+        ) else {
+            panic!("crit");
+        };
+        assert!(ardupilot_heartbeat_revokes_authority(&crit));
+        let MavMessage::HEARTBEAT(rtl) =
+            ardupilot_vehicle_heartbeat(true, u32::from(ARDUPILOT_COPTER_RTL))
+        else {
+            panic!("rtl");
+        };
+        assert!(ardupilot_heartbeat_revokes_authority(&rtl));
+        let MavMessage::HEARTBEAT(land) =
+            ardupilot_vehicle_heartbeat(true, u32::from(ARDUPILOT_COPTER_LAND))
+        else {
+            panic!("land");
+        };
+        assert!(
+            !ardupilot_heartbeat_revokes_authority(&land),
+            "Copter LAND must not look like failsafe"
+        );
+        let MavMessage::HEARTBEAT(px4_rtl) = px4_vehicle_heartbeat(
+            true,
+            px4_custom_mode(PX4_MAIN_MODE_AUTO, PX4_SUB_MODE_AUTO_RTL),
+        ) else {
+            panic!("px4 rtl");
+        };
+        assert!(
+            !ardupilot_heartbeat_revokes_authority(&px4_rtl),
+            "PX4 packed AUTO+RTL is not Copter RTL"
+        );
+    }
+
+    #[test]
     fn velocity_mask_ignores_position() {
         let mask = velocity_only_mask();
         assert!(mask.contains(PositionTargetTypemask::POSITION_TARGET_TYPEMASK_X_IGNORE));
@@ -451,6 +566,13 @@ mod tests {
         };
         assert_eq!(m.command, MavCmd::MAV_CMD_DO_SET_MODE);
         assert!((m.param2 - f32::from(PX4_MAIN_MODE_OFFBOARD)).abs() < 1e-6);
+        let guided = set_guided_mode(1, 1, true);
+        let MavMessage::COMMAND_LONG(g) = &guided else {
+            panic!("guided");
+        };
+        assert_eq!(g.command, MavCmd::MAV_CMD_DO_SET_MODE);
+        assert!((g.param2 - f32::from(ARDUPILOT_COPTER_GUIDED)).abs() < 1e-6);
+        assert!((g.param2 - f32::from(PX4_MAIN_MODE_OFFBOARD)).abs() > 1.0);
         let takeoff = nav_takeoff(1, 1, 3.0);
         let MavMessage::COMMAND_LONG(t) = &takeoff else {
             panic!("takeoff");

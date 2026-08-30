@@ -26,6 +26,7 @@ pub struct ConnectionInfo {
 pub enum AutopilotKind {
     Simulated,
     Px4,
+    ArduPilot,
     Unknown,
 }
 

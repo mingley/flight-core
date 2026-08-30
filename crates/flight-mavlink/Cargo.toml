@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "MAVLink transport and PX4-oriented message helpers for flight-core"
+description = "MAVLink transport and PX4 / ArduPilot message helpers for flight-core"
 
 [dependencies]
 flight-core = { workspace = true }
