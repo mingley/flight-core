@@ -4,7 +4,7 @@
 //! valid at actuation time. These types make age, order, and validity
 //! first-class so the kernel and monitors can reject stale evidence.
 
-use crate::safety::OFFBOARD_HEARTBEAT_MAX_AGE_MS;
+use crate::safety::{COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use crate::time::{Duration, MonotonicInstant};
 use core::fmt;
 use core::marker::PhantomData;
@@ -101,6 +101,19 @@ impl<T, const MAX_AGE_MS: u32> Fresh<T, MAX_AGE_MS> {
         now.saturating_duration_since(self.stamped_at)
     }
 
+    /// Age-only check used when a companion reports milliseconds, not a stamp.
+    /// Same bound as [`Self::get`]: `age_ms < MAX_AGE_MS`.
+    pub const fn check_age(age_ms: u32) -> Result<(), FreshnessError> {
+        if age_ms >= MAX_AGE_MS {
+            Err(FreshnessError::Stale {
+                age_ms,
+                max_age_ms: MAX_AGE_MS,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn get(&self, now: MonotonicInstant) -> Result<&T, FreshnessError> {
         let age_ms = now.saturating_duration_since(self.stamped_at).as_nanos() / 1_000_000;
         let age_ms = if age_ms > u32::MAX as u64 {
@@ -108,18 +121,16 @@ impl<T, const MAX_AGE_MS: u32> Fresh<T, MAX_AGE_MS> {
         } else {
             age_ms as u32
         };
-        if age_ms >= MAX_AGE_MS {
-            return Err(FreshnessError::Stale {
-                age_ms,
-                max_age_ms: MAX_AGE_MS,
-            });
-        }
+        Self::check_age(age_ms)?;
         Ok(&self.value)
     }
 }
 
 /// Heartbeat evidence that must be younger than the offboard contract.
 pub type HeartbeatFresh = Fresh<(), { OFFBOARD_HEARTBEAT_MAX_AGE_MS }>;
+
+/// Planner command younger than [`COMMAND_MAX_AGE_MS`].
+pub type CommandFresh<T> = Fresh<T, { COMMAND_MAX_AGE_MS }>;
 
 /// Monotonic sequence numbers. A jump backward is a replay or clock fault.
 #[derive(Clone, Copy, Debug, Default)]
@@ -262,6 +273,11 @@ impl<T> Command<T> {
     pub fn within_command_bound(&self, now: MonotonicInstant) -> bool {
         crate::safety::command_age_ok(self.age_ms(now))
     }
+
+    /// Same bound as [`Self::within_command_bound`], as a [`FreshnessError`].
+    pub fn check_age(&self, now: MonotonicInstant) -> Result<(), FreshnessError> {
+        CommandFresh::<()>::check_age(self.age_ms(now))
+    }
 }
 
 /// Named rate in integer hertz. Used by deadline / loop contracts.
@@ -328,6 +344,26 @@ mod tests {
         assert!(!cmd.within(MonotonicInstant::from_millis(10), Duration::from_millis(10)));
         assert!(cmd.within_command_bound(MonotonicInstant::from_millis(99)));
         assert!(!cmd.within_command_bound(MonotonicInstant::from_millis(100)));
+        assert!(cmd.check_age(MonotonicInstant::from_millis(99)).is_ok());
+        assert!(cmd.check_age(MonotonicInstant::from_millis(100)).is_err());
+        for age in 0..=300 {
+            assert_eq!(
+                HeartbeatFresh::check_age(age).is_ok(),
+                crate::safety::heartbeat_age_ok(age),
+                "heartbeat age {age}"
+            );
+            assert_eq!(
+                CommandFresh::<()>::check_age(age).is_ok(),
+                crate::safety::command_age_ok(age),
+                "command age {age}"
+            );
+            assert_eq!(
+                HeartbeatFresh::check_age(age).is_ok()
+                    && CommandFresh::<()>::check_age(age).is_ok(),
+                crate::safety::admit_offboard_command(age, age),
+                "admit age {age}"
+            );
+        }
         let ts = Timestamp::from_millis(5);
         assert!(ts.precedes(Timestamp::from_millis(5)));
         assert!(ts.precedes(Timestamp::from_millis(6)));

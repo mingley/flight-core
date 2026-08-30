@@ -129,8 +129,8 @@ pub mod prelude {
     pub use crate::sensors::{ActuatorCommand, Actuators, Imu, ImuSample, SensorHealth};
     #[cfg(not(creusot))]
     pub use crate::temporal::{
-        Command, Deadline, Estimate, Fresh, HeartbeatFresh, Lease, Observation, Rate, Sequence,
-        Timestamp,
+        Command, CommandFresh, Deadline, Estimate, Fresh, HeartbeatFresh, Lease, Observation, Rate,
+        Sequence, Timestamp,
     };
     #[cfg(not(creusot))]
     pub use crate::time::{Clock, Duration, MonotonicInstant, VirtualClock};

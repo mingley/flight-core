@@ -276,7 +276,11 @@ impl<S: State, B: VehicleBackend> Vehicle<S, B> {
     fn require_live_permit(&self) -> Result<(), ErrorKind> {
         self.require_permit()?;
         if let Some(age) = self.inner.backend.authority_heartbeat_age_ms() {
-            if !crate::contracts::AerialOffboard::admit(age, 0) {
+            // HeartbeatFresh owns the bound; admit is the kernel TCB. Fail closed
+            // if they ever disagree.
+            if crate::temporal::HeartbeatFresh::check_age(age).is_err()
+                || !crate::contracts::AerialOffboard::admit(age, 0)
+            {
                 return Err(ErrorKind::StaleAuthority(AuthorityReject::StaleHeartbeat));
             }
         }
@@ -284,7 +288,9 @@ impl<S: State, B: VehicleBackend> Vehicle<S, B> {
     }
 
     fn require_command_age(&self, command_age_ms: u32) -> Result<(), ErrorKind> {
-        if !crate::contracts::AerialOffboard::admit(0, command_age_ms) {
+        if crate::temporal::CommandFresh::<()>::check_age(command_age_ms).is_err()
+            || !crate::contracts::AerialOffboard::admit(0, command_age_ms)
+        {
             return Err(ErrorKind::StaleAuthority(AuthorityReject::StaleCommand));
         }
         Ok(())
