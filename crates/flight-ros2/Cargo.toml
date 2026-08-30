@@ -28,5 +28,9 @@ name = "plant"
 [[example]]
 name = "fleet_plant"
 
+[[bin]]
+name = "flight-test-ros2"
+path = "src/bin/flight_test_ros2.rs"
+
 [dev-dependencies]
 robot-lab = { workspace = true }

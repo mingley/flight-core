@@ -19,7 +19,11 @@
 //!   [`plant::FleetPlant::resume_all`] / [`plant::FleetPlant::dock_all`] /
 //!   [`plant::FleetPlant::park_all`] / [`plant::apply_hold`] /
 //!   [`plant::FleetPlant::hold`] walk climb-complete, hull station, hull dock,
-//!   rover halt, and a drone NED pose hold through `attach_hold`)
+//!   rover halt, and a drone NED pose hold through `attach_hold`;
+//!   [`plant::inject_revoke`] / [`plant::leftover_after_failsafe`] /
+//!   [`plant::run_ros2_revoke_table`] are leftover OffboardControl after
+//!   `apply_failsafe` and every `REVOKE_ON` event — `flight-sim` does not
+//!   depend on this crate)
 //! - [`px4`] serializes that setpoint as ROS 2 CDR `px4_msgs` (NED, `NaN` unused)
 //! - `ned_velocity_to_ros_twist_linear` maps NED → ENU for `geometry_msgs/Twist`
 //!

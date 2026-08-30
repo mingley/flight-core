@@ -18,7 +18,12 @@
 //! [`WorldSession::attach_hold`]. An idle Twist (absent drone field) leaves
 //! that hold in place; a live Twist velocity clears it.
 
-use flight_core::vehicle::{BackendError, GroundHandle, MarineHandle, VehicleHandle};
+use flight_core::contracts::AerialOffboard;
+use flight_core::safety::Event;
+use flight_core::temporal::Sequence;
+use flight_core::vehicle::{
+    BackendError, GroundHandle, MarineHandle, VehicleBackend, VehicleHandle,
+};
 use flight_sim::{GroundWorldBackend, MarineWorldBackend, WorldBackend, WorldSession};
 
 use crate::{ros_twist_linear_to_ned, OffboardSetpoint};
@@ -209,6 +214,103 @@ pub fn apply_resume(backend: &mut MarineWorldBackend) -> Result<(), BackendError
     let session = backend.session().clone();
     *backend = session.attach_resume(backend.body_id())?;
     Ok(())
+}
+
+/// Companion-shaped inject of a kernel revoke event onto a plant body.
+/// [`WorldSession::inject_revoke`] first; leftover OffboardControl bound
+/// from this plant's grant must then fail `leftover_commands_stale`.
+pub fn inject_revoke(backend: &WorldBackend, event: Event) -> Result<(), BackendError> {
+    backend.session().inject_revoke(backend.body_id(), event)
+}
+
+/// Bind leftover OffboardControl (inland grant is Takeoff) before
+/// [`apply_failsafe`]. After the attach trip, leftover `COMMANDS` are
+/// `StaleAuthority`. ROS 2-shaped leftover — not a clone of world
+/// `run_revoke_table`'s Offboard grant.
+pub fn leftover_after_failsafe(seed: u64) -> Result<(), BackendError> {
+    let mut plant = FleetPlant::inland(seed);
+    plant.grant_all()?;
+    let VehicleHandle::Takeoff(mut leftover) = plant.session().aerial("drone").attach()? else {
+        return Err(BackendError::Rejected("inland grant must bind Takeoff"));
+    };
+    if leftover.leftover_commands_stale().is_ok() {
+        return Err(BackendError::Rejected("leftover_already_stale"));
+    }
+    apply_failsafe(plant.drone())?;
+    leftover
+        .leftover_commands_stale()
+        .map_err(|_| BackendError::Rejected("leftover_offboard_still_has_authority"))?;
+    Ok(())
+}
+
+/// Same leftover OffboardControl `COMMANDS` check as world / PX4 / HITL,
+/// after [`apply_failsafe`] at the ROS 2 plant boundary.
+pub fn run_ros2_failsafe_leftover() -> Result<usize, String> {
+    leftover_after_failsafe(1).map_err(|e| format!("ros2 leftover failsafe: {e}"))?;
+    Ok(1)
+}
+
+/// Same leftover OffboardControl `COMMANDS` check as world / PX4 / HITL,
+/// for every `REVOKE_ON` event, bound from the inland FleetPlant Takeoff
+/// grant. Epoch monotonicity is a first-class [`Sequence`]. Lives here
+/// because `flight-sim` cannot depend on this crate.
+pub fn run_ros2_revoke_table() -> Result<usize, String> {
+    let mut n = 0;
+    for e in AerialOffboard::REVOKE_ON {
+        let mut plant = FleetPlant::inland(1);
+        plant
+            .grant_all()
+            .map_err(|err| format!("grant before {e:?}: {err}"))?;
+        let VehicleHandle::Takeoff(mut leftover) = plant
+            .session()
+            .aerial("drone")
+            .attach()
+            .map_err(|err| format!("bind Takeoff before {e:?}: {err}"))?
+        else {
+            return Err(format!("inland grant must bind Takeoff before {e:?}"));
+        };
+        if leftover.leftover_commands_stale().is_ok() {
+            return Err(format!("leftover already stale before ROS 2 inject {e:?}"));
+        }
+        let mut seq = Sequence::new();
+        seq.observe(leftover.backend().authority_epoch())
+            .map_err(|_| format!("sequence before {e:?}"))?;
+        plant
+            .inject_revoke(*e)
+            .map_err(|err| format!("inject {e:?}: {err}"))?;
+        seq.observe(leftover.backend().authority_epoch())
+            .map_err(|_| format!("epoch jumped backward after {e:?}"))?;
+        if leftover.backend().authority_epoch() == 0 {
+            return Err(format!("event {e:?} did not bump epoch"));
+        }
+        let failsafe = leftover
+            .backend()
+            .world()
+            .body("drone")
+            .and_then(|b| b.aerial)
+            .is_some_and(|s| s.failsafe);
+        match e {
+            Event::Disconnect | Event::Disarm => {
+                if failsafe {
+                    return Err(format!("{e:?} must not latch failsafe"));
+                }
+            }
+            Event::TriggerFailsafe
+            | Event::HeartbeatStale
+            | Event::EstimatorInvalid
+            | Event::ImuUnhealthy => {
+                if !failsafe {
+                    return Err(format!("{e:?} must latch failsafe"));
+                }
+            }
+            _ => {}
+        }
+        leftover
+            .leftover_commands_stale()
+            .map_err(|err| format!("leftover after {e:?}: {err}"))?;
+        n += 1;
+    }
+    Ok(n)
 }
 
 fn require_aerial_setpoint(backend: &WorldBackend) -> Result<(), BackendError> {
@@ -452,6 +554,12 @@ impl FleetPlant {
     /// Ready after [`Self::return_all`] is [`BackendError::Protocol`].
     pub fn hold(&mut self) -> Result<(), BackendError> {
         apply_hold(&mut self.drone)
+    }
+
+    /// DSL revoke inject on the catalog drone. Same path as
+    /// [`WorldSession::inject_revoke`].
+    pub fn inject_revoke(&self, event: Event) -> Result<(), BackendError> {
+        self.session.inject_revoke("drone", event)
     }
 
     pub fn step(&self, dt: f32) -> Result<(), BackendError> {
@@ -1439,5 +1547,47 @@ mod tests {
         plant.grant_all().unwrap();
         plant.return_all().unwrap();
         assert!(matches!(plant.hold(), Err(BackendError::Protocol)));
+    }
+
+    #[test]
+    fn leftover_commands_stale_after_apply_failsafe() {
+        leftover_after_failsafe(1).expect("leftover after apply_failsafe");
+        assert_eq!(run_ros2_failsafe_leftover().expect("runner"), 1);
+    }
+
+    #[test]
+    fn leftover_commands_stale_after_every_dsl_revoke() {
+        let n = run_ros2_revoke_table().expect("ros2 leftover revoke table");
+        assert_eq!(n, AerialOffboard::REVOKE_ON.len());
+    }
+
+    #[test]
+    fn inject_revoke_rejects_non_revoke_and_bumps_epoch() {
+        let mut plant = FleetPlant::inland(1);
+        plant.grant_all().unwrap();
+        assert!(matches!(
+            inject_revoke(plant.drone(), Event::MissionCommand),
+            Err(BackendError::Rejected("not a revoke inject"))
+        ));
+        plant.inject_revoke(Event::TriggerFailsafe).unwrap();
+        assert!(
+            plant
+                .session()
+                .world()
+                .body("drone")
+                .unwrap()
+                .authority_epoch
+                > 0
+        );
+        assert!(
+            plant
+                .session()
+                .world()
+                .body("drone")
+                .unwrap()
+                .aerial
+                .unwrap()
+                .failsafe
+        );
     }
 }
