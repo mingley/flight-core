@@ -61,15 +61,16 @@ native ULog `fc_trace` replay. The same contract also runs as
 Offboard cannot `set_velocity` / `set_position` / `hold`; JSONL and ULog
 round-trip the same samples). `flight-test-px4` is the leftover table
 at the PX4 companion (`inject_revoke` for every `REVOKE_ON` event) plus
-GPS-loss leftover (`run_px4_gps_loss`, `AerialOffboard::GPS_LOSS_REQUIRE`).
-`flight-test-ardupilot` is the Copter GUIDED leftover table plus leftover GPS-loss
-(`run_ardupilot_gps_loss`).
+named leftover contracts (`run_px4_leftover_contracts`: gps-loss,
+heartbeat-stale, hitl-miss, imu-loss on `AerialOffboard::LEFTOVER_CONTRACTS`).
+`flight-test-ardupilot` is the Copter GUIDED leftover table plus the same
+named leftover contracts (`run_ardupilot_leftover_contracts`).
 `flight-test-hitl` is leftover OffboardControl `COMMANDS` after a rack
 deadline/`Rate` miss **and** after every `REVOKE_ON` (`WorldSession::inject_revoke`)
-plus leftover GPS-loss (`run_hitl_gps_loss`).
+plus the same named leftover contracts (`run_hitl_leftover_contracts`).
 `flight-test-ros2` is leftover OffboardControl after `apply_failsafe`,
-`apply_disarm`, and every `REVOKE_ON`, plus leftover GPS-loss (`run_ros2_gps_loss`;
-no rclrs). A leftover
+`apply_disarm`, and every `REVOKE_ON`, plus the same named leftover contracts
+(`run_ros2_leftover_contracts`; no rclrs). A leftover
 `Vehicle<Armed>` after an async PX4 disarm HEARTBEAT is still typed Armed and
 has no actuation authority (`enter_offboard_now` is `StaleEpoch`). A leftover
 `Vehicle<Offboard>` after `connect` / `begin_session` is still typed Offboard

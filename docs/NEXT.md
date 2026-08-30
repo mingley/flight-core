@@ -397,10 +397,13 @@ does not emit a second Creusot proof file. `run_revoke_table` uses
 Named scenario faults (`GpsDropout` / `HeartbeatStale` / `Failsafe`) go
 through the same `inject`. `differential_revoke_table` round-trips the
 leftover samples on JSONL and ULog. `Px4Backend::inject_revoke` /
-`run_px4_revoke_table` / `flight-test-px4` run the same leftover check at
-the PX4 companion boundary (`flight-sim` does not depend on `flight-px4`).
-`run_ardupilot_revoke_table` / `flight-test-ardupilot` are the Copter GUIDED
-sibling (`flight-sim` does not depend on `flight-ardupilot`).
+`run_px4_revoke_table` / `run_px4_leftover_contracts` / `flight-test-px4` run
+the leftover table and named leftover contracts at the PX4 companion
+(`gps-loss`, `heartbeat-stale`, `hitl-miss`, `imu-loss`; `flight-sim` does
+not depend on `flight-px4`).
+`run_ardupilot_revoke_table` / `run_ardupilot_leftover_contracts` /
+`flight-test-ardupilot` are the Copter GUIDED sibling
+(`flight-sim` does not depend on `flight-ardupilot`).
 
 ### F5. PX4 production-quality backend
 
@@ -424,12 +427,13 @@ maps each `REVOKE_ON` event onto the companion (failsafe command, unexpected
 disarm HEARTBEAT, link drop, aged HEARTBEAT, stale `LOCAL_POSITION_NED`,
 IMU dropout). `run_px4_revoke_table` / `flight-test-px4` prove a leftover
 `Vehicle<Offboard>` cannot run `COMMANDS` after every inject.
-`run_px4_gps_loss` is leftover Offboard after `EstimatorInvalid` evaluated
-against `AerialOffboard::GPS_LOSS_REQUIRE` (same monitors as world; world
-`Scenario::GPS_LOSS.require` aliases that table). Live SIH is
+`run_px4_leftover_contracts` is leftover Offboard after each
+`AerialOffboard::LEFTOVER_CONTRACTS` inject evaluated against that row's
+require list (world `Scenario::{GPS_LOSS,HEARTBEAT_LOSS,HITL_MISS,IMU_LOSS}.require`
+alias those tables; IMU-delay leftover is the gps-loss row). Live SIH is
 `sitl_gps_loss_revokes_leftover_offboard`.
-`run_ardupilot_revoke_table` / `run_ardupilot_gps_loss` /
-`flight-test-ardupilot` are the leftover table and leftover GPS-loss at
+`run_ardupilot_revoke_table` / `run_ardupilot_leftover_contracts` /
+`flight-test-ardupilot` are the leftover table and leftover contracts at
 the Copter GUIDED companion.
 
 ### F6. Torture laboratory / differential conformance
@@ -458,27 +462,28 @@ test that the plant epoch increments and that a leftover Offboard handle
 cannot run `set_velocity` / `set_position` / `hold`. Named scenario
 `Fault` kernel events are `AerialOffboard::inject`. `differential_revoke_table`
 round-trips those leftover samples on JSONL and ULog. The PX4 companion
-runs the leftover table and leftover GPS-loss via
+runs the leftover table and leftover contracts via
 `cargo run -p flight-px4 --bin flight-test-px4`
-(`inject_revoke` / `run_px4_gps_loss`); `flight-sim` does not depend on `flight-px4`.
-The ArduPilot GUIDED companion is
+(`inject_revoke` / `run_px4_leftover_contracts`); `flight-sim` does not depend
+on `flight-px4`. The ArduPilot GUIDED companion is
 `cargo run -p flight-ardupilot --bin flight-test-ardupilot`
-(`inject_revoke` / `run_ardupilot_gps_loss`); `flight-sim` does not depend on
-`flight-ardupilot`; live Copter is loopback-only (no CI sitl job). HITL leftover
-after a rack deadline miss is `WorldRack::leftover_after_deadline_miss`;
+(`inject_revoke` / `run_ardupilot_leftover_contracts`); `flight-sim` does not
+depend on `flight-ardupilot`; live Copter is loopback-only (no CI sitl job).
+HITL leftover after a rack deadline miss is `WorldRack::leftover_after_deadline_miss`;
 every `REVOKE_ON` leftover is `WorldRack::run_hitl_revoke_table`; leftover
-GPS-loss is `WorldRack::run_hitl_gps_loss` /
+contracts are `WorldRack::run_hitl_leftover_contracts` /
 `flight-test-hitl` (`flight-sim` does not depend on `flight-hitl`). ROS 2
 leftover after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` is
 `plant::leftover_after_failsafe` / `leftover_after_disarm` / `run_ros2_revoke_table`;
-leftover GPS-loss is `run_ros2_gps_loss` /
+leftover contracts are `run_ros2_leftover_contracts` /
 `flight-test-ros2` (`flight-sim` does not depend on `flight-ros2`; no rclrs).
 World / PX4 / ArduPilot leftover tables observe leftover epoch with `Sequence`.
-Leftover GPS-loss on PX4 / ArduPilot / HITL / ROS 2
-(`run_px4_gps_loss` / `run_ardupilot_gps_loss` / `run_hitl_gps_loss` /
-`run_ros2_gps_loss` / live `sitl_gps_loss_revokes_leftover_offboard`)
-evaluates `AerialOffboard::GPS_LOSS_REQUIRE` (world `Scenario::GPS_LOSS.require`
-is that same slice).
+Leftover contracts on PX4 / ArduPilot / HITL / ROS 2
+(`run_px4_leftover_contracts` / `run_ardupilot_leftover_contracts` /
+`run_hitl_leftover_contracts` / `run_ros2_leftover_contracts` / live
+`sitl_gps_loss_revokes_leftover_offboard`) evaluate
+`AerialOffboard::LEFTOVER_CONTRACTS` (world scenario `require` slices alias
+those tables).
 
 ### F7. Typed geometry
 
@@ -506,8 +511,8 @@ on the miss sample. `WorldRack::contract_deadline_miss` and
 `flight-test --backend hitl` evaluate `Scenario::HITL_MISS.require`
 (including `EpochBumped`). A leftover OffboardControl handle bound before the
 miss cannot run `COMMANDS` (`leftover_after_deadline_miss`). Leftover after
-every `REVOKE_ON` is `run_hitl_revoke_table`. Leftover GPS-loss is
-`run_hitl_gps_loss`. Via `flight-test-hitl`.
+every `REVOKE_ON` is `run_hitl_revoke_table`. Leftover contracts are
+`run_hitl_leftover_contracts`. Via `flight-test-hitl`.
 `cargo run -p flight-hitl --example contract_miss`.
 Faithful FCH1 UDP card (not the in-process plant):
 `Fch1UdpCard` / `WorldRack::frame_from_io` /
