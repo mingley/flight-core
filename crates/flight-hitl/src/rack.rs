@@ -700,7 +700,7 @@ impl WorldRack {
     pub fn run_hitl_revoke_table() -> Result<usize, String> {
         let mut n = 0;
         for e in AerialOffboard::REVOKE_ON {
-            let mut rack = Self::inland(1).map_err(|err| format!("rack before {e:?}: {err}"))?;
+            let rack = Self::inland(1).map_err(|err| format!("rack before {e:?}: {err}"))?;
             let VehicleHandle::Takeoff(mut leftover) = rack
                 .session
                 .aerial("drone")
