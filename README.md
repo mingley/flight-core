@@ -38,8 +38,9 @@ increments the epoch. The old permit is still memory. It has no authority.
                    PASS — same contract on recorded ULog
 ```
 
-Today: (2) is 129 trybuild compile-fails (including `permit_is_not_clone`,
-`orientation_is_not_angular_velocity`, `force_is_not_torque`). (4) is Kani
+Today: (2) is 131 trybuild compile-fails (including `permit_is_not_clone`,
+`orientation_is_not_angular_velocity`, `force_is_not_torque`,
+`velocity_is_not_acceleration`, `point_is_not_displacement`). (4) is Kani
 including `permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel` (kernel
 table = `AUTHORITY_REVOKE_EVENTS`, heartbeat/command bounds, estimator
 monotonicity), and actuators-require-arm. (5–6) are `Scenario::GPS_LOSS` on
@@ -254,6 +255,7 @@ cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend world
 cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend replay
 cargo run -p flight-sim --bin flight-test -- --backend ulog --replay crates/flight-sim/corpus/gps_loss.ulg
 cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
+cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend all
 cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
 cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
 cargo run -p flight-hitl --example contract_miss

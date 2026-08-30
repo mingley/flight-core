@@ -299,20 +299,24 @@ share bounds with the DSL. `Vehicle::apply_velocity_command_now` rejects
 
 ### F4. Single-source contract DSL
 
-**Status: landed (tables + artifacts; not a second typestate crate).**
+**Status: landed (tables + generated admission + Kani harness; not a second typestate crate).**
 `define_aerial_authority!` in `safety.rs` is the table: heartbeat/command bounds,
-`event_revokes_authority` (Creusot `ensures` on the same event list), diagram/SPEC
-strings, `AUTHORITY_REVOKE_EVENTS`, `AERIAL_OFFBOARD_TRANSITIONS`.
-`vehicle_contract! { from_kernel }` aliases that table (`AerialOffboard::revokes`
-**is** the kernel function; `TRANSITIONS` / `GATE` / `COMMANDS` / `UI_FORBIDDEN`
-are the capability surface). Kani `dsl_revokes_match_kernel` proves table
-membership plus the two age predicates and estimator monotonicity. Checked-in
+`event_revokes_authority` (Creusot `ensures` on the same event list),
+`admit_offboard_command`, diagram/SPEC strings, `AUTHORITY_REVOKE_EVENTS`,
+`AERIAL_OFFBOARD_TRANSITIONS`. `vehicle_contract! { from_kernel }` aliases that
+table (`AerialOffboard::revokes` **is** the kernel function; `admit` **is**
+`admit_offboard_command`; `TRANSITIONS` / `GATE` / `COMMANDS` / `UI_FORBIDDEN`
+are the capability surface). OffboardControl `set_velocity_now` /
+`set_position_now` / `hold_now` share `admit_offboard_now`.
+`prove_aerial_authority!` expands to Kani `dsl_revokes_match_kernel` (table
+membership, age predicates, `admit == heartbeat ∧ command_age`, estimator
+monotonicity). Checked-in
 [`docs/generated/aerial-offboard.mmd`](generated/aerial-offboard.mmd),
 [`.dot`](generated/aerial-offboard.dot),
 [`transitions.md`](generated/aerial-offboard.transitions.md), and
 [`faults.md`](generated/aerial-offboard.faults.md) must match the table.
-The macro does not emit typestate **methods** or a second Creusot file; Creusot
-still discharges `step` plus the revoke `ensures`.
+The macro does not emit a second Creusot file; Creusot still discharges `step`
+plus the revoke `ensures`.
 
 ### F5. PX4 production-quality backend
 
@@ -336,8 +340,10 @@ writes JSONL, and differential-runs two world traces. Native ULog subset
 Live Gazebo is still out of scope; `--backend px4-sitl` evaluates a converted
 JSONL or `.ulg` (checked-in `crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl`).
 `--backend hitl` is the attach-failsafe miss path (same contract as
-`WorldRack::contract_deadline_miss`). Every DSL revoke event has a world test
-that the plant epoch increments.
+`WorldRack::contract_deadline_miss`). `--backend all` on gps-loss runs
+[`differential_gps_loss`](../crates/flight-sim/src/scenario.rs) (world +
+checked-in ULog + converted PX4 SITL JSONL). Every DSL revoke event has a world
+test that the plant epoch increments.
 
 ### F7. Typed geometry
 
@@ -345,7 +351,8 @@ that the plant epoch increments.
 `Point3`, `Orientation<F>` (not `AngularVelocity`), `Force` / `Torque`,
 `apply_point` / `apply_displacement`, `Rotation`, `Covariance<T>`.
 trybuild `transform_wrong_frames`, `orientation_is_not_angular_velocity`,
-`force_is_not_torque`. Copper `cu_transform` is interop, not a
+`force_is_not_torque`, `velocity_is_not_acceleration`,
+`point_is_not_displacement`. Copper `cu_transform` is interop, not a
 copy (`docs/copper.md`).
 
 ### F8. Copper integration

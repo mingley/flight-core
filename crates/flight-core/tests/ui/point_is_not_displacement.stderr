@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/ui/point_is_not_displacement.rs:6:16
+  |
+6 |     need_point(d);
+  |     ---------- ^ expected `Vector3<Meter, Ned>`, found `Displacement<Ned>`
+  |     |
+  |     arguments to this function are incorrect
+  |
+  = note: expected struct `Vector3<Meter, flight_core::frames::Ned>`
+             found struct `flight_core::geometry::Displacement<flight_core::frames::Ned>`
+note: function defined here
+ --> tests/ui/point_is_not_displacement.rs:3:4
+  |
+3 | fn need_point(_: Point3<Ned>) {}
+  |    ^^^^^^^^^^ --------------
