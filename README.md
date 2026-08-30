@@ -36,7 +36,7 @@ increments the epoch. The old permit is still memory. It has no authority.
 6. flight-test --backend all     PASS (same contract: world, replay, ulog;
                                       leftover leftover-contracts also converted PX4 SITL)
 7. PX4 SITL companion              PASS (same Vehicle API; HEARTBEAT CRITICAL/RTL revokes epoch)
-   flight-test-px4 leftover leftover-contracts; sitl_live leftover Offboard after EstimatorInvalid
+   flight-test-px4 leftover leftover-contracts; sitl_live leftover Offboard after live-safe leftover contracts
    flight-test --scenario gps-loss|heartbeat-stale|hitl-miss|imu-loss --backend px4-sitl
                    (converted corpus; live SIH is sitl_live)
 8. flight-test --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
@@ -54,7 +54,7 @@ monotonicity), and actuators-require-arm. (5) is GPS-loss: an invalid
 (6) is `differential_contract` (world, JSONL, ULog; leftover leftover-contracts
 also converted PX4 SITL corpora). (7) is the existing SIH companion path plus failsafe/RTL epoch
 revocation, leftover leftover-contracts on the companion (`flight-test-px4` /
-`sitl_live` leftover Offboard after `EstimatorInvalid`), and the same
+`sitl_live` leftover Offboard after live-safe leftover contracts), and the same
 monitors on converted SITL-shaped JSONL for every leftover name. (8) is
 native ULog `fc_trace` replay. The same contract also runs as
 `flight-test --scenario hitl-miss --backend hitl` and

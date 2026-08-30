@@ -25,7 +25,8 @@ gps-loss, heartbeat-stale, hitl-miss, imu-loss — names/injects from kernel
 `cargo run -p flight-px4 --bin flight-test-px4` (`run_px4_revoke_table` /
 `run_px4_leftover_contracts`; `flight-sim` does not depend on `flight-px4`).
 Live SIH leftover GPS-loss is `sitl_gps_loss_revokes_leftover_offboard`
-(`#[ignore]`; CI job `sitl`).
+(`#[ignore]`; CI job `sitl`; gps-loss, heartbeat-stale, imu-loss;
+`TriggerFailsafe` / hitl-miss is loopback-only).
 ArduPilot GUIDED leftover table and leftover contracts:
 `cargo run -p flight-ardupilot --bin flight-test-ardupilot`
 (`run_ardupilot_revoke_table` / `run_ardupilot_leftover_contracts`;

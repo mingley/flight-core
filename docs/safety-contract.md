@@ -43,7 +43,7 @@ A unit test fails if `AerialOffboard::REVOKE_ON` is not the kernel table.
 | ID | Statement | Compile-time | Runtime |
 | --- | --- | --- | --- |
 | FC-INV-001 | `actuators_enabled → armed` | kernel `check_invariants`, Kani `actuators_require_arm` | `Requirement::ActuatorsImplyArmed` |
-| FC-INV-002 | `ActuationPermit.epoch == backend.epoch` | non-`Clone` permit | `permit.check` at the backend boundary; reconnect / `begin_session` bumps epoch; leftover Armed cannot `set_motor_thrust_now`; PX4/ArduPilot/`NullBackend`/`SimBackend` refuse offboard/climb/actuators/thrust after `actuation_revoked` |
+| FC-INV-002 | `ActuationPermit.epoch == backend.epoch` | non-`Clone` permit | `permit.check` at the backend boundary; reconnect / `begin_session` bumps epoch; leftover Armed cannot `set_motor_thrust_now`; PX4/ArduPilot/`NullBackend`/`SimBackend`/`WorldBackend` refuse offboard/climb/actuators/thrust after `actuation_revoked` |
 | FC-INV-003 | Offboard heartbeat age `< 250 ms` | `Fresh<(), 250>` / `HeartbeatFresh` | `heartbeat_age_ok`, `Requirement::OffboardHeartbeatFresh` |
 | FC-INV-004 | Command age `< 100 ms` at actuation | `Command` / `Timestamp` / `command_age_ok` | `Requirement::CommandAgeMs`, `apply_velocity_command_now` |
 | FC-INV-005 | Estimator timestamps never jump backward | `estimator_ts_monotonic` | `Requirement::EstimatorTimestampsMonotonic` |
@@ -78,7 +78,8 @@ ulog; gps-loss also runs the checked-in SITL corpus.
 PX4 leftover after every `REVOKE_ON` is `run_px4_revoke_table`; leftover
 contracts (`gps-loss`, `heartbeat-stale`, `hitl-miss`, `imu-loss` on
 `AerialOffboard::LEFTOVER_CONTRACTS`) are `run_px4_leftover_contracts` /
-`cargo run -p flight-px4 --bin flight-test-px4`. Live SIH leftover GPS-loss
+`cargo run -p flight-px4 --bin flight-test-px4`. Live SIH leftover
+(`LeftoverContract::live_sitl_safe`: gps-loss, heartbeat-stale, imu-loss)
 is `sitl_gps_loss_revokes_leftover_offboard` (`#[ignore]`; CI job `sitl`).
 ArduPilot leftover is
 `run_ardupilot_revoke_table` / `run_ardupilot_leftover_contracts` /

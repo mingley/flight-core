@@ -341,15 +341,18 @@ An async PX4 disarm HEARTBEAT bumps the epoch; leftover `Vehicle<Armed>` cannot
 `enter_offboard_now` **or** `set_motor_thrust_now` (permit is checked **before**
 kernel `EnableActuators`). PX4 / ArduPilot / `NullBackend` / point-mass
 `SimBackend` refuse `enter_offboard`, climb, `enable_actuators`, setpoints, and
-motor thrust at the backend after `actuation_revoked`. Connect /
+motor thrust at the backend after `actuation_revoked`. The verified-world
+`WorldBackend` reports `actuation_revoked` from plant failsafe and refuses the
+same physical-authority commands (kernel `step` remains the TCB). Connect /
 `revoke_authority` bump the epoch without that bit so `hold_now` before arm
 still works. Ground ClearEstop and marine Recover call `restore_actuation`.
 Failsafe / disarm / recover / land stay ungated (safety actions).
 `pump_setpoint` stays ungated.
 
-**Acceptance:** NullBackend revoke test; NullBackend / SimBackend
-backend-direct refuse after disarm/failsafe; world two-handle failsafe test;
-trybuild `permit_is_not_clone`; Kani `permit_epoch_mismatch_is_stale`.
+**Acceptance:** NullBackend revoke test; NullBackend / SimBackend /
+WorldBackend backend-direct refuse after disarm/failsafe; world two-handle
+failsafe test; trybuild `permit_is_not_clone`; Kani
+`permit_epoch_mismatch_is_stale`.
 
 ### F2. Tiny verified safety kernel TCB
 
@@ -445,7 +448,10 @@ IMU dropout). `run_px4_revoke_table` / `flight-test-px4` prove a leftover
 `AerialOffboard::LEFTOVER_CONTRACTS` inject evaluated against that row's
 require list (world `Scenario::{GPS_LOSS,HEARTBEAT_LOSS,HITL_MISS,IMU_LOSS}.require`
 alias those tables; IMU-delay leftover is the gps-loss row). Live SIH is
-`sitl_gps_loss_revokes_leftover_offboard`.
+`sitl_gps_loss_revokes_leftover_offboard` (every
+`LeftoverContract::live_sitl_safe` row: gps-loss, heartbeat-stale, imu-loss;
+`TriggerFailsafe` / hitl-miss stays loopback because it sends
+`flight_termination`).
 `run_ardupilot_revoke_table` / `run_ardupilot_leftover_contracts` /
 `flight-test-ardupilot` are the leftover table and leftover contracts at
 the Copter GUIDED companion.
@@ -497,7 +503,8 @@ World / PX4 / ArduPilot leftover tables observe leftover epoch with `Sequence`.
 Leftover contracts on PX4 / ArduPilot / HITL / ROS 2
 (`run_px4_leftover_contracts` / `run_ardupilot_leftover_contracts` /
 `run_hitl_leftover_contracts` / `run_ros2_leftover_contracts` / live
-`sitl_gps_loss_revokes_leftover_offboard`) evaluate
+`sitl_gps_loss_revokes_leftover_offboard` for every
+`LeftoverContract::live_sitl_safe` row) evaluate
 `AerialOffboard::LEFTOVER_CONTRACTS` (world scenario `require` slices alias
 those tables).
 
