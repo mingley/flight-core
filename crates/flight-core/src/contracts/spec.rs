@@ -25,6 +25,8 @@ macro_rules! vehicle_contract {
             pub const MERMAID: &'static str = $crate::safety::AERIAL_OFFBOARD_MERMAID;
             pub const SPEC: &'static str = $crate::safety::AERIAL_OFFBOARD_SPEC;
             pub const GRAPHVIZ: &'static str = $crate::safety::AERIAL_OFFBOARD_GRAPHVIZ;
+            pub const CREUSOT: &'static str = $crate::safety::AERIAL_OFFBOARD_CREUSOT;
+            pub const FAULTS: &'static str = $crate::safety::AERIAL_OFFBOARD_FAULTS;
 
             pub const fn revokes(event: $crate::safety::Event) -> bool {
                 $crate::safety::event_revokes_authority(event)
@@ -223,7 +225,11 @@ macro_rules! impl_aerial_offboard_now {
                 &mut self,
                 command: Command<Velocity<Ned>>,
             ) -> Result<(), ErrorKind> {
-                self.require_command_age(command.age_ms(self.inner.backend.authority_now()))?;
+                let now = self.inner.backend.authority_now();
+                if !command.deadline().met(now) || command.check_age(now).is_err() {
+                    return Err(ErrorKind::StaleAuthority(AuthorityReject::StaleCommand));
+                }
+                self.require_command_age(command.age_ms(now))?;
                 self.set_velocity_now(command.payload)
             }
         }
@@ -429,6 +435,27 @@ mod tests {
             tokens(AerialOffboard::SPEC),
             tokens(generated_spec),
             "docs/generated/aerial-offboard.spec.txt must match AerialOffboard::SPEC"
+        );
+        let generated_creusot =
+            include_str!("../../../../docs/generated/aerial-offboard.creusot.txt");
+        assert_eq!(
+            tokens(AerialOffboard::CREUSOT),
+            tokens(generated_creusot),
+            "docs/generated/aerial-offboard.creusot.txt must match AerialOffboard::CREUSOT"
+        );
+        for e in AerialOffboard::REVOKE_ON {
+            assert!(
+                AerialOffboard::CREUSOT.contains(e.name()),
+                "Creusot listing missing {}",
+                e.name()
+            );
+        }
+        let generated_faults =
+            include_str!("../../../../docs/generated/aerial-offboard.faults.txt");
+        assert_eq!(
+            tokens(AerialOffboard::FAULTS),
+            tokens(generated_faults),
+            "docs/generated/aerial-offboard.faults.txt must match AerialOffboard::FAULTS"
         );
         assert_eq!(
             AerialOffboard::TRANSITIONS.len(),

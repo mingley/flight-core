@@ -1,0 +1,1 @@
+inject TriggerFailsafe, Disarm, Disconnect, HeartbeatStale, EstimatorInvalid, ImuUnhealthy

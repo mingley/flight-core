@@ -390,6 +390,25 @@ macro_rules! define_aerial_authority {
             "}\n"
         );
 
+        /// Creusot obligations generated from this table. rustc documents them;
+        /// `cargo creusot` still only translates `safety` / `ground` / `marine` /
+        /// `hitl` (81 libraries). Do not add `ensures` here.
+        #[cfg(not(creusot))]
+        pub const AERIAL_OFFBOARD_CREUSOT: &'static str = concat!(
+            "event_revokes_authority\n",
+            "  ensures result == (",
+            stringify!($($ev)|*),
+            ")\n",
+            "admit_offboard_command\n",
+            "  heartbeat_age_ok && command_age_ok\n",
+            "estimator_ts_monotonic\n",
+            "  next >= prev\n"
+        );
+
+        /// Fault-injection events generated from `revokes_on`.
+        #[cfg(not(creusot))]
+        pub const AERIAL_OFFBOARD_FAULTS: &'static str = concat!("inject ", stringify!($($ev),+), "\n");
+
         #[cfg_attr(
             feature = "creusot",
             creusot_contracts::ensures(result == ($(event == Event::$ev)||+))

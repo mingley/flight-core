@@ -1,0 +1,6 @@
+event_revokes_authority
+  ensures result == (TriggerFailsafe | Disarm | Disconnect | HeartbeatStale | EstimatorInvalid | ImuUnhealthy)
+admit_offboard_command
+  heartbeat_age_ok && command_age_ok
+estimator_ts_monotonic
+  next >= prev
