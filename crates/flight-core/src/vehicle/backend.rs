@@ -237,9 +237,10 @@ pub trait VehicleBackend: Send {
     fn revoke_authority(&mut self) {}
 
     /// Physical-authority commands after failsafe or a revoking disarm must
-    /// refuse at this backend: setpoints, `enter_offboard`, climb,
-    /// `enable_actuators`, and motor thrust. Land / disarm / failsafe stay
-    /// ungated. Default `false` (this backend does not yet refuse).
+    /// refuse at this backend: setpoints, `enter_offboard`, climb
+    /// (`takeoff_now` / `reached_altitude_now`), `enable_actuators`, motor
+    /// thrust, and yaw-rate. Land / disarm / failsafe stay ungated. Default
+    /// `false` (this backend does not yet refuse).
     fn actuation_revoked(&self) -> bool {
         false
     }
@@ -353,19 +354,21 @@ pub trait VehicleBackend: Send {
 
     /// Takeoff without an async runtime. Default is a no-op so point-mass
     /// backends keep using [`Vehicle::start_takeoff_now`]'s local `Takeoff`
-    /// event. World backends fire the live event so `Land` is legal on the
-    /// plant. PX4 companion backends send `NAV_TAKEOFF`.
+    /// event, but leftover failsafe / revoking-disarm sessions still refuse
+    /// so climb is not a successful no-op. World backends fire the live event
+    /// so `Land` is legal on the plant. PX4 companion backends send `NAV_TAKEOFF`.
     fn takeoff_now(&mut self) -> Result<(), BackendError> {
-        Ok(())
+        self.refuse_revoked_setpoint()
     }
 
     /// Record that the climb completed without an async runtime. Default is a
     /// no-op so point-mass backends keep using
-    /// [`Vehicle::declare_airborne_now`]'s local `ReachedAltitude` event.
-    /// World backends fire the live event so attach binds Airborne. PX4
-    /// companion backends send `NAV_LOITER_UNLIM`.
+    /// [`Vehicle::declare_airborne_now`]'s local `ReachedAltitude` event, but
+    /// leftover failsafe / revoking-disarm sessions still refuse. World
+    /// backends fire the live event so attach binds Airborne. PX4 companion
+    /// backends send `NAV_LOITER_UNLIM`.
     fn reached_altitude_now(&mut self) -> Result<(), BackendError> {
-        Ok(())
+        self.refuse_revoked_setpoint()
     }
 
     /// Enter landing without an async runtime. Default is a no-op so
@@ -646,6 +649,14 @@ mod tests {
             matches!(b.set_yaw_rate(0.2), Err(BackendError::Rejected(_))),
             "set_yaw_rate"
         );
+        assert!(
+            matches!(b.takeoff_now(), Err(BackendError::Rejected(_))),
+            "takeoff_now"
+        );
+        assert!(
+            matches!(b.reached_altitude_now(), Err(BackendError::Rejected(_))),
+            "reached_altitude_now"
+        );
         assert!(b.land_now().is_ok(), "land stays an ungated safety action");
         assert!(b.velocity.is_none(), "refused velocity must not be stored");
     }
@@ -662,6 +673,8 @@ mod tests {
         b.set_velocity_ned_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
             .unwrap();
         b.set_yaw_rate(0.1).unwrap();
+        b.takeoff_now().unwrap();
+        b.reached_altitude_now().unwrap();
     }
 
     #[test]

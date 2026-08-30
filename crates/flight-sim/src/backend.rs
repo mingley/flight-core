@@ -485,6 +485,8 @@ mod tests {
         sim.hold_now().unwrap();
         sim.set_velocity_ned_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
             .unwrap();
+        sim.takeoff_now().unwrap();
+        sim.reached_altitude_now().unwrap();
     }
 
     #[test]
@@ -517,6 +519,10 @@ mod tests {
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = sim.set_yaw_rate(0.2);
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = sim.takeoff_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = sim.reached_altitude_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         sim.arm_now().unwrap();
         sim.enable_actuators_now().unwrap();
         sim.set_velocity_ned_now(Velocity::<Ned>::ned(0.2, 0.0, 0.0))
@@ -538,6 +544,10 @@ mod tests {
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         assert!(!sim.telemetry_now().unwrap().offboard);
         let err = sim.set_yaw_rate(0.2);
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = sim.takeoff_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = sim.reached_altitude_now();
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
     }
 }

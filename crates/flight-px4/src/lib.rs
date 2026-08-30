@@ -874,6 +874,10 @@ mod tests {
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.set_yaw_rate(0.2);
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.takeoff_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.reached_altitude_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
     }
 
     #[test]
