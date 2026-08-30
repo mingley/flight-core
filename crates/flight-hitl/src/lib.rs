@@ -7,9 +7,9 @@
 //! period (lockstep [`DeadlineSpec`] `period_ns`). A leftover OffboardControl
 //! handle bound before the miss has no `COMMANDS` authority
 //! ([`WorldRack::leftover_after_deadline_miss`]). Leftover after every
-//! `REVOKE_ON` event is [`WorldRack::run_hitl_revoke_table`]. Leftover GPS-loss
-//! (`EstimatorInvalid` + `AerialOffboard::GPS_LOSS_REQUIRE`) is
-//! [`WorldRack::run_hitl_gps_loss`]. [`WorldRack::recover_deadline`] / [`WorldRack::grant_all`] walk recover then
+//! `REVOKE_ON` event is [`WorldRack::run_hitl_revoke_table`]. Named leftover
+//! contracts (`gps-loss`, `heartbeat-stale`, `hitl-miss`, `imu-loss`) are
+//! [`WorldRack::run_hitl_leftover_contracts`]. [`WorldRack::recover_deadline`] / [`WorldRack::grant_all`] walk recover then
 //! re-grant so a later on-time frame can command again. [`WorldRack::return_all`]
 //! walks land+touchdown / park / dock home (skipping bodies the catalog
 //! omitted: inland has no hull, open water has no rover). [`WorldRack::airborne`]
@@ -33,4 +33,7 @@ pub mod rack;
 
 pub use card::{run_fch1_udp_mock, Fch1MockReport, Fch1UdpCard, Fch1WireEvent};
 pub use protocol::{decode_command, decode_sample, encode_command, encode_sample, Command, Sample};
-pub use rack::{command_from_datagram, HitlGpsLossReport, RackCommand, RackFrame, WorldRack};
+pub use rack::{
+    command_from_datagram, HitlGpsLossReport, LeftoverContractReport, RackCommand, RackFrame,
+    WorldRack,
+};
