@@ -97,7 +97,7 @@ The agent is always a **client of the machines**. `Lab::act` / `act_through_atta
 | Estimation in the loop | A navigation filter can clear kernel `estimator_valid` from bad IMU/GNSS **without** replacing plant quaternion physics-truth (`unit_attitude`). |
 | Planning as typestate | Waypoints / paths are data. Executing them still requires Offboard / Moving / Underway (or the documented marine station machine). No “planner override” that skips attach. |
 | Coordination | Pairwise sphere contact plus lab `fleet_hold_simultaneous`. Formation / right-of-way remain later certificates, not comments in an agent prompt. |
-| Metal | At least one recorded physical FCH1 (or faithful rack mock) pass, and companion paths for additional autopilots, still in Rust. |
+| Metal | Recorded FCH1 UDP mock (`Fch1UdpCard` / `corpus/fch1_udp_mock.jsonl`); physical card optional. Companion paths for PX4 and ArduPilot, still in Rust. |
 | Deploy | Discrete kernel machines remain `no_std`-capable. Vehicles stay `std` until an explicit typestate-on-embedded decision (P14 / remaining-spec §6.1). |
 
 ### 3.3 Understand

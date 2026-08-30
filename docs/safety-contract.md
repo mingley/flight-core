@@ -83,6 +83,8 @@ live Copter).
 HITL leftover after a rack deadline/`Rate` miss is
 `WorldRack::leftover_after_deadline_miss`; leftover after every `REVOKE_ON`
 is `WorldRack::run_hitl_revoke_table` /
-`cargo run -p flight-hitl --bin flight-test-hitl`. ROS 2 leftover after
+`cargo run -p flight-hitl --bin flight-test-hitl`. Faithful FCH1 UDP mock
+(`Fch1UdpCard`, not the in-process plant) is `run_fch1_udp_mock` /
+`crates/flight-hitl/corpus/fch1_udp_mock.jsonl`. ROS 2 leftover after
 `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` is `plant::leftover_after_failsafe` /
 `leftover_after_disarm` / `run_ros2_revoke_table` / `cargo run -p flight-ros2 --bin flight-test-ros2`.

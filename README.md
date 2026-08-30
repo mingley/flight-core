@@ -246,7 +246,7 @@ Rust does not automatically “verify” a robot. It lets you move physical-syst
 | `flight-px4` | PX4 offboard backend (`udpin:0.0.0.0:14540`) and `WorldPlant` — same MAVLink setpoints, verified world step; `hold` writes the current NED pose |
 | `flight-ardupilot` | ArduPilot GUIDED companion (`udpin:0.0.0.0:14550`); leftover Offboard `COMMANDS` after every `REVOKE_ON` via `flight-test-ardupilot`; live Copter `#[ignore]` loopback-only |
 | `flight-ros2` | PX4 external modes: ROS 2 CDR `px4_msgs` setpoints (NED), NED→ENU Twist onto aerial / ground / marine `WorldSession` bodies (`FleetPlant` on coastal, harbor, inland, open water; `hold` writes the current NED pose; leftover OffboardControl after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` via `flight-test-ros2`), optional production `rclrs` 0.7 node |
-| `flight-hitl` | Deadline-aware HITL rack over every catalog: coastal / harbor (four bodies), inland (no hull), open water (no rover). Verified world as plant, `FCH1` UDP samples, miss ⇒ attach failsafe (or idempotent re-trip) + zero command; OffboardControl `Rate` lockstep with `DeadlineSpec`; leftover OffboardControl `COMMANDS` stale after a miss and after every `REVOKE_ON` (`flight-test-hitl`); on-time frames write NED only while attach is Offboard-control / Moving / Underway / StationKeep; `airborne` / `station_all` / `resume_all` / `dock_all` / `park_all` / `hold` walk climb-complete, hull station, hull dock, rover halt, and NED position hold |
+| `flight-hitl` | Deadline-aware HITL rack over every catalog: coastal / harbor (four bodies), inland (no hull), open water (no rover). Verified world as plant, `FCH1` UDP samples **and** a faithful UDP card (`Fch1UdpCard` / `frame_from_io`; recorded `corpus/fch1_udp_mock.jsonl`); miss ⇒ attach failsafe (or idempotent re-trip) + zero command; `apply == 0` zeros the slot (`from_fch1`); OffboardControl `Rate` lockstep with `DeadlineSpec`; leftover OffboardControl `COMMANDS` stale after a miss and after every `REVOKE_ON` (`flight-test-hitl`); on-time frames write NED only while attach is Offboard-control / Moving / Underway / StationKeep; `airborne` / `station_all` / `resume_all` / `dock_all` / `park_all` / `hold` walk climb-complete, hull station, hull dock, rover halt, and NED position hold |
 | `flight-verify` | Kani proofs: actuators, drive, thrust, contact, drag, buoyancy, hydro mass, HITL miss, position-hold restore |
 | `flight-demo` | Live lab console (safety trips, return, station / resume / airborne / hold) |
 
@@ -282,6 +282,7 @@ cargo run -p flight-ardupilot --bin flight-test-ardupilot
 cargo run -p flight-hitl --bin flight-test-hitl
 cargo run -p flight-ros2 --bin flight-test-ros2
 cargo run -p flight-hitl --example contract_miss
+cargo run -p flight-hitl --example udp_card   # FCH1 UDP card, not in-process plant
 cargo run -p flight-core --example kernel_tick  # no_std kernel host tick (NEXT B8)
 cargo run -p flight-sim --example fleet   # attach now-APIs, one WorldSession::step
 cargo run -p flight-sim --example fuzzed_world  # FuzzedImu around WorldImu; plant still WorldSession::step
@@ -488,7 +489,7 @@ physical autonomy (agentic experiment / control / understand still applies):
 - [`docs/safety-contract.md`](docs/safety-contract.md) — generated-from-tables traceability
 - [`docs/generated/traceability.md`](docs/generated/traceability.md) — ID matrix
 - [`docs/copper.md`](docs/copper.md) — complement Copper; do not compete on runtime
-- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed; C1–C4, B6, and B8 landed)
+- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed; C1–C4 and B1–B8 landed)
 
 A live PX4 SITL binary is optional locally (`cargo run -p flight-px4 --example sitl_hover`). Default `cargo test` skips `sitl_live` (`#[ignore]`). GitHub CI runs fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, a lavapipe GPU hydro job, `cargo kani -p flight-verify` (45 harnesses, kani-verifier 0.67.0), `cargo test -p flight-ros2 --features rclrs` (ROS 2 Jazzy), `cargo creusot prove -p flight-core` (Creusot 0.5.0, 81 libraries), and job `sitl` (PX4 SIH `px4io/px4-sitl:v1.18.0-beta2` + the ignored companion test). `docs/generated/proof-summary.txt` is the agent digest those counts lockstep; `Experiment` copies it into `run.json`.
 

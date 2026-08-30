@@ -29,8 +29,8 @@ loopback-only, no CI sitl job).
 HITL leftover after a rack deadline/`Rate` miss, and leftover after every
 `REVOKE_ON` through `WorldRack::inject_revoke`:
 `cargo run -p flight-hitl --bin flight-test-hitl`
-(`WorldRack::leftover_after_deadline_miss` / `run_hitl_revoke_table`;
-`flight-sim` does not depend on `flight-hitl`). ROS 2 leftover after
+(`WorldRack::leftover_after_deadline_miss` / `run_hitl_revoke_table` /
+`run_fch1_udp_mock`; `flight-sim` does not depend on `flight-hitl`). ROS 2 leftover after
 `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON`:
 `cargo run -p flight-ros2 --bin flight-test-ros2`
 (`plant::leftover_after_failsafe` / `leftover_after_disarm` / `run_ros2_revoke_table`;

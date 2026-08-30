@@ -187,6 +187,16 @@ only** (leftover table + UDP ingest of Copter HEARTBEAT /
 
 ### B7. Physical FCH1 recorded run
 
+**Status: landed.** [`Fch1UdpCard`](../crates/flight-hitl/src/card.rs) is a
+faithful UDP peer (not the in-process plant). [`WorldRack::bind_io`] /
+[`WorldRack::drain_io`] / [`WorldRack::frame_from_io`] apply wire commands
+through [`RackCommand::from_fch1`] (`apply == 0` zeros that slot). Slot map
+unchanged: 0 drone, 1 rover, 2 skiff, 3 surveyor. Inland hull slots do not
+create bodies; open water rover slot does not create a chassis. Recorded
+log: [`crates/flight-hitl/corpus/fch1_udp_mock.jsonl`](../crates/flight-hitl/corpus/fch1_udp_mock.jsonl)
+(`cargo run -p flight-hitl --example udp_card` / `flight-test-hitl`). A
+physical card remains optional.
+
 **Acceptance:**
 
 1. One recorded log against a real card **or** a faithful UDP mock that is not the in-process plant (remaining-spec §4.4 full bar).
@@ -484,6 +494,10 @@ on the miss sample. `WorldRack::contract_deadline_miss` and
 miss cannot run `COMMANDS` (`leftover_after_deadline_miss`). Leftover after
 every `REVOKE_ON` is `run_hitl_revoke_table`. Both via `flight-test-hitl`.
 `cargo run -p flight-hitl --example contract_miss`.
+Faithful FCH1 UDP card (not the in-process plant):
+`Fch1UdpCard` / `WorldRack::frame_from_io` /
+`cargo run -p flight-hitl --example udp_card`
+(recorded [`fch1_udp_mock.jsonl`](../crates/flight-hitl/corpus/fch1_udp_mock.jsonl)).
 
 ### F10. Certification-oriented traceability
 
@@ -495,9 +509,8 @@ FC-CAP-AerialOffboard, FC-INV-001..003. `human_readable_spec()`.
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B6 landed. B8 landed. E1 landed. F1–F10 landed. C1–C4 landed.** Next: live Gazebo if someone needs a world renderer, then **B7**.
-2. **B7** (metal HITL / faithful UDP mock) when the API is stable.
-3. **D\*** morphologies last.
+1. **A1–A6 landed. B1–B8 landed. E1 landed. F1–F10 landed. C1–C4 landed.** Next: live Gazebo if someone needs a world renderer, then **D\*** morphologies.
+2. **D\*** morphologies last.
 
 When official MHS is open-sourced, translate `flight-mhs` onto that schema. Do not collapse P1–P14 to make a driver “easier.”
 

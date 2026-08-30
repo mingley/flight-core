@@ -35,7 +35,7 @@ The workspace already has a usable slice of that goal. In-scope functional items
 - Lab certificate `fleet_hold_simultaneous` (NEXT B5): drone hold plus StationKeep when a skiff exists. Not in the 22-property plant vector. P11 skips still omit missing bodies.
 - MHS-shaped adapter (`flight-mhs`, NEXT E1): discovery / compiled reference / read / write / chain / stdio MCP. **Not** official MHS. Writes remain `Lab::act_through_attach`.
 - Research loop: `Lab::observe` / `act_through_attach` / `research` / `replay_until` / `research_probe`, typed agents with `actions_applied == 0` for legal motion, JSONL + Foxglove-shaped MCAP. `WorldImu` + `FuzzedImu` read noisy samples without replacing `WorldSession::step`.
-- Live PX4 SIH companion path: `sitl_live --ignored` recorded pass (14.59s, `px4io/px4-sitl:v1.18.0-beta2`); CI job `sitl`. `Px4Backend::inject_revoke` covers every `REVOKE_ON` event; `cargo run -p flight-px4 --bin flight-test-px4` is the leftover Offboard table at the companion boundary. ArduPilot GUIDED companion: `cargo run -p flight-ardupilot --bin flight-test-ardupilot` leftover Offboard after every `REVOKE_ON`; live Copter `sitl_live` is `#[ignore]` loopback-only (no CI sitl job; reuse `flight-mavlink`, no second stack). `cargo run -p flight-hitl --bin flight-test-hitl` is leftover OffboardControl `COMMANDS` after a rack deadline/`Rate` miss and after every `REVOKE_ON`. `cargo run -p flight-ros2 --bin flight-test-ros2` is leftover OffboardControl after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` (no rclrs).
+- Live PX4 SIH companion path: `sitl_live --ignored` recorded pass (14.59s, `px4io/px4-sitl:v1.18.0-beta2`); CI job `sitl`. `Px4Backend::inject_revoke` covers every `REVOKE_ON` event; `cargo run -p flight-px4 --bin flight-test-px4` is the leftover Offboard table at the companion boundary. ArduPilot GUIDED companion: `cargo run -p flight-ardupilot --bin flight-test-ardupilot` leftover Offboard after every `REVOKE_ON`; live Copter `sitl_live` is `#[ignore]` loopback-only (no CI sitl job; reuse `flight-mavlink`, no second stack). `cargo run -p flight-hitl --bin flight-test-hitl` is leftover OffboardControl `COMMANDS` after a rack deadline/`Rate` miss and after every `REVOKE_ON`, plus `run_fch1_udp_mock` (faithful UDP card; recorded `crates/flight-hitl/corpus/fch1_udp_mock.jsonl`). `cargo run -p flight-ros2 --bin flight-test-ros2` is leftover OffboardControl after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` (no rclrs).
 
 **Not true yet (v0):** Nothing in-scope that this spec still treats as a feature gap. After demo HTML/`include_str` changes, re-run §8 D2. Do not “fix” §2. Agentic next work is [`docs/NEXT.md`](NEXT.md), not a silent reopen of this file’s landed sections.
 
@@ -138,9 +138,9 @@ PX4 log on that run: `Armed by external command`, `Takeoff detected`, `Landing d
 
 ### 4.4 Physical FCH1 I/O
 
-**Current evidence:** `flight-hitl` encodes `FCH1` samples/commands and `WorldRack` can bind UDP. Miss ⇒ attach failsafe + zero command. No hardware-in-the-loop job against a real card.
+**Current evidence:** `flight-hitl` encodes `FCH1` samples/commands. `WorldRack::bind_io` / `Fch1UdpCard` speak those datagrams on loopback. Miss ⇒ attach failsafe + zero command. No hardware-in-the-loop job against a real card (UDP mock is the recorded pass).
 
-**Status: landed (minimum).** Protocol tests round-trip `apply == 0`. `RackCommand::from_fch1` zeros a slot when `apply == 0`, so a decoded miss cannot revive a hold. Slot map: 0 drone, 1 rover, 2 skiff, 3 surveyor. A physical card remains optional.
+**Status: landed (full bar: UDP mock).** Protocol tests round-trip `apply == 0`. `RackCommand::from_fch1` zeros a slot when `apply == 0`, so a decoded miss cannot revive a hold. Slot map: 0 drone, 1 rover, 2 skiff, 3 surveyor. [`Fch1UdpCard`](../crates/flight-hitl/src/card.rs) is a faithful UDP peer that does **not** step `World`. [`WorldRack::bind_io`] / `drain_io` / `frame_from_io` ingest wire commands. Recorded inland pass: `crates/flight-hitl/corpus/fch1_udp_mock.jsonl` (hull slots ignored, `apply == 0` keeps hold, live climb clears it, samples on slots 0 and 1). `cargo run -p flight-hitl --example udp_card`. A physical card remains optional.
 
 **Acceptance (full “use on a rack”):** one recorded run against a card or a faithful UDP mock that is not the in-process plant.
 
@@ -303,7 +303,7 @@ Items in §2 (P1–P14) are constraints on every step, not a phase.
 - Ground GPS/pose hold (NEXT B1) — landed.
 - Marine DP / NED pose hold beyond `StationKeep` (NEXT B2) — landed.
 - Wiring an estimator so a bad IMU clears `estimator_valid` (NEXT B3) — landed. Full PX4 EKF/RTK/mission planner stays a non-goal.
-- Physical FCH1 recorded run (NEXT B7); protocol miss-zero is already landed.
+- Physical FCH1 recorded run (NEXT B7) — landed (faithful UDP mock; physical card optional).
 - Scenario DSL (NEXT C3) and hydro/body scale with property-preserving tests (NEXT C4) — landed. Not a coastline-scale ocean product by default.
 
 **Still non-goals** unless a later instruction adds them:
