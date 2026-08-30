@@ -191,6 +191,13 @@ Goal: every domain can **hold and move** under the same typestate story; compani
 
 ### C1. Proof artifacts as agent input
 
+**Status: landed.** [`docs/generated/proof-summary.txt`](generated/proof-summary.txt)
+lists Kani harness count (45), Creusot 81 libraries on `safety` / `ground` /
+`marine` / `hitl`, and the f32 facts that stay Kani (hold, buoyancy, hydro
+mass, HITL miss-zero). [`Experiment`] copies that digest into every
+`run.json` as `proof_summary`. `flight-verify` locksteps the file with
+README / remaining-spec.
+
 **Acceptance:**
 
 1. A checked-in or generated summary: Creusot crate list + “f32 stays Kani” (hold, buoyancy, hydro mass, HITL miss-zero).
@@ -383,8 +390,8 @@ runs the same leftover table via `cargo run -p flight-px4 --bin flight-test-px4`
 after a rack deadline miss is `WorldRack::leftover_after_deadline_miss`;
 every `REVOKE_ON` leftover is `WorldRack::run_hitl_revoke_table` /
 `flight-test-hitl` (`flight-sim` does not depend on `flight-hitl`). ROS 2
-leftover after `apply_failsafe` and every `REVOKE_ON` is
-`plant::leftover_after_failsafe` / `run_ros2_revoke_table` /
+leftover after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` is
+`plant::leftover_after_failsafe` / `leftover_after_disarm` / `run_ros2_revoke_table` /
 `flight-test-ros2` (`flight-sim` does not depend on `flight-ros2`; no rclrs).
 World / PX4 leftover tables observe leftover epoch with `Sequence`.
 
@@ -427,7 +434,7 @@ FC-CAP-AerialOffboard, FC-INV-001..003. `human_readable_spec()`.
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B5 landed. E1 landed. F1–F10 landed.** Next: **C1–C3** (proofs, traces, richer scenarios) and live Gazebo if someone needs a world renderer.
+1. **A1–A6 landed. B1–B5 landed. E1 landed. F1–F10 landed. C1 landed.** Next: **C2–C3** (traces, richer scenarios) and live Gazebo if someone needs a world renderer.
 2. **C1–C3** (proofs, traces, scenarios) can overlap A3.
 3. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
 4. **D\*** morphologies last.

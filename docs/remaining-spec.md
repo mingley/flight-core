@@ -92,7 +92,7 @@ Do not re-attach `f32` `ensures` on 0.5. A later Creusot that can state floats i
 
 ### 3.2 Put Kani in a gate
 
-**Status: landed.** CI job `kani` runs `cargo kani -p flight-verify -j 2 --output-format terse` with `kani-verifier` **0.67.0** (`model-checking/kani-github-action@v1.1`). A recorded local pass on rustc 1.85.0: **45** harnesses, 0 failures. Workspace `rust-version` stays **1.85**; the installer rustc (≥ 1.88) is not MSRV. README harness count and `flight-verify` module theorems stay in lockstep with `#[kani::proof]`. New kernel transitions still need a harness when one is feasible — that is an ongoing constraint, not a leftover job.
+**Status: landed.** CI job `kani` runs `cargo kani -p flight-verify -j 2 --output-format terse` with `kani-verifier` **0.67.0** (`model-checking/kani-github-action@v1.1`). A recorded local pass on rustc 1.85.0: **45** harnesses, 0 failures. Workspace `rust-version` stays **1.85**; the installer rustc (≥ 1.88) is not MSRV. README harness count and `flight-verify` module theorems stay in lockstep with `#[kani::proof]`. [`docs/generated/proof-summary.txt`](generated/proof-summary.txt) is the agent digest (`Experiment` copies it into `run.json`). New kernel transitions still need a harness when one is feasible — that is an ongoing constraint, not a leftover job.
 
 ### 3.3 Named world property for pose hold
 
