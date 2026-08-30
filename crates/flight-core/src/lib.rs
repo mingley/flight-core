@@ -89,7 +89,7 @@ pub mod prelude {
     #[cfg(not(creusot))]
     pub use crate::frames::{Body, Enu, Frame, Frd, Ned};
     #[cfg(not(creusot))]
-    pub use crate::geometry::{Covariance, Displacement, Point3, Rotation, Transform};
+    pub use crate::geometry::{Covariance, Displacement, Orientation, Point3, Rotation, Transform};
     pub use crate::ground::{ground_step, GroundEvent, GroundPhase, GroundReject, GroundState};
     #[cfg(not(creusot))]
     pub use crate::hitl::{command_after_deadline, hitl_invariants};
@@ -118,6 +118,8 @@ pub mod prelude {
     pub use crate::nav::{imu_trips_estimator, ComplementaryAttitude};
     #[cfg(not(creusot))]
     pub use crate::plan::{NedPath, Waypoint};
+    #[cfg(not(creusot))]
+    pub use crate::safety::ContractEdge;
     pub use crate::safety::{
         command_age_ok, estimator_ts_monotonic, event_revokes_authority, heartbeat_age_ok, step,
         Event, Phase, Reject, SafetyState, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS,

@@ -38,14 +38,18 @@ increments the epoch. The old permit is still memory. It has no authority.
                    PASS — same contract on recorded ULog
 ```
 
-Today: (2) is 127 trybuild compile-fails. (4) is Kani including
-`permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel` (kernel table =
-`AUTHORITY_REVOKE_EVENTS`, heartbeat/command bounds, estimator monotonicity),
-and actuators-require-arm. (5–6) are `Scenario::GPS_LOSS` on the verified world.
-(7) is the existing SIH companion path plus failsafe/RTL epoch revocation, and
-the same monitors on a converted SITL-shaped JSONL. (8) is native ULog
-`fc_trace` replay. HITL deadline miss trips failsafe, bumps the same epoch, and
-still satisfies the contract monitors.
+Today: (2) is 129 trybuild compile-fails (including `permit_is_not_clone`,
+`orientation_is_not_angular_velocity`, `force_is_not_torque`). (4) is Kani
+including `permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel` (kernel
+table = `AUTHORITY_REVOKE_EVENTS`, heartbeat/command bounds, estimator
+monotonicity), and actuators-require-arm. (5–6) are `Scenario::GPS_LOSS` on
+the verified world. (7) is the existing SIH companion path plus failsafe/RTL epoch
+revocation, and the same monitors on a converted SITL-shaped JSONL. (8) is
+native ULog `fc_trace` replay. The same contract also runs as
+`flight-test --scenario hitl-miss --backend hitl` and
+`--scenario revoke-table` (every DSL revoke event from Offboard). A leftover
+`Vehicle<Armed>` after an async PX4 disarm HEARTBEAT is still typed Armed and
+has no actuation authority (`enter_offboard_now` is `StaleEpoch`).
 
 The design principle:
 
@@ -250,6 +254,9 @@ cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend world
 cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend replay
 cargo run -p flight-sim --bin flight-test -- --backend ulog --replay crates/flight-sim/corpus/gps_loss.ulg
 cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
+cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
+cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
+cargo run -p flight-hitl --example contract_miss
 cargo run -p flight-sim --example fleet   # attach now-APIs, one WorldSession::step
 cargo run -p flight-sim --example fuzzed_world  # FuzzedImu around WorldImu; plant still WorldSession::step
 cargo run -p robot-lab --example coastal

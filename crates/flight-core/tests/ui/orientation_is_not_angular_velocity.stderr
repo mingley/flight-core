@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/ui/orientation_is_not_angular_velocity.rs:6:16
+  |
+6 |     need_omega(o);
+  |     ---------- ^ expected `Vector3<RadianPerSecond, Body>`, found `Orientation<Body>`
+  |     |
+  |     arguments to this function are incorrect
+  |
+  = note: expected struct `Vector3<flight_core::units::RadianPerSecond, flight_core::frames::Body>`
+             found struct `flight_core::geometry::Orientation<flight_core::frames::Body>`
+note: function defined here
+ --> tests/ui/orientation_is_not_angular_velocity.rs:3:4
+  |
+3 | fn need_omega(_: AngularVelocity<RadianPerSecond, Body>) {}
+  |    ^^^^^^^^^^ -----------------------------------------

@@ -1,8 +1,9 @@
 //! Geometry that cannot compose across unrelated frames.
 //!
 //! `Transform<A, B> * Transform<B, C>` is legal. `Transform<A, B> * Transform<D, C>`
-//! does not compile. Points, displacements, and free vectors stay distinct so a
-//! velocity cannot be added to a point by accident at this layer.
+//! does not compile. Points, displacements, orientations, and free vectors stay
+//! distinct so a velocity cannot be added to a point, and an [`Orientation`] cannot
+//! be passed where [`crate::vector::AngularVelocity`] is required.
 //!
 //! Copper already has compile-time frame ids (`cu_transform`). This module is
 //! the contract-surface geometry for flight-core; see `docs/copper.md` for
@@ -77,6 +78,32 @@ impl<From: Frame, To: Frame> Rotation<From, To> {
 
 /// Point in frame `F`. Distinct from a free [`Displacement`].
 pub type Point3<F> = crate::vector::Position<F>;
+
+/// Attitude of frame `F` relative to a parent (NED by convention). Distinct
+/// from [`crate::vector::AngularVelocity`]: you cannot pass an orientation
+/// where a rate is required.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Orientation<F> {
+    q: [f32; 4],
+    _frame: PhantomData<F>,
+}
+
+impl<F: Frame> Orientation<F> {
+    pub const fn from_xyzw(x: f32, y: f32, z: f32, w: f32) -> Self {
+        Self {
+            q: [x, y, z, w],
+            _frame: PhantomData,
+        }
+    }
+
+    pub const fn identity() -> Self {
+        Self::from_xyzw(0.0, 0.0, 0.0, 1.0)
+    }
+
+    pub const fn xyzw(self) -> [f32; 4] {
+        self.q
+    }
+}
 
 /// Rigid transform: coordinates of `From` expressed in `To`.
 ///
@@ -223,5 +250,7 @@ mod tests {
         assert!((p.z() - 3.0).abs() < 1e-6);
         let d = t.apply_displacement(Displacement::<Ned>::new(4.0, 0.0, 0.0));
         assert!((d.vector().x() - 4.0).abs() < 1e-6);
+        let o = Orientation::<Ned>::identity();
+        assert_eq!(o.xyzw()[3], 1.0);
     }
 }
