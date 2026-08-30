@@ -48,6 +48,8 @@ mod math;
 pub mod mech;
 #[cfg(not(creusot))]
 pub mod nav;
+#[cfg(not(creusot))]
+pub mod plan;
 pub mod safety;
 #[cfg(not(creusot))]
 pub mod sensors;
@@ -94,6 +96,10 @@ pub mod prelude {
         thrust_only_when_granted, vec_cross, vec_dot, SphereBody, SphereContact, SphereFriction,
         SphereSpin, VerticalContact, HOLD_KP, SPHERE_FRICTION_MU,
     };
+    #[cfg(not(creusot))]
+    pub use crate::nav::{imu_trips_estimator, ComplementaryAttitude};
+    #[cfg(not(creusot))]
+    pub use crate::plan::{NedPath, Waypoint};
     pub use crate::safety::{step, Event, Phase, Reject, SafetyState};
     #[cfg(not(creusot))]
     pub use crate::sensors::{ActuatorCommand, Actuators, Imu, ImuSample, SensorHealth};
