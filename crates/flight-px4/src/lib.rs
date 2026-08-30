@@ -162,12 +162,13 @@ impl Px4Backend {
         }
     }
 
-    /// New offboard setpoints after failsafe, a stale local-position
-    /// Estimate, or a revoking disarm/disconnect are refused at this backend.
+    /// Physical-authority commands after failsafe, a stale local-position
+    /// Estimate, or a revoking disarm/disconnect are refused at this backend:
+    /// setpoints, `enter_offboard`, climb, `enable_actuators`, and motor thrust.
     /// `pump_setpoint` stays ungated so the PX4 ~1 s pre-offboard stream still
-    /// runs. `hold_now` after a first `connect` (never armed) is not revoked;
-    /// leftover `Vehicle` handles die because [`Self::begin_session`] bumps
-    /// the epoch.
+    /// runs. Land / disarm / failsafe stay ungated (safety actions). `hold_now`
+    /// after a first `connect` (never armed) is not revoked; leftover `Vehicle`
+    /// handles die because [`Self::begin_session`] bumps the epoch.
     fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
         if self.failsafe_latched || self.actuation_revoked {
             return Err(BackendError::Rejected("actuation authority revoked"));
@@ -429,6 +430,7 @@ impl VehicleBackend for Px4Backend {
     }
 
     async fn enter_offboard(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         // PX4 requires streaming setpoints *before* the mode switch, and
         // the offboard failsafe wants that stream to last ~1 s, not 20
         // back-to-back datagrams.
@@ -465,12 +467,14 @@ impl VehicleBackend for Px4Backend {
     }
 
     async fn set_motor_thrust(&mut self, _thrust: MotorThrust) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         Err(BackendError::Rejected(
             "direct motor thrust is not exposed over PX4 offboard; use velocity/position setpoints",
         ))
     }
 
     async fn enable_actuators(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         Ok(())
     }
 
@@ -568,6 +572,7 @@ impl VehicleBackend for Px4Backend {
     /// custom_mode into `DO_SET_MODE`; even with the unpacked main mode, AUTO
     /// takeoff fights the velocity loop in [`Vehicle::takeoff`]).
     fn takeoff_now(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         for _ in 0..5 {
             self.pump_setpoint()?;
         }
@@ -581,6 +586,7 @@ impl VehicleBackend for Px4Backend {
     /// Companion climb-complete: stay in offboard. WorldPlant still maps
     /// `MAV_CMD_NAV_LOITER_UNLIM` through `attach_airborne`.
     fn reached_altitude_now(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.pump_setpoint()?;
         self.send(&set_offboard_mode(
             self.config.target_system,
@@ -1039,6 +1045,20 @@ mod tests {
             err.error
         );
         assert!(err.vehicle.safety().armed);
+        assert!(!err.vehicle.safety().actuators_enabled);
+        let mut armed = err.vehicle;
+        let err = armed
+            .set_motor_thrust_now(MotorThrust::hover(4, 0.4))
+            .unwrap_err();
+        assert!(
+            matches!(err, ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)),
+            "{err:?}"
+        );
+        assert!(armed.safety().armed);
+        assert!(
+            !armed.safety().actuators_enabled,
+            "stale Armed must not EnableActuators after async PX4 disarm"
+        );
     }
 
     #[test]
@@ -1058,6 +1078,21 @@ mod tests {
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.hold_now();
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.enter_offboard_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.takeoff_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.reached_altitude_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.enable_actuators_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.set_motor_thrust_now(MotorThrust::hover(4, 0.4));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.land_now();
+        assert!(
+            matches!(err, Err(BackendError::Disconnected)),
+            "land stays an ungated safety action: {err:?}"
+        );
     }
 
     #[test]
