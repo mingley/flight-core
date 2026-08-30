@@ -258,6 +258,7 @@ impl Clock for WorldBackend {
 impl VehicleBackend for WorldBackend {
     async fn connect(&mut self) -> Result<ConnectionInfo, BackendError> {
         let _ = require_body(&self.session.lock().world, self.body_id)?;
+        self.revoke_authority();
         self.last_command = "connect";
         Ok(ConnectionInfo {
             system_id: 1,

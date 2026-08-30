@@ -59,7 +59,9 @@ Offboard cannot `set_velocity` / `set_position` / `hold`; JSONL and ULog
 round-trip the same samples). `flight-test-px4` is the same leftover table
 at the PX4 companion (`inject_revoke` for every `REVOKE_ON` event). A leftover
 `Vehicle<Armed>` after an async PX4 disarm HEARTBEAT is still typed Armed and
-has no actuation authority (`enter_offboard_now` is `StaleEpoch`).
+has no actuation authority (`enter_offboard_now` is `StaleEpoch`). A leftover
+`Vehicle<Offboard>` after `connect` / `begin_session` is still typed Offboard
+and has no actuation authority (`leftover_commands_stale`).
 
 The design principle:
 

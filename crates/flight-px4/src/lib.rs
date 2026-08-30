@@ -74,6 +74,10 @@ pub struct Px4Backend {
     seen_px4: bool,
     seen_local_position: bool,
     failsafe_latched: bool,
+    /// Vehicle-layer leftover handles die on epoch bump. This bit refuses
+    /// companion setpoints after a revoking disarm/disconnect without treating
+    /// first-connect `hold_now` (epoch `> 0`, never armed) as revoked.
+    actuation_revoked: bool,
     authority_epoch: u32,
     last_heartbeat: Option<Instant>,
     last_local_position_at: Option<Instant>,
@@ -93,6 +97,7 @@ impl Px4Backend {
             seen_px4: false,
             seen_local_position: false,
             failsafe_latched: false,
+            actuation_revoked: false,
             authority_epoch: 0,
             last_heartbeat: None,
             last_local_position_at: None,
@@ -157,16 +162,23 @@ impl Px4Backend {
     }
 
     /// New offboard setpoints after failsafe, a stale local-position
-    /// Estimate, or a revoking disarm/disconnect (`!armed` with a bumped
-    /// epoch) are refused at this backend.
+    /// Estimate, or a revoking disarm/disconnect are refused at this backend.
     /// `pump_setpoint` stays ungated so the PX4 ~1 s pre-offboard stream still
-    /// runs; Vehicle-layer `set_velocity_ned` / `set_position_ned` stop.
-    /// `hold_now` before arm stays allowed at epoch 0.
+    /// runs. `hold_now` after a first `connect` (never armed) is not revoked;
+    /// leftover `Vehicle` handles die because [`Self::begin_session`] bumps
+    /// the epoch.
     fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
-        if self.failsafe_latched || (!self.armed && self.authority_epoch > 0) {
+        if self.failsafe_latched || self.actuation_revoked {
             return Err(BackendError::Rejected("actuation authority revoked"));
         }
         Ok(())
+    }
+
+    /// (Re)connect starts a new control session. Outstanding permits are stale.
+    /// Does not latch failsafe or mark actuation revoked — a new companion may
+    /// stream setpoints; leftover `Vehicle` handles must not.
+    pub fn begin_session(&mut self) {
+        self.revoke_authority();
     }
 
     fn local_position_age_ms(&self) -> Option<u32> {
@@ -258,6 +270,7 @@ impl Px4Backend {
         if unexpected_disarm {
             self.armed = false;
             self.offboard = false;
+            self.actuation_revoked = true;
         }
         if vehicle_failsafe {
             self.offboard = false;
@@ -298,6 +311,7 @@ impl Px4Backend {
                 self.offboard = false;
                 self.armed = false;
                 self.failsafe_latched = false;
+                self.actuation_revoked = true;
                 self.revoke_authority();
             }
             Event::HeartbeatStale => {
@@ -339,6 +353,7 @@ fn instant_age_ms(ms: u32) -> Instant {
 
 impl VehicleBackend for Px4Backend {
     async fn connect(&mut self) -> Result<ConnectionInfo, BackendError> {
+        self.begin_session();
         let mut link = UdpLink::connect(
             &self.config.endpoint,
             self.config.system_id,
@@ -395,6 +410,7 @@ impl VehicleBackend for Px4Backend {
             true,
         ))?;
         self.armed = true;
+        self.actuation_revoked = false;
         Ok(())
     }
 
@@ -406,6 +422,7 @@ impl VehicleBackend for Px4Backend {
         ))?;
         self.armed = false;
         self.offboard = false;
+        self.actuation_revoked = true;
         self.revoke_authority();
         Ok(())
     }
@@ -950,6 +967,27 @@ mod tests {
     fn leftover_offboard_refuses_all_commands_after_every_dsl_revoke() {
         let n = run_px4_revoke_table().expect("px4 leftover revoke table");
         assert_eq!(n, AerialOffboard::REVOKE_ON.len());
+    }
+
+    #[test]
+    fn reconnect_invalidates_leftover_offboard() {
+        let mut backend = Px4Backend::new(Px4Config::default());
+        backend.armed = true;
+        backend.offboard = true;
+        backend.last_heartbeat = Some(Instant::now());
+        let VehicleHandle::Offboard(mut v) = VehicleHandle::from_state(backend, offboard_safety())
+        else {
+            panic!("offboard safety maps to Offboard");
+        };
+        assert!(
+            v.leftover_commands_stale().is_err(),
+            "leftover must not already be stale before reconnect"
+        );
+        v.backend_mut().begin_session();
+        assert!(v.backend().authority_epoch() >= 1);
+        v.leftover_commands_stale()
+            .expect("leftover Offboard after reconnect");
+        assert!(v.safety().offboard);
     }
 
     #[test]

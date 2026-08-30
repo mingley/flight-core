@@ -178,6 +178,15 @@ fn poll_ready<F: Future>(fut: F) -> Option<F::Output> {
 /// is a BMI088, an MCAP recording, a physics sim, or a Kani nondet value.
 pub trait VehicleBackend: Send {
     fn connect(&mut self) -> impl Future<Output = Result<ConnectionInfo, BackendError>> + Send;
+
+    /// [`Self::connect`] without an async runtime. A pending PX4 handshake is
+    /// [`BackendError::Timeout`].
+    fn connect_now(&mut self) -> Result<ConnectionInfo, BackendError> {
+        match poll_ready(self.connect()) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
     fn preflight(&mut self) -> impl Future<Output = Result<PreflightReport, BackendError>> + Send;
     fn arm(&mut self) -> impl Future<Output = Result<(), BackendError>> + Send;
     fn disarm(&mut self) -> impl Future<Output = Result<(), BackendError>> + Send;
@@ -390,6 +399,7 @@ pub struct NullBackend {
 
 impl VehicleBackend for NullBackend {
     async fn connect(&mut self) -> Result<ConnectionInfo, BackendError> {
+        self.revoke_authority();
         Ok(ConnectionInfo {
             system_id: 1,
             component_id: 1,

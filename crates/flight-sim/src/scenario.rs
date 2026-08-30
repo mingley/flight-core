@@ -577,6 +577,23 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_revokes_leftover_offboard() {
+        use flight_core::vehicle::{VehicleBackend, VehicleHandle};
+
+        let session = WorldSession::inland(1);
+        session.attach_offboard("drone").expect("grant");
+        let VehicleHandle::Offboard(mut v) = session.aerial("drone").attach().unwrap() else {
+            panic!("attach_offboard must bind Offboard");
+        };
+        v.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+            .unwrap();
+        v.backend_mut().connect_now().expect("reconnect");
+        leftover_offboard_refuses_commands(&mut v, Event::Connect)
+            .expect("leftover Offboard after reconnect");
+        assert!(session.world().body("drone").unwrap().authority_epoch > 0);
+    }
+
+    #[test]
     fn heartbeat_loss_world_satisfies_contract() {
         let report = run_world(&Scenario::HEARTBEAT_LOSS).expect("run");
         assert!(report.samples.iter().any(|s| s.failsafe));

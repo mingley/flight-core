@@ -1439,6 +1439,27 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_invalidates_leftover_offboard_permit() {
+        let VehicleHandle::PreflightReady(drone) =
+            VehicleHandle::from_state(NullBackend::default(), ready_safety())
+        else {
+            panic!("ready maps to PreflightReady");
+        };
+        let mut v = drone.arm_now().unwrap().enter_offboard_now().unwrap();
+        v.set_velocity_now(Velocity::<Ned>::ned(0.2, 0.0, 0.0))
+            .unwrap();
+        assert!(
+            v.leftover_commands_stale().is_err(),
+            "live Offboard must still have command authority"
+        );
+        v.backend_mut().connect_now().expect("reconnect");
+        assert!(v.backend().authority_epoch() >= 1);
+        v.leftover_commands_stale()
+            .expect("leftover Offboard after reconnect");
+        assert!(v.safety().offboard);
+    }
+
+    #[test]
     fn bounded_lease_expires_when_the_backend_clock_advances() {
         let VehicleHandle::PreflightReady(drone) =
             VehicleHandle::from_state(NullBackend::default(), ready_safety())

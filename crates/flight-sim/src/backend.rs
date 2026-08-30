@@ -254,6 +254,7 @@ impl VehicleBackend for SimBackend {
     async fn connect(&mut self) -> Result<ConnectionInfo, BackendError> {
         self.connected = true;
         self.last_command = "connect";
+        self.revoke_authority();
         Ok(ConnectionInfo {
             system_id: 1,
             component_id: 1,
