@@ -30,6 +30,39 @@ fn catalogs_match_the_named_world_scenes() {
 }
 
 #[test]
+fn from_scene_catalog_matches_named() {
+    let named = WorldSession::named("inland", 3).expect("named");
+    let scene = WorldSession::from_scene(robot_world::Scene::catalog("inland").unwrap().seed(3))
+        .expect("from_scene");
+    assert_eq!(named.world().scenario, scene.world().scenario);
+    assert_eq!(named.world().env.wind_ned, scene.world().env.wind_ned);
+    assert!(scene.world().all_hold());
+}
+
+#[test]
+fn from_scene_custom_pad_pair_skips_hulls() {
+    let session = WorldSession::from_scene(
+        robot_world::Scene::custom(
+            "pad_pair",
+            robot_world::Environment::inland(),
+            [
+                robot_world::Body::aerial_ready("drone"),
+                robot_world::Body::rover("rover"),
+            ],
+        )
+        .expect("new name")
+        .seed(3),
+    )
+    .expect("custom");
+    let world = session.world();
+    assert_eq!(world.scenario, "pad_pair");
+    assert!(world.body("rover").is_some());
+    assert!(world.body("skiff").is_none());
+    assert!(world.all_hold());
+    assert!(WorldSession::named("pad_pair", 3).is_none());
+}
+
+#[test]
 fn rejected_step_does_not_advance_clock() {
     use flight_core::time::Clock;
     let session = WorldSession::coastal(1);

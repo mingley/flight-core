@@ -1,6 +1,7 @@
 use super::support::robot;
 use super::*;
 use crate::{AerialKind, GroundKind, Lab, LabCmd, MarineKind};
+use robot_world::{Body, Environment, Scene};
 
 #[test]
 fn rover_probe_bounces_then_drives() {
@@ -1755,6 +1756,51 @@ fn typed_fleet_hold_inland_has_no_hull_station() {
     let end = lab.observe();
     assert!(robot(&end, "drone").unwrap().hold_ned.is_some());
     assert!(robot(&end, "skiff").is_none());
+}
+
+#[test]
+fn typed_fleet_hold_holds_custom_pad_pair_catalog() {
+    let mut lab = Lab::from_scene(
+        Scene::custom(
+            "pad_pair",
+            Environment::inland(),
+            [Body::aerial_ready("drone"), Body::rover("rover")],
+        )
+        .expect("pad_pair is not a reserved P11 name")
+        .seed(3),
+    )
+    .expect("custom inland drone+rover");
+    assert_eq!(lab.world().scenario, "pad_pair");
+    assert!(lab.world().body("skiff").is_none());
+    assert!(lab.world().body("surveyor").is_none());
+
+    let mut agent = TypedFleetHold::default();
+    let run = lab.research(&mut agent, 0.02, 40);
+    assert!(
+        run.ok(),
+        "custom two-body inland must hold: {:?}",
+        run.broken
+    );
+    assert!(agent.done);
+    assert_eq!(run.actions_applied, 0);
+    assert!(run.holds(FLEET_HOLD_SIMULTANEOUS));
+    assert_eq!(run.properties.len(), 22, "plant vector stays 22");
+    assert!(lab.log.iter().any(|a| a.action.cmd == LabCmd::Hold));
+    assert!(
+        lab.log.iter().all(|a| a.action.cmd != LabCmd::Station),
+        "missing skiff must not invent Station"
+    );
+    assert!(
+        lab.log
+            .iter()
+            .all(|a| a.action.robot != "skiff" && a.action.robot != "surveyor"),
+        "custom catalog must not invent coastal hulls"
+    );
+    let end = lab.observe();
+    assert!(robot(&end, "drone").unwrap().hold_ned.is_some());
+    assert!(robot(&end, "skiff").is_none());
+    assert!(robot(&end, "surveyor").is_none());
+    assert!(robot(&end, "rover").is_some());
 }
 
 #[test]

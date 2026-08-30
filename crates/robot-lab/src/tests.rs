@@ -1,6 +1,6 @@
 use super::*;
 use flight_core::vehicle::BackendError;
-use robot_world::Body;
+use robot_world::{Body, Environment, Scene, SceneError};
 
 #[test]
 fn parked_drive_is_rejected() {
@@ -342,6 +342,86 @@ fn observation_broken_names_refused_try_step_without_extra_step() {
     assert_eq!(body(&scratch, "rover").position_m, p0);
     assert!(scratch.message.contains("hydro_volume_conserved"));
     assert!(live.all_hold(), "induced break stays on the clone");
+}
+
+#[test]
+fn research_run_broken_on_clone_does_not_break_live() {
+    struct Idle;
+    impl ResearchAgent for Idle {
+        fn name(&self) -> &'static str {
+            "idle"
+        }
+        fn act(&mut self, _: &mut Lab, _: &Observation) -> Vec<AgentAction> {
+            Vec::new()
+        }
+    }
+
+    let live = Lab::coastal(1);
+    let mut scratch = live.clone();
+    scratch.with_world_mut(|w| w.hydro.volume0 = 1.0e9);
+    let run = scratch.research(&mut Idle, 0.02, 1);
+    assert!(!run.all_hold);
+    assert!(
+        run.broken.iter().any(|id| id == "hydro_volume_conserved"),
+        "{:?}",
+        run.broken
+    );
+    assert_eq!(run.steps, 1);
+    assert!(live.all_hold(), "induced break stays on the clone");
+    assert!(live.observe().broken.is_empty());
+}
+
+#[test]
+fn lab_from_scene_catalog_matches_open() {
+    let from_open = Lab::open("inland", 3).expect("open");
+    let from_scene =
+        Lab::from_scene(Scene::catalog("inland").unwrap().seed(3)).expect("from_scene");
+    assert_eq!(from_open.world().scenario, from_scene.world().scenario);
+    assert_eq!(
+        from_open.world().env.wind_ned,
+        from_scene.world().env.wind_ned
+    );
+    assert!(from_scene.all_hold());
+}
+
+#[test]
+fn lab_from_scene_wraps_scene_errors() {
+    let err = Lab::from_scene(Scene::catalog("inland").unwrap().charge("skiff", 1.0))
+        .expect_err("unknown charge id");
+    match err {
+        LabError::Scene(SceneError::UnknownBody) => {}
+        other => panic!("expected Scene(UnknownBody), got {other}"),
+    }
+    assert_eq!(
+        LabError::from(SceneError::InlandHull).to_string(),
+        "inland catalog cannot include a hull"
+    );
+    assert_eq!(
+        LabError::from(SceneError::OpenWaterRover).to_string(),
+        "open_water catalog cannot include a rover"
+    );
+}
+
+#[test]
+fn lab_from_scene_custom_pad_pair_is_not_a_named_catalog() {
+    let lab = Lab::from_scene(
+        Scene::custom(
+            "pad_pair",
+            Environment::inland(),
+            [Body::aerial_ready("drone"), Body::rover("rover")],
+        )
+        .expect("new name")
+        .seed(3),
+    )
+    .expect("custom catalog");
+    assert_eq!(lab.world().scenario, "pad_pair");
+    assert!(lab.world().body("skiff").is_none());
+    assert!(lab.world().body("rover").is_some());
+    assert!(lab.all_hold());
+    assert!(matches!(
+        Lab::open("pad_pair", 3),
+        Err(LabError::UnknownScenario(_))
+    ));
 }
 
 #[test]
