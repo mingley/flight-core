@@ -79,5 +79,5 @@ HITL leftover after a rack deadline/`Rate` miss is
 `WorldRack::leftover_after_deadline_miss`; leftover after every `REVOKE_ON`
 is `WorldRack::run_hitl_revoke_table` /
 `cargo run -p flight-hitl --bin flight-test-hitl`. ROS 2 leftover after
-`apply_failsafe` and every `REVOKE_ON` is `plant::leftover_after_failsafe` /
-`run_ros2_revoke_table` / `cargo run -p flight-ros2 --bin flight-test-ros2`.
+`apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` is `plant::leftover_after_failsafe` /
+`leftover_after_disarm` / `run_ros2_revoke_table` / `cargo run -p flight-ros2 --bin flight-test-ros2`.

@@ -26,7 +26,7 @@ HITL leftover after a rack deadline/`Rate` miss, and leftover after every
 `cargo run -p flight-hitl --bin flight-test-hitl`
 (`WorldRack::leftover_after_deadline_miss` / `run_hitl_revoke_table`;
 `flight-sim` does not depend on `flight-hitl`). ROS 2 leftover after
-`apply_failsafe` and every `REVOKE_ON`:
+`apply_failsafe`, `apply_disarm`, and every `REVOKE_ON`:
 `cargo run -p flight-ros2 --bin flight-test-ros2`
-(`plant::leftover_after_failsafe` / `run_ros2_revoke_table`;
+(`plant::leftover_after_failsafe` / `leftover_after_disarm` / `run_ros2_revoke_table`;
 `flight-sim` does not depend on `flight-ros2`; no rclrs).

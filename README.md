@@ -60,8 +60,8 @@ round-trip the same samples). `flight-test-px4` is the same leftover table
 at the PX4 companion (`inject_revoke` for every `REVOKE_ON` event).
 `flight-test-hitl` is leftover OffboardControl `COMMANDS` after a rack
 deadline/`Rate` miss **and** after every `REVOKE_ON` (`WorldSession::inject_revoke`).
-`flight-test-ros2` is leftover OffboardControl after `apply_failsafe` and
-every `REVOKE_ON` (no rclrs). A leftover
+`flight-test-ros2` is leftover OffboardControl after `apply_failsafe`,
+`apply_disarm`, and every `REVOKE_ON` (no rclrs). A leftover
 `Vehicle<Armed>` after an async PX4 disarm HEARTBEAT is still typed Armed and
 has no actuation authority (`enter_offboard_now` is `StaleEpoch`). A leftover
 `Vehicle<Offboard>` after `connect` / `begin_session` is still typed Offboard

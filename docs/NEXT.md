@@ -386,6 +386,7 @@ every `REVOKE_ON` leftover is `WorldRack::run_hitl_revoke_table` /
 leftover after `apply_failsafe` and every `REVOKE_ON` is
 `plant::leftover_after_failsafe` / `run_ros2_revoke_table` /
 `flight-test-ros2` (`flight-sim` does not depend on `flight-ros2`; no rclrs).
+World / PX4 leftover tables observe leftover epoch with `Sequence`.
 
 ### F7. Typed geometry
 
