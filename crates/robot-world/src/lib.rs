@@ -5,8 +5,10 @@
 //! would break a mechanical property is refused: pose and time stay put, and
 //! `last_properties` names the rejected vector. Water is a
 //! conserved shallow-water field, not a prescribed sinusoid. Actuator force is
-//! applied only when the matching safety machine grants it. After every step
-//! the world re-evaluates:
+//! applied only when the matching safety machine grants it. [`Scene`] names a
+//! catalog or a custom body table (seed, wind/current/waves, charges) without
+//! registering new names on [`World::named`]. After every step the world
+//! re-evaluates:
 //!
 //! ```text
 //! no terrain penetration
@@ -37,6 +39,7 @@ pub mod body;
 pub mod env;
 pub mod hydro;
 pub mod properties;
+pub mod scene;
 pub mod world;
 
 #[cfg(feature = "gpu")]
@@ -46,6 +49,7 @@ pub use body::Body;
 pub use env::Environment;
 pub use hydro::HydroField;
 pub use properties::{all_hold, evaluate, Property};
+pub use scene::{Scene, SceneError};
 pub use world::{PropertyViolation, SphereHit, World};
 
 #[cfg(test)]

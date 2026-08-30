@@ -40,7 +40,7 @@ impl World {
         }
     }
 
-    fn assemble(
+    pub(crate) fn assemble(
         scenario: &'static str,
         seed: u64,
         mut env: Environment,
