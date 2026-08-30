@@ -21,7 +21,7 @@
 
 pub mod world_plant;
 
-use flight_core::contracts::AerialOffboard;
+use flight_core::contracts::{evaluate_trace, AerialOffboard, TraceSample};
 use flight_core::frames::Ned;
 use flight_core::safety::{Event, Phase, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use flight_core::sensors::SensorHealth;
@@ -707,6 +707,61 @@ pub fn run_px4_revoke_table() -> Result<usize, String> {
     Ok(n)
 }
 
+/// Companion GPS-loss: leftover Offboard after `EstimatorInvalid` cannot run
+/// `COMMANDS`, and the before/after trace satisfies [`flight_sim::Scenario::GPS_LOSS`].
+/// Does not require a live UDP link. Live SIH is `tests/sitl_live.rs`.
+pub fn run_px4_gps_loss() -> Result<Px4GpsLossReport, String> {
+    let mut backend = Px4Backend::new(Px4Config::default());
+    backend.armed = true;
+    backend.offboard = true;
+    backend.last_heartbeat = Some(Instant::now());
+    let VehicleHandle::Offboard(mut v) = VehicleHandle::from_state(backend, offboard_safety())
+    else {
+        return Err("offboard safety maps to Offboard".into());
+    };
+    if v.leftover_commands_stale().is_ok() {
+        return Err("leftover Offboard already stale before GPS-loss inject".into());
+    }
+    let epoch0 = v.backend().authority_epoch();
+    let before = v
+        .backend_mut()
+        .telemetry_now()
+        .map_err(|e| format!("telemetry before: {e}"))?
+        .to_trace_sample(epoch0);
+    if before.failsafe {
+        return Err("failsafe already latched before GPS-loss inject".into());
+    }
+    v.backend_mut()
+        .inject_revoke(Event::EstimatorInvalid)
+        .map_err(|e| format!("inject EstimatorInvalid: {e}"))?;
+    v.leftover_commands_stale()
+        .map_err(|e| format!("leftover after GPS-loss: {e}"))?;
+    let epoch1 = v.backend().authority_epoch();
+    if epoch1 <= epoch0 {
+        return Err("GPS-loss inject did not bump epoch".into());
+    }
+    let after = v
+        .backend_mut()
+        .telemetry_now()
+        .map_err(|e| format!("telemetry after: {e}"))?
+        .to_trace_sample(epoch1);
+    if !after.failsafe {
+        return Err("EstimatorInvalid must latch failsafe".into());
+    }
+    let samples = vec![before, after];
+    evaluate_trace(&samples, flight_sim::Scenario::GPS_LOSS.require)
+        .map_err(|e| format!("GPS_LOSS {} at {}", e.requirement, e.index))?;
+    AerialOffboard::evaluate(&samples)
+        .map_err(|e| format!("capability {} at {}", e.requirement, e.index))?;
+    Ok(Px4GpsLossReport { samples })
+}
+
+/// Result of [`run_px4_gps_loss`].
+#[derive(Clone, Debug)]
+pub struct Px4GpsLossReport {
+    pub samples: Vec<TraceSample>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -974,6 +1029,15 @@ mod tests {
     fn leftover_offboard_refuses_all_commands_after_every_dsl_revoke() {
         let n = run_px4_revoke_table().expect("px4 leftover revoke table");
         assert_eq!(n, AerialOffboard::REVOKE_ON.len());
+    }
+
+    #[test]
+    fn leftover_offboard_gps_loss_satisfies_world_contract() {
+        let report = run_px4_gps_loss().expect("px4 gps-loss");
+        assert_eq!(report.samples.len(), 2);
+        assert!(!report.samples[0].failsafe);
+        assert!(report.samples[1].failsafe);
+        assert!(report.samples[1].epoch > report.samples[0].epoch);
     }
 
     #[test]

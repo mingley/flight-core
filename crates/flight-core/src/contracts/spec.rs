@@ -311,8 +311,9 @@ macro_rules! impl_aerial_offboard_now {
 
             /// Leftover Offboard after a revoke: every generated command is
             /// `StaleAuthority` and the handle is still typed Offboard.
-            /// World `run_revoke_table`, PX4 `run_px4_revoke_table`, HITL
-            /// `run_hitl_revoke_table`, and ROS 2 `run_ros2_revoke_table` share this.
+            /// World `run_revoke_table`, PX4 `run_px4_revoke_table` /
+            /// `run_px4_gps_loss`, HITL `run_hitl_revoke_table`, and ROS 2
+            /// `run_ros2_revoke_table` share this.
             pub fn leftover_commands_stale(&mut self) -> Result<(), ErrorKind> {
                 let expected = $crate::contracts::AerialOffboard::COMMANDS;
                 let mut i = 0usize;
