@@ -300,7 +300,9 @@ epoch bump predicates. Everything else is untrusted relative to `step`.
 yields `Event::HeartbeatStale` (`heartbeat_revoke_event`). GPS-loss and
 heartbeat-loss inject those events. PX4 setpoints fail `StaleHeartbeat` when the
 last HEARTBEAT is older than 250 ms. Monitors: `CommandAgeMs`,
-`EstimatorTimestampsMonotonic`, `EpochBumped`.
+`EstimatorTimestampsMonotonic`, `EpochBumped` — heartbeat/command/estimator
+checks use `HeartbeatFresh` / `CommandFresh` / `Timestamp` and fail closed
+if those disagree with the kernel predicates.
 
 ### F4. Single-source contract DSL
 
