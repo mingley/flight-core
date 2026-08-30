@@ -5,6 +5,7 @@ members = [
     "crates/flight-sim",
     "crates/flight-mavlink",
     "crates/flight-px4",
+    "crates/flight-ardupilot",
     "crates/flight-ros2",
     "crates/flight-verify",
     "crates/flight-demo",
@@ -27,6 +28,7 @@ flight-core = { path = "crates/flight-core", version = "0.1.0" }
 flight-sim = { path = "crates/flight-sim", version = "0.1.0" }
 flight-mavlink = { path = "crates/flight-mavlink", version = "0.1.0" }
 flight-px4 = { path = "crates/flight-px4", version = "0.1.0" }
+flight-ardupilot = { path = "crates/flight-ardupilot", version = "0.1.0" }
 flight-ros2 = { path = "crates/flight-ros2", version = "0.1.0" }
 flight-hitl = { path = "crates/flight-hitl", version = "0.1.0" }
 robot-world = { path = "crates/robot-world", version = "0.1.0" }

@@ -1,0 +1,20 @@
+[package]
+name = "flight-ardupilot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ArduPilot GUIDED companion backend for flight-core (MAVLink SITL loopback first)"
+
+[dependencies]
+flight-core = { workspace = true }
+flight-mavlink = { workspace = true }
+mavlink = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[[bin]]
+name = "flight-test-ardupilot"
+path = "src/bin/flight_test_ardupilot.rs"
