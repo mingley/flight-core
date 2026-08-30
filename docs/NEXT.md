@@ -340,11 +340,11 @@ the old `Vehicle<Offboard>` is still typed Offboard and is `StaleAuthority`.
 An async PX4 disarm HEARTBEAT bumps the epoch; leftover `Vehicle<Armed>` cannot
 `enter_offboard_now` **or** `set_motor_thrust_now` (permit is checked **before**
 kernel `EnableActuators`). PX4 / ArduPilot / `NullBackend` / point-mass
-`SimBackend` refuse `enter_offboard`, climb, `enable_actuators`, setpoints, and
-motor thrust at the backend after `actuation_revoked`. Yaw-rate commands
-refuse the same way on `NullBackend` / `SimBackend`. The verified-world
-`WorldBackend` reports `actuation_revoked` from plant failsafe and refuses the
-same physical-authority commands (kernel `step` remains the TCB). Ground
+`SimBackend` refuse `enter_offboard`, climb, `enable_actuators`, setpoints,
+motor thrust, and yaw-rate at the backend after `actuation_revoked`. The
+verified-world `WorldBackend` reports `actuation_revoked` from plant failsafe
+and refuses the same physical-authority commands, including yaw (trait
+default `set_yaw_rate`; kernel `step` remains the TCB). Ground
 `GroundWorldBackend` reports it from plant E-stop and refuses drive / pose
 hold / yaw; marine `MarineWorldBackend` reports it from plant failsafe and
 refuses thrust / pose hold / yaw. Leftover `set_position` cannot skip
@@ -356,7 +356,8 @@ Failsafe / disarm / recover / land stay ungated (safety actions).
 
 **Acceptance:** NullBackend revoke test; NullBackend / SimBackend /
 WorldBackend / GroundWorldBackend / MarineWorldBackend backend-direct refuse
-after disarm/failsafe/estop; world two-handle
+after disarm/failsafe/estop (including yaw); PX4 / ArduPilot `set_yaw_rate`
+after failsafe and unexpected disarm; world two-handle
 failsafe test; trybuild `permit_is_not_clone`; Kani
 `permit_epoch_mismatch_is_stale`.
 
@@ -435,7 +436,7 @@ heartbeat. Ingested HEARTBEAT with `MAV_STATE_CRITICAL` / `EMERGENCY` /
 (NAV_LAND) does not latch failsafe. `authority_heartbeat_age_ms` feeds the
 permit check. After failsafe is latched, `set_velocity_ned` /
 `set_position_ned` / `enter_offboard` / `takeoff_now` / `enable_actuators` /
-`set_motor_thrust` return `BackendError::Rejected` at this backend (the
+`set_motor_thrust` / `set_yaw_rate` return `BackendError::Rejected` at this backend (the
 pre-offboard `pump_setpoint` stream is not gated; land stays ungated). After an unexpected
 disarm HEARTBEAT, `actuation_revoked` refuses those same physical-authority
 commands — leftover `Vehicle<Armed>` cannot `enter_offboard_now` or

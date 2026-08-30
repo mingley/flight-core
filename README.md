@@ -77,7 +77,7 @@ plus the same named leftover contracts (`run_hitl_leftover_contracts`).
 has no actuation authority (`enter_offboard_now` and `set_motor_thrust_now`
 are `StaleEpoch`; the kernel does not `EnableActuators` on the way to that
 reject). PX4 / ArduPilot refuse `enter_offboard` / climb / `enable_actuators`
-/ motor thrust at the companion after that disarm; land stays ungated. A leftover
+/ motor thrust / yaw-rate at the companion after that disarm; land stays ungated. A leftover
 `Vehicle<Offboard>` after `connect` / `begin_session` is still typed Offboard
 and has no actuation authority (`leftover_commands_stale`).
 
