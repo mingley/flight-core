@@ -325,6 +325,9 @@ Checked-in generated artifacts under [`docs/generated/`](generated/) must
 match the table (`SPEC`, mermaid, Graphviz, `CREUSOT`, `FAULTS`). The macro
 does not emit a second Creusot proof file. `run_revoke_table` uses
 `inject` so a leftover `Vehicle<Offboard>` refuses every `COMMANDS` method.
+Named scenario faults (`GpsDropout` / `HeartbeatStale` / `Failsafe`) go
+through the same `inject`. `differential_revoke_table` round-trips the
+leftover samples on JSONL and ULog.
 
 ### F5. PX4 production-quality backend
 
@@ -358,7 +361,9 @@ scenario (world + JSONL replay + ULog round-trip; gps-loss also the checked-in
 ULog and converted PX4 SITL JSONL). GPS-loss posts `Estimate::revoke_event` and
 a bound `Vehicle<Offboard>` cannot `set_position_now`. Every DSL revoke event has a world
 test that the plant epoch increments and that a leftover Offboard handle
-cannot run `set_velocity` / `set_position` / `hold`.
+cannot run `set_velocity` / `set_position` / `hold`. Named scenario
+`Fault` kernel events are `AerialOffboard::inject`. `differential_revoke_table`
+round-trips those leftover samples on JSONL and ULog.
 
 ### F7. Typed geometry
 

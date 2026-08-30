@@ -67,7 +67,8 @@ verified world, then evaluates the same `Requirement` set. A bound
 `Vehicle<Offboard>` cannot `set_position_now` after that inject.
 `run_revoke_table` injects every `REVOKE_ON` event through
 `AerialOffboard::inject`; a leftover Offboard handle cannot run
-`set_velocity` / `set_position` / `hold`.
+`set_velocity` / `set_position` / `hold`. `differential_revoke_table`
+re-evaluates those leftover samples on JSONL and ULog.
 Replay is
 `evaluate_trace` on a recorded `TraceSample` JSONL **or** a native ULog
 (`fc_trace`, plus a `vehicle_status` subset). PX4 SITL conformance uses

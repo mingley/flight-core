@@ -24,8 +24,9 @@ pub use fuzz::FuzzedImu;
 pub use physics::{Physics, GRAVITY_NED};
 pub use replay::{JsonlReplay, RecordedSample};
 pub use scenario::{
-    differential_contract, differential_gps_loss, differential_world, replay_jsonl, replay_report,
-    run_hitl_miss, run_revoke_table, run_world, Fault, Scenario, ScenarioReport,
+    differential_contract, differential_gps_loss, differential_revoke_table, differential_world,
+    replay_jsonl, replay_report, run_hitl_miss, run_revoke_table, run_world, Fault, Scenario,
+    ScenarioReport, REVOKE_TABLE_REQUIRE,
 };
 pub use ulog::{is_ulog, parse_ulog, write_ulog};
 pub use world_backend::{

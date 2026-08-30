@@ -17,3 +17,4 @@ Offboard. The same events appear as Offboard → Failsafe edges in
 | ImuUnhealthy | `event_revokes_authority` | revoke-table leftover Offboard |
 
 CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`
+(world leftover Offboard + JSONL + ULog).

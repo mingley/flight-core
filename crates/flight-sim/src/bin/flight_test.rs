@@ -20,8 +20,8 @@
 
 use flight_core::contracts::{evaluate_trace, parse_trace_jsonl, AerialOffboard, Requirement};
 use flight_sim::{
-    differential_contract, is_ulog, parse_ulog, replay_jsonl, run_hitl_miss, run_revoke_table,
-    run_world, write_ulog, Scenario,
+    differential_contract, differential_revoke_table, is_ulog, parse_ulog, replay_jsonl,
+    run_hitl_miss, run_world, write_ulog, Scenario,
 };
 
 fn usage() -> ! {
@@ -105,17 +105,9 @@ fn main() {
     }
 
     if scenario_name == "revoke-table" {
-        let report = run_revoke_table().expect("revoke table");
-        evaluate_samples(
-            &report.samples,
-            &[
-                Requirement::NeverActuateWhileDisarmed,
-                Requirement::ActuatorsImplyArmed,
-                Requirement::NoNanCommands,
-            ],
-        );
+        let report = differential_revoke_table().expect("revoke table");
         println!(
-            "PASS scenario=revoke-table backend=world samples={} events={}",
+            "PASS scenario=revoke-table backend=all samples={} events={} (world leftover, jsonl, ulog)",
             report.samples.len(),
             report.samples.len()
         );

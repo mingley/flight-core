@@ -40,12 +40,13 @@ impl Fault {
     }
 
     fn kernel_event(self) -> Option<Event> {
-        match self {
-            Self::GpsDropout { .. } => Some(Event::EstimatorInvalid),
-            Self::HeartbeatStale { .. } => Some(Event::HeartbeatStale),
-            Self::Failsafe { .. } => Some(Event::TriggerFailsafe),
-            Self::BatterySag { .. } | Self::WindGust { .. } => None,
-        }
+        let candidate = match self {
+            Self::GpsDropout { .. } => Event::EstimatorInvalid,
+            Self::HeartbeatStale { .. } => Event::HeartbeatStale,
+            Self::Failsafe { .. } => Event::TriggerFailsafe,
+            Self::BatterySag { .. } | Self::WindGust { .. } => return None,
+        };
+        AerialOffboard::inject(candidate)
     }
 }
 
@@ -316,6 +317,40 @@ fn leftover_offboard_refuses_commands(
     Ok(())
 }
 
+/// Contract requirements that a concatenated revoke-table trace can prove.
+/// `EpochBumped` is not here: each event is a separate session (typically
+/// epoch 1), so the concatenated samples do not show a bump inside one run.
+pub const REVOKE_TABLE_REQUIRE: &[Requirement] = &[
+    Requirement::NeverActuateWhileDisarmed,
+    Requirement::ActuatorsImplyArmed,
+    Requirement::NoNanCommands,
+];
+
+/// Same leftover Offboard runner, then JSONL replay and ULog round-trip.
+/// Differential conformance of the generated fault table, not a second plant.
+pub fn differential_revoke_table() -> Result<ScenarioReport, String> {
+    let report = run_revoke_table()?;
+    report
+        .evaluate(REVOKE_TABLE_REQUIRE)
+        .map_err(|e| format!("world: {} at {}", e.requirement, e.index))?;
+    report
+        .evaluate_capability()
+        .map_err(|e| format!("world capability: {} at {}", e.requirement, e.index))?;
+    replay_jsonl(&report.to_jsonl(), REVOKE_TABLE_REQUIRE)
+        .map_err(|e| format!("jsonl: {} at {}", e.requirement, e.index))?;
+    AerialOffboard::evaluate(
+        &parse_trace_jsonl(&report.to_jsonl()).map_err(|_| "jsonl parse".to_string())?,
+    )
+    .map_err(|e| format!("jsonl capability: {} at {}", e.requirement, e.index))?;
+    let ulog_bytes = crate::write_ulog(&report.samples);
+    let from_ulog = crate::parse_ulog(&ulog_bytes).map_err(|e| format!("ulog roundtrip: {e}"))?;
+    evaluate_trace(&from_ulog, REVOKE_TABLE_REQUIRE)
+        .map_err(|e| format!("ulog roundtrip: {} at {}", e.requirement, e.index))?;
+    AerialOffboard::evaluate(&from_ulog)
+        .map_err(|e| format!("ulog capability: {} at {}", e.requirement, e.index))?;
+    Ok(report)
+}
+
 /// Re-evaluate a previously recorded report (replay / ulog-shaped JSONL is
 /// converted into [`TraceSample`] by the caller).
 pub fn replay_report(report: &ScenarioReport, reqs: &[Requirement]) -> Result<(), MonitorFail> {
@@ -397,22 +432,29 @@ fn inject_drone_event(session: &WorldSession, e: Event) -> Result<(), String> {
     aerial_event(session.aerial("drone").session(), "drone", e).map_err(|err| format!("{err}"))
 }
 
+/// Only DSL revoke events are injectable. Plant/environment faults stay `None`.
+fn inject_revoke(session: &WorldSession, e: Event) -> Result<(), String> {
+    let e = AerialOffboard::inject(e)
+        .ok_or_else(|| format!("{e:?} is not an AerialOffboard inject"))?;
+    inject_drone_event(session, e)
+}
+
 fn apply_fault(session: &WorldSession, fault: Fault) -> Result<(), String> {
     match fault {
         Fault::GpsDropout { .. } => {
             let gps = Observation::<(), Ned>::new((), MonotonicInstant::ZERO);
             let est = Estimate::new(gps, false, gps.stamped_at);
             if let Some(e) = est.revoke_event() {
-                inject_drone_event(session, e)?;
+                inject_revoke(session, e)?;
             }
         }
         Fault::HeartbeatStale { .. } => {
             if let Some(e) = heartbeat_revoke_event(OFFBOARD_HEARTBEAT_MAX_AGE_MS) {
-                inject_drone_event(session, e)?;
+                inject_revoke(session, e)?;
             }
         }
         Fault::Failsafe { .. } => {
-            inject_drone_event(
+            inject_revoke(
                 session,
                 fault
                     .kernel_event()
@@ -515,9 +557,27 @@ mod tests {
             Fault::GpsDropout { at_secs: 0.0 }.kernel_event()
         );
         assert_eq!(
+            Fault::GpsDropout { at_secs: 0.0 }.kernel_event(),
+            AerialOffboard::inject(Event::EstimatorInvalid)
+        );
+        assert_eq!(
             heartbeat_revoke_event(OFFBOARD_HEARTBEAT_MAX_AGE_MS),
             Fault::HeartbeatStale { at_secs: 0.0 }.kernel_event()
         );
+        assert_eq!(
+            Fault::HeartbeatStale { at_secs: 0.0 }.kernel_event(),
+            AerialOffboard::inject(Event::HeartbeatStale)
+        );
+        assert_eq!(
+            Fault::Failsafe { at_secs: 0.0 }.kernel_event(),
+            AerialOffboard::inject(Event::TriggerFailsafe)
+        );
+        assert!(Fault::BatterySag {
+            at_secs: 0.0,
+            percent: 10
+        }
+        .kernel_event()
+        .is_none());
         assert!(heartbeat_revoke_event(0).is_none());
     }
 
@@ -566,21 +626,12 @@ mod tests {
 
     #[test]
     fn revoke_table_faults_are_the_dsl_events() {
-        let report = run_revoke_table().expect("revoke table");
+        let report = differential_revoke_table().expect("revoke table");
         assert_eq!(
             report.samples.len(),
             flight_core::contracts::AerialOffboard::REVOKE_ON.len()
         );
-        evaluate_trace(
-            &report.samples,
-            &[
-                Requirement::NeverActuateWhileDisarmed,
-                Requirement::ActuatorsImplyArmed,
-                Requirement::NoNanCommands,
-            ],
-        )
-        .expect("contract");
-        report.evaluate_capability().expect("capability monitors");
+        assert_eq!(REVOKE_TABLE_REQUIRE.len(), 3);
     }
 
     #[test]

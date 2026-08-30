@@ -55,7 +55,8 @@ revocation, and the same monitors on a converted SITL-shaped JSONL. (8) is
 native ULog `fc_trace` replay. The same contract also runs as
 `flight-test --scenario hitl-miss --backend hitl` and
 `--scenario revoke-table` (every DSL revoke event from Offboard; leftover
-Offboard cannot `set_velocity` / `set_position` / `hold`). A leftover
+Offboard cannot `set_velocity` / `set_position` / `hold`; JSONL and ULog
+round-trip the same samples). A leftover
 `Vehicle<Armed>` after an async PX4 disarm HEARTBEAT is still typed Armed and
 has no actuation authority (`enter_offboard_now` is `StaleEpoch`).
 
