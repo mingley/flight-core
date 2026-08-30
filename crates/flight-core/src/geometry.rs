@@ -1,21 +1,26 @@
-//! Geometry that cannot compose across unrelated frames.
+//! Geometry that cannot compose across unrelated frames or quantities.
 //!
 //! `Transform<A, B> * Transform<B, C>` is legal. `Transform<A, B> * Transform<D, C>`
-//! does not compile. Points, displacements, orientations, and free vectors stay
-//! distinct so a velocity cannot be added to a point, and an [`Orientation`] cannot
-//! be passed where [`crate::vector::AngularVelocity`] is required.
+//! does not compile. [`Point3`] vs [`Displacement`] vs velocity / acceleration /
+//! force / torque / [`Orientation`] vs angular velocity stay distinct so a
+//! velocity cannot be added to a point, two points cannot be added, and an
+//! [`Orientation`] cannot be passed where [`crate::vector::AngularVelocity`] is
+//! required.
 //!
-//! Copper already has compile-time frame ids (`cu_transform`). This module is
-//! the contract-surface geometry for flight-core; see `docs/copper.md` for
-//! interop rather than a second robotics runtime.
+//! A rigid transform maps a point as `R p + t` and a free vector (velocity,
+//! force, …) by rotation only. Copper already has compile-time frame ids
+//! (`cu_transform`). This module is the contract-surface geometry for
+//! flight-core; see `docs/copper.md` for interop rather than a second robotics
+//! runtime.
 
 use crate::frames::Frame;
 use crate::units::Meter;
-use crate::vector::Vector3;
+use crate::vector::{Acceleration, Force, Position, Torque, Vector3, Velocity};
 use core::marker::PhantomData;
-use core::ops::Mul;
+use core::ops::{Add, Mul, Neg, Sub};
 
-/// Displacement (free vector) in frame `F`. Distinct from [`crate::vector::Position`].
+/// Displacement (free vector) in frame `F`. Distinct from [`Point3`] and from
+/// [`crate::vector::Position`] (NED setpoint / pose sample).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Displacement<F> {
     v: Vector3<Meter, F>,
@@ -34,6 +39,26 @@ impl<F: Frame> Displacement<F> {
 
     pub const fn vector(self) -> Vector3<Meter, F> {
         self.v
+    }
+}
+
+impl<F: Frame> Add for Displacement<F> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self {
+        Self::new(
+            self.v.x() + rhs.v.x(),
+            self.v.y() + rhs.v.y(),
+            self.v.z() + rhs.v.z(),
+        )
+    }
+}
+
+impl<F: Frame> Neg for Displacement<F> {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        Self::new(-self.v.x(), -self.v.y(), -self.v.z())
     }
 }
 
@@ -77,7 +102,75 @@ impl<From: Frame, To: Frame> Rotation<From, To> {
 }
 
 /// Point in frame `F`. Distinct from a free [`Displacement`].
-pub type Point3<F> = crate::vector::Position<F>;
+///
+/// `p + d` is a point. `p - q` is a displacement. `p + q` does not compile
+/// (`tests/ui/point_plus_point.rs`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Point3<F> {
+    p: Position<F>,
+}
+
+impl<F: Frame> Point3<F> {
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self {
+            p: Position::new(x, y, z),
+        }
+    }
+
+    pub const fn origin() -> Self {
+        Self::new(0.0, 0.0, 0.0)
+    }
+
+    pub const fn from_position(p: Position<F>) -> Self {
+        Self { p }
+    }
+
+    pub const fn position(self) -> Position<F> {
+        self.p
+    }
+
+    pub const fn x(self) -> f32 {
+        self.p.x()
+    }
+
+    pub const fn y(self) -> f32 {
+        self.p.y()
+    }
+
+    pub const fn z(self) -> f32 {
+        self.p.z()
+    }
+}
+
+impl Point3<crate::frames::Ned> {
+    pub const fn ned(north: f32, east: f32, down: f32) -> Self {
+        Self::new(north, east, down)
+    }
+}
+
+impl<F: Frame> Add<Displacement<F>> for Point3<F> {
+    type Output = Self;
+
+    fn add(self, d: Displacement<F>) -> Self {
+        Self::new(self.x() + d.v.x(), self.y() + d.v.y(), self.z() + d.v.z())
+    }
+}
+
+impl<F: Frame> Sub<Displacement<F>> for Point3<F> {
+    type Output = Self;
+
+    fn sub(self, d: Displacement<F>) -> Self {
+        self + (-d)
+    }
+}
+
+impl<F: Frame> Sub for Point3<F> {
+    type Output = Displacement<F>;
+
+    fn sub(self, rhs: Self) -> Displacement<F> {
+        Displacement::new(self.x() - rhs.x(), self.y() - rhs.y(), self.z() - rhs.z())
+    }
+}
 
 /// Attitude of frame `F` relative to a parent (NED by convention). Distinct
 /// from [`crate::vector::AngularVelocity`]: you cannot pass an orientation
@@ -107,15 +200,16 @@ impl<F: Frame> Orientation<F> {
 
 /// Rigid transform: coordinates of `From` expressed in `To`.
 ///
-/// `p_to = R * p_from + t`.
+/// A point maps as `R p + t`. A free vector (displacement, velocity, force)
+/// maps by rotation only.
 #[derive(Clone, Copy, Debug)]
 pub struct Transform<From, To> {
     rotation: Rotation<From, To>,
-    translation: Vector3<Meter, To>,
+    translation: Displacement<To>,
 }
 
 impl<From: Frame, To: Frame> Transform<From, To> {
-    pub const fn new(rotation: Rotation<From, To>, translation: Vector3<Meter, To>) -> Self {
+    pub const fn new(rotation: Rotation<From, To>, translation: Displacement<To>) -> Self {
         Self {
             rotation,
             translation,
@@ -125,7 +219,7 @@ impl<From: Frame, To: Frame> Transform<From, To> {
     pub fn identity() -> Self {
         Self {
             rotation: Rotation::identity(),
-            translation: Vector3::zero(),
+            translation: Displacement::zero(),
         }
     }
 
@@ -133,17 +227,17 @@ impl<From: Frame, To: Frame> Transform<From, To> {
         self.rotation
     }
 
-    pub const fn translation(self) -> Vector3<Meter, To> {
+    pub const fn translation(self) -> Displacement<To> {
         self.translation
     }
 
     /// Transform a point: `R p + t`.
-    pub fn apply_point(self, p: crate::vector::Position<From>) -> crate::vector::Position<To> {
-        let r = self.rotation.apply(p);
-        crate::vector::Position::new(
-            r.x() + self.translation.x(),
-            r.y() + self.translation.y(),
-            r.z() + self.translation.z(),
+    pub fn apply_point(self, p: Point3<From>) -> Point3<To> {
+        let r = self.rotation.apply(p.position());
+        Point3::new(
+            r.x() + self.translation.v.x(),
+            r.y() + self.translation.v.y(),
+            r.z() + self.translation.v.z(),
         )
     }
 
@@ -154,14 +248,34 @@ impl<From: Frame, To: Frame> Transform<From, To> {
         }
     }
 
+    /// Transform a velocity (rotation only). Distinct from [`Self::apply_point`].
+    pub fn apply_velocity(self, v: Velocity<From>) -> Velocity<To> {
+        self.rotation.apply(v)
+    }
+
+    /// Transform an acceleration (rotation only).
+    pub fn apply_acceleration(self, a: Acceleration<From>) -> Acceleration<To> {
+        self.rotation.apply(a)
+    }
+
+    /// Transform a force (rotation only). Distinct from [`Self::apply_torque`].
+    pub fn apply_force(self, f: Force<From>) -> Force<To> {
+        self.rotation.apply(f)
+    }
+
+    /// Transform a torque (rotation only).
+    pub fn apply_torque(self, tau: Torque<From>) -> Torque<To> {
+        self.rotation.apply(tau)
+    }
+
     /// `self` then `next`: `From → To → C`.
     pub fn then<C: Frame>(self, next: Transform<To, C>) -> Transform<From, C> {
         let rotation = self.rotation.then(next.rotation);
-        let translation = next.rotation.apply(self.translation);
-        let translation = Vector3::new(
-            translation.x() + next.translation.x(),
-            translation.y() + next.translation.y(),
-            translation.z() + next.translation.z(),
+        let rotated = next.rotation.apply(self.translation.v);
+        let translation = Displacement::new(
+            rotated.x() + next.translation.v.x(),
+            rotated.y() + next.translation.v.y(),
+            rotated.z() + next.translation.v.z(),
         );
         Transform {
             rotation,
@@ -216,7 +330,7 @@ const fn matmul(a: [[f32; 3]; 3], b: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
 mod tests {
     use super::*;
     use crate::frames::{Body, Ned};
-    use crate::vector::{Position, Velocity};
+    use crate::vector::{Acceleration, Force, Position, Torque, Velocity};
 
     #[test]
     fn identity_then_is_identity() {
@@ -236,20 +350,37 @@ mod tests {
     }
 
     #[test]
-    fn displacement_is_not_a_point_alias_in_docs() {
-        let d = Displacement::<Ned>::new(1.0, 0.0, 0.0);
-        assert!((d.vector().x() - 1.0).abs() < 1e-6);
+    fn point_plus_displacement_is_a_point() {
+        let p = Point3::<Ned>::ned(1.0, 2.0, 3.0);
+        let d = Displacement::<Ned>::new(0.5, 0.0, -1.0);
+        let q = p + d;
+        assert!((q.x() - 1.5).abs() < 1e-6);
+        assert!((q.y() - 2.0).abs() < 1e-6);
+        assert!((q.z() - 2.0).abs() < 1e-6);
+        let back = q - d;
+        assert!((back.x() - 1.0).abs() < 1e-6);
+        let delta = q - p;
+        assert!((delta.vector().x() - 0.5).abs() < 1e-6);
+        assert!((delta.vector().z() + 1.0).abs() < 1e-6);
     }
 
     #[test]
-    fn apply_point_adds_translation() {
-        let t = Transform::<Ned, Body>::new(Rotation::identity(), Vector3::new(1.0, 2.0, 3.0));
-        let p = t.apply_point(Position::<Ned>::ned(0.0, 0.0, 0.0));
+    fn apply_point_adds_translation_velocity_does_not() {
+        let t = Transform::<Ned, Body>::new(Rotation::identity(), Displacement::new(1.0, 2.0, 3.0));
+        let p = t.apply_point(Point3::<Ned>::origin());
         assert!((p.x() - 1.0).abs() < 1e-6);
         assert!((p.y() - 2.0).abs() < 1e-6);
         assert!((p.z() - 3.0).abs() < 1e-6);
         let d = t.apply_displacement(Displacement::<Ned>::new(4.0, 0.0, 0.0));
         assert!((d.vector().x() - 4.0).abs() < 1e-6);
+        let v = t.apply_velocity(Velocity::<Ned>::ned(4.0, 0.0, 0.0));
+        assert!((v.x() - 4.0).abs() < 1e-6);
+        let f = t.apply_force(Force::<Ned>::new(0.5, 0.0, 0.0));
+        assert!((f.x() - 0.5).abs() < 1e-6);
+        let tau = t.apply_torque(Torque::<Ned>::new(0.1, 0.0, 0.0));
+        assert!((tau.x() - 0.1).abs() < 1e-6);
+        let a = t.apply_acceleration(Acceleration::<Ned>::ned(0.0, 0.0, 9.81));
+        assert!((a.z() - 9.81).abs() < 1e-6);
         let o = Orientation::<Ned>::identity();
         assert_eq!(o.xyzw()[3], 1.0);
     }
