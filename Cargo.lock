@@ -497,6 +497,7 @@ name = "flight-demo"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "flight-mhs",
  "http-body-util",
  "robot-lab",
  "serde",
@@ -521,6 +522,15 @@ version = "0.1.0"
 dependencies = [
  "flight-core",
  "mavlink",
+]
+
+[[package]]
+name = "flight-mhs"
+version = "0.1.0"
+dependencies = [
+ "robot-lab",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

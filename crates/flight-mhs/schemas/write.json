@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mhs.WriteRequest",
+  "description": "Write of one device channel. vn, ve, vd are NED (z-down) for motion commands. Mapped to LabCmd; unknown names fail. No raw NED velocity that skips legal_cmds.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device", "channel"],
+  "properties": {
+    "device": { "type": "string" },
+    "channel": { "type": "string" },
+    "vn": { "type": "number" },
+    "ve": { "type": "number" },
+    "vd": { "type": "number" },
+    "yaw_rate": { "type": "number" }
+  }
+}

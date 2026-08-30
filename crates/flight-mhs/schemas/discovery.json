@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mhs.Discovery",
+  "description": "MHS-shaped discovery. official is always false; this is not the gated Anthropic/Janelia wire format.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "conformance",
+    "official",
+    "spec_url",
+    "note",
+    "scenario",
+    "seed",
+    "t",
+    "devices"
+  ],
+  "properties": {
+    "profile": { "type": "string" },
+    "conformance": { "type": "string", "enum": ["shaped"] },
+    "official": { "type": "boolean" },
+    "spec_url": { "type": "string" },
+    "note": { "type": "string" },
+    "scenario": { "type": "string" },
+    "seed": { "type": "integer" },
+    "t": { "type": "number" },
+    "devices": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/device_stub" }
+    }
+  },
+  "$defs": {
+    "device_stub": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "domain"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string", "enum": ["robot", "environment", "lab"] },
+        "domain": { "type": "string" }
+      }
+    }
+  }
+}

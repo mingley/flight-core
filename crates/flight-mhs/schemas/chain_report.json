@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mhs.ChainReport",
+  "description": "Certificate from a chain file. Each Step op is one WorldSession::step per tick (P12). Writes do not step.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scenario",
+    "seed",
+    "ops",
+    "steps",
+    "t",
+    "all_hold",
+    "broken",
+    "certificates",
+    "rejects",
+    "reads",
+    "ok"
+  ],
+  "properties": {
+    "scenario": { "type": "string" },
+    "seed": { "type": "integer" },
+    "ops": { "type": "integer" },
+    "steps": { "type": "integer" },
+    "t": { "type": "number" },
+    "all_hold": { "type": "boolean" },
+    "broken": { "type": "array", "items": { "type": "string" } },
+    "certificates": { "type": "array", "items": { "type": "string" } },
+    "rejects": { "type": "array" },
+    "reads": { "type": "array" },
+    "ok": { "type": "boolean" }
+  }
+}

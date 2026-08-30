@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mhs.ReadResult",
+  "description": "Read of one device channel. Does not step the plant. Pose/velocity are NED z-down when those channels are used.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device", "channel", "value", "t"],
+  "properties": {
+    "device": { "type": "string" },
+    "channel": { "type": "string" },
+    "value": {},
+    "t": { "type": "number" }
+  }
+}

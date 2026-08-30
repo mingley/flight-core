@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mhs.DeviceReference",
+  "description": "Compiled reference file from natural-language tags. Safety limits are machines and numeric clamps, not prompt text. NED z-down.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "kind",
+    "domain",
+    "profile",
+    "conformance",
+    "official",
+    "spec_url",
+    "tags",
+    "measures",
+    "writes",
+    "legal_now",
+    "safety"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "kind": { "type": "string" },
+    "domain": { "type": "string" },
+    "profile": { "type": "string" },
+    "conformance": { "type": "string", "enum": ["shaped"] },
+    "official": { "type": "boolean" },
+    "spec_url": { "type": "string" },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "prose"],
+        "properties": {
+          "key": { "type": "string" },
+          "prose": { "type": "string" }
+        }
+      }
+    },
+    "measures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channel", "prose"],
+        "properties": {
+          "channel": { "type": "string" },
+          "prose": { "type": "string" },
+          "unit": { "type": "string" }
+        }
+      }
+    },
+    "writes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channel", "prose", "needs_values"],
+        "properties": {
+          "channel": { "type": "string" },
+          "prose": { "type": "string" },
+          "needs_values": { "type": "boolean" }
+        }
+      }
+    },
+    "legal_now": { "type": "array", "items": { "type": "string" } },
+    "safety": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "prose", "enforcement"],
+        "properties": {
+          "id": { "type": "string" },
+          "prose": { "type": "string" },
+          "enforcement": { "type": "string", "enum": ["machine", "numeric", "catalog"] },
+          "remaining_spec": { "type": "string" },
+          "max": { "type": "number" },
+          "unit": { "type": "string" }
+        }
+      }
+    },
+    "mass_kg": { "type": "number" },
+    "radius_m": { "type": "number" }
+  }
+}
