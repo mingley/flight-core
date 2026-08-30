@@ -22,7 +22,8 @@ The workspace already has a usable slice of that goal. In-scope functional items
 **Already true (do not re-implement):**
 
 - Consume-self typestate for aerial / ground / marine vehicles (`Vehicle`, `GroundVehicle`, `MarineVehicle`) with compile-fail UI tests under `crates/flight-core/tests/ui/` (127 `.rs` files).
-- Revocable `ActuationPermit` (non-`Clone`) plus backend `authority_epoch`. Failsafe / disarm / disconnect / stale heartbeat / estimator / IMU events increment the plant epoch. Stale permits cannot setpoint even when the Rust typestate is still `Offboard` / `Moving` / `Underway`.
+- Revocable `ActuationPermit` (non-`Clone`) plus backend `authority_epoch`. Failsafe / disarm / disconnect / stale heartbeat / estimator / IMU events increment the plant epoch. Stale permits cannot setpoint even when the Rust typestate is still `Offboard` / `Moving` / `Underway`. `apply_velocity_command_now` additionally rejects a command older than `COMMAND_MAX_AGE_MS`.
+- Single-source aerial authority table in `safety` (`define_aerial_authority!`): kernel revoke predicate, heartbeat/command bounds, Creusot `ensures`, capability diagrams. `vehicle_contract! { from_kernel }` aliases it. Native ULog subset plus JSONL share `evaluate_trace`.
 - `OffboardControl` gates `set_velocity` / `set_position` / `hold`. `MotorsEnabled` gates `set_motor_thrust`. Recovery is a real aerial typestate.
 - One mechanically verified plant: `robot-world::World::try_step` clones, advances, and commits only if all **22** named properties hold. NED z-down. Catalogs `coastal` / `harbor` / `inland` / `open_water`.
 - `WorldSession` attach walks (`attach_takeoff`, `attach_drive`, `attach_undock`, `attach_hold`, `attach_ground_hold`, `attach_marine_hold`, failsafe / recover / return / station / airborne, …) shared by HITL, ROS 2, PX4 `WorldPlant`, and `robot-lab`.

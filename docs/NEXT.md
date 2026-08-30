@@ -288,20 +288,25 @@ epoch bump predicates. Everything else is untrusted relative to `step`.
 ### F3. Temporal contracts
 
 **Status: landed.** `Fresh` / `HeartbeatFresh` / `Sequence` / `Estimate` /
-`Observation` / `Rate` / `Deadline` / `Lease` / `Command`. Kernel
-`heartbeat_age_ok` and `VehicleBackend::authority_heartbeat_age_ms` share
-`OFFBOARD_HEARTBEAT_MAX_AGE_MS` with the DSL. PX4 setpoints fail
-`StaleHeartbeat` when the last HEARTBEAT is older than 250 ms.
+`Observation` / `Rate` / `Deadline` / `Lease` / `Command` / `Timestamp`.
+Kernel `heartbeat_age_ok`, `command_age_ok`, and `estimator_ts_monotonic`
+share bounds with the DSL. `Vehicle::apply_velocity_command_now` rejects
+`StaleCommand` when command age ≥ 100 ms. PX4 setpoints fail
+`StaleHeartbeat` when the last HEARTBEAT is older than 250 ms. Monitors:
+`CommandAgeMs`, `EstimatorTimestampsMonotonic`, `EpochBumped`.
 
 ### F4. Single-source contract DSL
 
-**Status: landed.** `vehicle_contract!` generates capability tables, mermaid,
-Graphviz, monitor list, SPEC text, revoke `const fn`, and traceability ids.
-A unit test fails if the table disagrees with `event_revokes_authority`. Kani
-`dsl_revokes_match_kernel` proves the same. Checked-in
+**Status: landed.** `define_aerial_authority!` in `safety.rs` is the table:
+heartbeat/command bounds, `event_revokes_authority` (Creusot `ensures` on
+the same event list), diagram/SPEC strings, `AUTHORITY_REVOKE_EVENTS`.
+`vehicle_contract! { from_kernel }` aliases that table (`AerialOffboard::revokes`
+**is** the kernel function). Kani `dsl_revokes_match_kernel` proves table
+membership plus the two age predicates and estimator monotonicity. Checked-in
 [`docs/generated/aerial-offboard.mmd`](generated/aerial-offboard.mmd) must
-match `AerialOffboard::MERMAID`. Creusot still discharges the discrete `step`
-contracts, not a second generated file.
+match `AerialOffboard::MERMAID`. The macro does not emit a second typestate
+API or a second Creusot file; Creusot still discharges `step` plus the
+revoke `ensures`.
 
 ### F5. PX4 production-quality backend
 
@@ -318,9 +323,12 @@ permit check.
 **Status: landed.** `flight_sim::scenario` (`Scenario::GPS_LOSS`,
 `HEARTBEAT_LOSS`, `scenario!`) injects estimator / heartbeat / wind / battery
 faults on the verified world, evaluates `Requirement`s, writes JSONL, and
-differential-runs two world traces. `cargo run -p flight-sim --bin flight-test`
-runs `--backend world|replay|px4-sitl`. Live Gazebo is still out of scope;
-`--backend px4-sitl` evaluates a converted JSONL. Every DSL revoke event has
+differential-runs two world traces. Native ULog subset (`write_ulog` /
+`parse_ulog`) round-trips `fc_trace` and can ingest `vehicle_status`.
+`cargo run -p flight-sim --bin flight-test` runs
+`--backend world|replay|ulog|px4-sitl`. Live Gazebo is still out of scope;
+`--backend px4-sitl` evaluates a converted JSONL or `.ulg` (checked-in
+`crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl`). Every DSL revoke event has
 a world test that the plant epoch increments.
 
 ### F7. Typed geometry

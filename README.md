@@ -29,19 +29,23 @@ increments the epoch. The old permit is still memory. It has no authority.
 2. cargo check:    FAIL — actuator authority unavailable in this state.
 3. Fix it.
 4. cargo kani:     PROVED — no reachable kernel path enables actuators while unarmed.
-5. flight-test --scenario gps-loss:
+5. flight-test --scenario gps-loss --backend world:
                    TESTED — loss of navigation revokes authority (epoch bump, failsafe).
 6. flight-test --backend world     PASS (same contract)
 7. PX4 SITL companion              PASS (same Vehicle API; HEARTBEAT CRITICAL/RTL revokes epoch)
-8. flight-test --backend replay     PASS — same contract on recorded JSONL
+   flight-test --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
+8. flight-test --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
+                   PASS — same contract on recorded ULog
 ```
 
 Today: (2) is 127 trybuild compile-fails. (4) is Kani including
-`permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel`, and
-actuators-require-arm. (5–6) are `Scenario::GPS_LOSS` on the verified world.
-(7) is the existing SIH companion path plus failsafe/RTL epoch revocation.
-(8) is `flight-test --backend replay`. HITL deadline miss trips failsafe,
-bumps the same epoch, and still satisfies the contract monitors.
+`permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel` (kernel table =
+`AUTHORITY_REVOKE_EVENTS`, heartbeat/command bounds, estimator monotonicity),
+and actuators-require-arm. (5–6) are `Scenario::GPS_LOSS` on the verified world.
+(7) is the existing SIH companion path plus failsafe/RTL epoch revocation, and
+the same monitors on a converted SITL-shaped JSONL. (8) is native ULog
+`fc_trace` replay. HITL deadline miss trips failsafe, bumps the same epoch, and
+still satisfies the contract monitors.
 
 The design principle:
 
@@ -244,6 +248,8 @@ cargo run -p flight-sim --example hover
 cargo run -p flight-sim --example gps_loss
 cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend world
 cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend replay
+cargo run -p flight-sim --bin flight-test -- --backend ulog --replay crates/flight-sim/corpus/gps_loss.ulg
+cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
 cargo run -p flight-sim --example fleet   # attach now-APIs, one WorldSession::step
 cargo run -p flight-sim --example fuzzed_world  # FuzzedImu around WorldImu; plant still WorldSession::step
 cargo run -p robot-lab --example coastal
