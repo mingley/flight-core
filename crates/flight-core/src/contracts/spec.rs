@@ -138,7 +138,8 @@ vehicle_contract! {
     }
 }
 
-/// Generate OffboardControl `*_now` methods from the aerial command table.
+/// Generate OffboardControl now-methods, async wrappers, and stamped-command
+/// apply from the aerial command table.
 ///
 /// Expand in `vehicle/typestate.rs` (same module as [`Vehicle`] private fields).
 /// Public names must match [`crate::safety::AERIAL_OFFBOARD_COMMANDS`].
@@ -181,6 +182,49 @@ macro_rules! impl_aerial_offboard_now {
             pub fn hold_now(&mut self) -> Result<(), ErrorKind> {
                 self.admit_offboard_now()?;
                 self.inner.backend.hold_now().map_err(ErrorKind::Backend)
+            }
+
+            /// Same grant as [`Self::set_velocity_now`], then one backend tick.
+            pub async fn set_velocity(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
+                self.set_velocity_now(velocity)?;
+                self.inner
+                    .backend
+                    .tick(0.02)
+                    .await
+                    .map_err(ErrorKind::Backend)?;
+                Ok(())
+            }
+
+            /// Same grant as [`Self::set_position_now`], then one backend tick.
+            pub async fn set_position(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
+                self.set_position_now(position)?;
+                self.inner
+                    .backend
+                    .tick(0.02)
+                    .await
+                    .map_err(ErrorKind::Backend)?;
+                Ok(())
+            }
+
+            /// Same grant as [`Self::hold_now`], then one backend tick.
+            pub async fn hold(&mut self) -> Result<(), ErrorKind> {
+                self.hold_now()?;
+                self.inner
+                    .backend
+                    .tick(0.02)
+                    .await
+                    .map_err(ErrorKind::Backend)?;
+                Ok(())
+            }
+
+            /// Apply a stamped planner command. Permit must still be live **and**
+            /// the command younger than [`crate::safety::COMMAND_MAX_AGE_MS`].
+            pub fn apply_velocity_command_now(
+                &mut self,
+                command: Command<Velocity<Ned>>,
+            ) -> Result<(), ErrorKind> {
+                self.require_command_age(command.age_ms(self.inner.backend.authority_now()))?;
+                self.set_velocity_now(command.payload)
             }
         }
     };

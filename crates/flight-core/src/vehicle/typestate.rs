@@ -587,46 +587,6 @@ impl<S: CanBeginLand, B: VehicleBackend> Vehicle<S, B> {
 crate::impl_aerial_offboard_now!();
 
 impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
-    pub async fn set_velocity(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
-        self.set_velocity_now(velocity)?;
-        self.inner
-            .backend
-            .tick(0.02)
-            .await
-            .map_err(ErrorKind::Backend)?;
-        Ok(())
-    }
-
-    /// Apply a stamped planner command. The permit must still be live **and**
-    /// the command younger than [`crate::safety::COMMAND_MAX_AGE_MS`].
-    pub fn apply_velocity_command_now(
-        &mut self,
-        command: Command<Velocity<Ned>>,
-    ) -> Result<(), ErrorKind> {
-        self.require_command_age(command.age_ms(self.inner.backend.authority_now()))?;
-        self.set_velocity_now(command.payload)
-    }
-
-    pub async fn set_position(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
-        self.set_position_now(position)?;
-        self.inner
-            .backend
-            .tick(0.02)
-            .await
-            .map_err(ErrorKind::Backend)?;
-        Ok(())
-    }
-
-    pub async fn hold(&mut self) -> Result<(), ErrorKind> {
-        self.hold_now()?;
-        self.inner
-            .backend
-            .tick(0.02)
-            .await
-            .map_err(ErrorKind::Backend)?;
-        Ok(())
-    }
-
     pub async fn tick(&mut self, dt_secs: f32) -> Result<Telemetry, ErrorKind> {
         overlay_safety(self.inner.backend.tick(dt_secs).await, &self.inner.safety)
     }
