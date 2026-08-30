@@ -131,6 +131,8 @@ Goal: every domain can **hold and move** under the same typestate story; compani
 
 ### B3. Estimation loop trips `estimator_valid`
 
+**Status: landed.** `WorldSession::update_nav` / `Lab::update_nav` feed `ComplementaryAttitude`. Unusable IMU (`SensorHealth::Invalid`, non-finite, bad `dt`) posts `Event::EstimatorInvalid`, which clears kernel `estimator_valid` and latches failsafe if armed. Filter warm-up (fewer than eight good samples) does not trip. The plant quaternion is never written; `unit_attitude` stays `mech::quat_integrate`. `ComplementaryAttitude` is not in `World::try_step`. Fuzzed plant IMU stays finite and does not trip. Full ESKF/GNSS fusion is B3b.
+
 **Acceptance:**
 
 1. A navigation update (Mahony/complementary or successor) **may** clear `estimator_valid` on bad IMU without writing plant quaternion.
@@ -232,8 +234,8 @@ Only after A is usable and B1–B2 have a written status (landed or explicitly d
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B2 landed.** Next: **B3 / B4 / B5** (estimation bit, planning, coordination).
-2. **B3 / B4 / B5** (estimation bit, planning, coordination).
+1. **A1–A6 landed. B1–B3 landed.** Next: **B4 / B5** (planning, coordination).
+2. **B4 / B5** (planning, coordination).
 3. **C1–C3** (proofs, traces, scenarios) can overlap A3.
 4. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
 5. **D\*** morphologies last.

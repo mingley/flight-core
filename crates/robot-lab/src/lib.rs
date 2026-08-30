@@ -19,7 +19,9 @@
 //! `ResearchRun::rejects`) with domain, phase/kind, attempted event, reject
 //! display, and remaining-spec id when the bounce is one of P1–P13.
 //! [`Observation::broken`] names the property ids from a refused `try_step`
-//! without an extra plant step.
+//! without an extra plant step. [`Lab::update_nav`] feeds the complementary
+//! filter; unusable IMU clears kernel `estimator_valid` without writing the
+//! plant quaternion.
 //!
 //! Observe / act / research share the same [`WorldSession`] plant as the
 //! typestate fleet APIs. [`Lab::world`] is a snapshot; [`Lab::session`] is live.

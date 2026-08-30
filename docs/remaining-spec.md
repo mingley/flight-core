@@ -28,6 +28,7 @@ The workspace already has a usable slice of that goal. In-scope functional items
 - Aerial position hold: plant `hold_ned`, kernel `hold_velocity_ned` / `HOLD_KP`, Kani `hold_velocity_restores_pose`, `LabCmd::Hold` + `LabCmd::Position`, `TypedHold` / `TypedPositionHold` / `TypedFleetHold`, demo `POST /api/hold`.
 - Ground pose hold: same plant `hold_ned` / `position_hold_restores_pose` / Kani restore fact; `GroundVehicle<Moving>::hold_now`; `WorldSession::attach_ground_hold`; `TypedGroundHold`. Parked / EStop compile-fail. `LabCmd::Position` stays aerial-only.
 - Marine NED DP: same plant field; `MarineVehicle` `hold_now` on `CanThrust`; `attach_marine_hold`; `TypedMarineHold`. Docked / Failsafe compile-fail. Distinct from `StationKeep`.
+- Aerial nav trip: `WorldSession::update_nav` / `Lab::update_nav` feed `ComplementaryAttitude`. Unusable IMU posts `Event::EstimatorInvalid` (clears `estimator_valid`, latches failsafe if armed) and never writes the plant quaternion. Filter warm-up does not trip. `unit_attitude` stays `mech::quat_integrate`.
 - Research loop: `Lab::observe` / `act_through_attach` / `research` / `replay_until` / `research_probe`, typed agents with `actions_applied == 0` for legal motion, JSONL + Foxglove-shaped MCAP. `WorldImu` + `FuzzedImu` read noisy samples without replacing `WorldSession::step`.
 - Live PX4 SIH companion path: `sitl_live --ignored` recorded pass (14.59s, `px4io/px4-sitl:v1.18.0-beta2`); CI job `sitl`.
 
@@ -96,7 +97,7 @@ Idle certificates still include the property (true). Do not drop it from the vec
 
 ### 3.4 Attitude estimator in the trusted loop
 
-**Status: landed as physics-truth.** The plant quaternion is **physics truth** (`mech::quat_integrate`, property `unit_attitude`). `ComplementaryAttitude` is not in `World::try_step`. Kernel `estimator_valid` stays a safety bit, not the Mahony filter. ESKF / GNSS fusion remains out of scope. Wiring the filter so a bad IMU clears `estimator_valid` is a later navigation loop, not required for the current verified plant.
+**Status: landed as a navigation trip, physics-truth plant.** The plant quaternion is **physics truth** (`mech::quat_integrate`, property `unit_attitude`). `ComplementaryAttitude` is not in `World::try_step`. `WorldSession::update_nav` / `Lab::update_nav` may post `Event::EstimatorInvalid` on an unusable IMU sample, which clears kernel `estimator_valid` and latches failsafe if armed. Filter warm-up does not trip. ESKF / GNSS fusion remains out of scope (NEXT B3b).
 
 ---
 
@@ -283,7 +284,7 @@ Order is technical dependence, not calendar.
 8. §9 CI: GPU hydro job — landed. Kani job — landed. rclrs job — landed. Creusot job — landed. SITL job — landed.
 9. §3.1 Creusot toolchain + discharge — landed.
 10. §4.1 live SITL — landed (recorded `sitl_live --ignored` pass, 14.59s, SIH v1.18.0-beta2).
-11. §3.4 estimator bit or a written “physics-truth only” decision — landed (physics-truth).
+11. §3.4 estimator bit or a written “physics-truth only” decision — landed (physics-truth plant; session nav may trip the kernel bit).
 12. §5.5 fuzzed IMU against `WorldSession` — landed.
 
 Items in §2 (P1–P14) are constraints on every step, not a phase.
@@ -294,9 +295,9 @@ Items in §2 (P1–P14) are constraints on every step, not a phase.
 
 **Moved to the north star** ([`docs/NEXT.md`](NEXT.md)), not “never”:
 
-- Ground GPS/pose hold (NEXT B1).
-- Marine DP / NED pose hold beyond `StationKeep` (NEXT B2).
-- Wiring an estimator so a bad IMU clears `estimator_valid` (NEXT B3). Full PX4 EKF/RTK/mission planner stays a non-goal.
+- Ground GPS/pose hold (NEXT B1) — landed.
+- Marine DP / NED pose hold beyond `StationKeep` (NEXT B2) — landed.
+- Wiring an estimator so a bad IMU clears `estimator_valid` (NEXT B3) — landed. Full PX4 EKF/RTK/mission planner stays a non-goal.
 - Physical FCH1 recorded run (NEXT B7); protocol miss-zero is already landed.
 - Scenario DSL and hydro/body scale with property-preserving tests (NEXT C3–C4). Not a coastline-scale ocean product by default.
 

@@ -160,7 +160,7 @@ New catalogs must declare bodies explicitly and get a typed agent skip list (see
 | Hydro | Rusanov Saint-Venant, GPU optional | Finer grid only with volume/land-dry tests; not a coastal-engineering product by default |
 | Energy | battery gates thrust | Power/thermal models as properties when added |
 | Sensing | `Imu` traits, `WorldImu`, fuzz, jsonl replay | Camera/GNSS/DVL as typed samples feeding estimation, not replacing the plant |
-| Estimation | `estimator_valid` bit; complementary filter not in `try_step` | Filter can trip the bit; ESKF/GNSS fusion is a navigation crate, plant pose stays physics-truth until a written decision |
+| Estimation | `estimator_valid` bit; complementary filter not in `try_step`; `update_nav` may trip the bit | ESKF/GNSS fusion is a navigation crate, plant pose stays physics-truth until a written decision |
 | Control | velocity / position / aerial hold / twists / wrenches | Ground hold, marine DP, allocation, actuator limits as machines |
 | Planning | none as a crate | Paths that execute only through legal attach |
 | Comms | MAVLink, ROS 2 CDR/`rclrs`, HITL FCH1, demo HTTP | More autopilots; still Rust. No cloud bus required |
@@ -204,7 +204,7 @@ Rules that do not change:
 
 - P12: flush all granted setpoints, then **one** `WorldSession::step`.
 - P13: ungranted aerial `clear_command()` **wipes** `hold_ned`.
-- Plant quaternion is physics truth. Kernel `estimator_valid` is a safety bit.
+- Plant quaternion is physics truth. Kernel `estimator_valid` is a safety bit. `WorldSession::update_nav` may clear that bit on unusable IMU.
 - `grant_*` are attach walks. Do not wrap `failsafe_now` / `takeoff_now` / `land_now` as recursive `attach_*`.
 - `SimBackend` is not the verified world.
 - MSRV **1.85** (P14). Creusot 0.5 / Kani installer rustc are not MSRV bumps.

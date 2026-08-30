@@ -204,6 +204,22 @@ impl Lab {
         self.session.attach_failsafe(id)
     }
 
+    /// Complementary filter tick. Unusable IMU clears kernel
+    /// `estimator_valid` and does not write the plant quaternion.
+    pub fn update_nav(
+        &self,
+        id: &'static str,
+        sample: flight_core::sensors::ImuSample<flight_core::frames::Body>,
+        dt: f32,
+    ) -> Result<bool, BackendError> {
+        self.session.update_nav(id, sample, dt)
+    }
+
+    /// Sample the plant IMU and run [`Self::update_nav`].
+    pub fn update_nav_from_plant(&self, id: &'static str, dt: f32) -> Result<bool, BackendError> {
+        self.session.update_nav_from_plant(id, dt)
+    }
+
     /// E-stop → Parked.
     pub fn attach_reset(&self, id: &'static str) -> Result<GroundWorldBackend, BackendError> {
         self.session.attach_reset(id)

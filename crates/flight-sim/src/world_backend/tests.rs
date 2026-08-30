@@ -1447,43 +1447,22 @@ fn fuzzed_world_imu_hold_keeps_properties() {
         let sample = imu.sample().unwrap();
         assert!(sample.is_finite());
         assert!(sample.is_usable());
+        session.update_nav("drone", sample, 0.02).unwrap();
         session.attach_hold("drone").unwrap();
         session.step(0.02).unwrap();
     }
     assert!(session.world().body("drone").unwrap().hold_ned.is_some());
-    assert!(session.world().all_hold());
-}
-
-#[test]
-fn unusable_imu_trips_failsafe_and_still_holds() {
-    use flight_core::sensors::{Imu, ImuSample, SensorError, SensorHealth};
-    use flight_core::time::MonotonicInstant;
-    use flight_core::vector::{Acceleration, AngularVelocity};
-
-    struct DeadImu;
-    impl Imu for DeadImu {
-        type Frame = BodyFrame;
-        fn sample(&mut self) -> Result<ImuSample<BodyFrame>, SensorError> {
-            Ok(ImuSample {
-                timestamp: MonotonicInstant::from_millis(0),
-                accel: Acceleration::body(0.0, 0.0, 0.0),
-                gyro: AngularVelocity::body_rad(0.0, 0.0, 0.0),
-                covariance: None,
-                temperature: None,
-                status: SensorHealth::Invalid,
-                sequence: 0,
-            })
-        }
-    }
-
-    let session = WorldSession::inland(3);
-    session.attach_takeoff("drone").unwrap();
-    let sample = DeadImu.sample().unwrap();
-    assert!(!sample.is_usable());
-    session.attach_failsafe("drone").unwrap();
-    session.step(0.02).unwrap();
     assert!(
         session
+            .world()
+            .body("drone")
+            .unwrap()
+            .aerial
+            .unwrap()
+            .estimator_valid
+    );
+    assert!(
+        !session
             .world()
             .body("drone")
             .unwrap()
@@ -1492,6 +1471,87 @@ fn unusable_imu_trips_failsafe_and_still_holds() {
             .failsafe
     );
     assert!(session.world().all_hold());
+}
+
+fn dead_imu_sample() -> ImuSample<BodyFrame> {
+    use flight_core::sensors::{ImuSample, SensorHealth};
+    use flight_core::time::MonotonicInstant;
+    use flight_core::vector::{Acceleration, AngularVelocity};
+
+    ImuSample {
+        timestamp: MonotonicInstant::from_millis(0),
+        accel: Acceleration::body(0.0, 0.0, 0.0),
+        gyro: AngularVelocity::body_rad(0.0, 0.0, 0.0),
+        covariance: None,
+        temperature: None,
+        status: SensorHealth::Invalid,
+        sequence: 0,
+    }
+}
+
+#[test]
+fn nav_warmup_does_not_clear_estimator_valid() {
+    let session = WorldSession::inland(3);
+    session.attach_takeoff("drone").unwrap();
+    let q0 = session.world().body("drone").unwrap().quat;
+    let filter_valid = session.update_nav_from_plant("drone", 0.02).unwrap();
+    assert!(
+        !filter_valid,
+        "first plant sample is warm-up, not yet valid"
+    );
+    let aerial = session.world().body("drone").unwrap().aerial.unwrap();
+    assert!(aerial.estimator_valid);
+    assert!(!aerial.failsafe);
+    assert_eq!(session.world().body("drone").unwrap().quat, q0);
+    assert!(session.world().all_hold());
+}
+
+#[test]
+fn nav_update_does_not_write_plant_quaternion() {
+    let session = WorldSession::inland(3);
+    session.attach_takeoff("drone").unwrap();
+    let q0 = session.world().body("drone").unwrap().quat;
+    for _ in 0..20 {
+        session.update_nav_from_plant("drone", 0.02).unwrap();
+    }
+    assert_eq!(session.world().body("drone").unwrap().quat, q0);
+    assert!(
+        session
+            .world()
+            .body("drone")
+            .unwrap()
+            .aerial
+            .unwrap()
+            .estimator_valid
+    );
+    assert!(session.world().all_hold());
+}
+
+#[test]
+fn unusable_imu_trips_failsafe_and_still_holds() {
+    let session = WorldSession::inland(3);
+    session.attach_takeoff("drone").unwrap();
+    let q0 = session.world().body("drone").unwrap().quat;
+    let sample = dead_imu_sample();
+    assert!(!sample.is_usable());
+    assert!(!session.update_nav("drone", sample, 0.02).unwrap());
+    let aerial = session.world().body("drone").unwrap().aerial.unwrap();
+    assert!(!aerial.estimator_valid);
+    assert!(aerial.failsafe);
+    assert_eq!(session.world().body("drone").unwrap().quat, q0);
+    session.step(0.02).unwrap();
+    assert!(session.world().all_hold());
+    assert!(session
+        .world()
+        .last_properties
+        .iter()
+        .any(|p| p.id == "unit_attitude" && p.holds));
+    assert_eq!(
+        session
+            .update_nav("rover", dead_imu_sample(), 0.02)
+            .unwrap_err(),
+        BackendError::Protocol
+    );
 }
 
 #[test]

@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use flight_core::domain::Domain;
 use flight_core::frames::Body as BodyFrame;
 use flight_core::ground::{ground_step, GroundEvent};
 use flight_core::marine::{marine_step, MarineEvent, MarinePhase};
 use flight_core::mech::quat_rotate_inv;
+use flight_core::nav::{imu_trips_estimator, ComplementaryAttitude};
 use flight_core::safety::{self, Event, Phase};
 use flight_core::sensors::{ImuSample, SensorHealth};
 use flight_core::time::{Clock, MonotonicInstant, VirtualClock};
@@ -21,6 +24,7 @@ pub(crate) enum Setpoint {
 pub(crate) struct Plant {
     pub(crate) world: World,
     pub(crate) clock: VirtualClock,
+    pub(crate) attitude: HashMap<&'static str, ComplementaryAttitude>,
 }
 
 impl std::fmt::Debug for Plant {
@@ -140,38 +144,45 @@ pub(crate) fn snapshot(
     imu_seq: u32,
     last_command: &'static str,
 ) -> Result<Telemetry, BackendError> {
-    let (phase, armed, actuators, offboard, failsafe) = match body.domain {
-        Domain::Aerial => {
-            let s = body.aerial.ok_or(BackendError::Protocol)?;
-            (
-                s.phase,
-                s.armed,
-                s.actuators_enabled,
-                s.offboard,
-                s.failsafe,
-            )
-        }
-        Domain::Ground => {
-            let s = body.ground.ok_or(BackendError::Protocol)?;
-            (
-                Phase::Ready,
-                s.drive_enabled,
-                s.drive_enabled,
-                false,
-                s.estop,
-            )
-        }
-        Domain::Surface | Domain::Underwater => {
-            let s = body.marine.ok_or(BackendError::Protocol)?;
-            (
-                Phase::Ready,
-                s.thrust_enabled,
-                s.thrust_enabled,
-                s.phase == MarinePhase::Underway,
-                s.failsafe,
-            )
-        }
-    };
+    let (phase, armed, actuators, offboard, failsafe, imu_healthy, estimator_valid) =
+        match body.domain {
+            Domain::Aerial => {
+                let s = body.aerial.ok_or(BackendError::Protocol)?;
+                (
+                    s.phase,
+                    s.armed,
+                    s.actuators_enabled,
+                    s.offboard,
+                    s.failsafe,
+                    s.imu_healthy,
+                    s.estimator_valid,
+                )
+            }
+            Domain::Ground => {
+                let s = body.ground.ok_or(BackendError::Protocol)?;
+                (
+                    Phase::Ready,
+                    s.drive_enabled,
+                    s.drive_enabled,
+                    false,
+                    s.estop,
+                    true,
+                    true,
+                )
+            }
+            Domain::Surface | Domain::Underwater => {
+                let s = body.marine.ok_or(BackendError::Protocol)?;
+                (
+                    Phase::Ready,
+                    s.thrust_enabled,
+                    s.thrust_enabled,
+                    s.phase == MarinePhase::Underway,
+                    s.failsafe,
+                    true,
+                    true,
+                )
+            }
+        };
     let imu = body_imu(body, now, imu_seq);
     Ok(Telemetry {
         timestamp: now,
@@ -185,8 +196,8 @@ pub(crate) fn snapshot(
         yaw_rad: body.yaw_rad,
         imu: Some(imu),
         imu_health: SensorHealth::Ok,
-        imu_healthy: true,
-        estimator_valid: true,
+        imu_healthy,
+        estimator_valid,
         armed,
         actuators_enabled: actuators,
         offboard,
@@ -202,9 +213,13 @@ pub(crate) fn preflight_from(
 ) -> Result<PreflightReport, BackendError> {
     let plant = session.lock();
     let body = require_body(&plant.world, id)?;
+    let (imu_healthy, estimator_valid) = body
+        .aerial
+        .map(|s| (s.imu_healthy, s.estimator_valid))
+        .unwrap_or((true, true));
     Ok(PreflightReport {
-        imu_healthy: true,
-        estimator_valid: true,
+        imu_healthy,
+        estimator_valid,
         battery_ok: body.charge_j > 0.0,
         gps_ok: true,
         notes: PreflightNotes {
@@ -254,4 +269,35 @@ pub(crate) fn telemetry_body(
     let plant = session.lock();
     let body = require_body(&plant.world, id)?;
     snapshot(body, plant.clock.now(), *imu_seq, last_command)
+}
+
+/// Feed one IMU sample through the complementary filter. Unusable samples
+/// clear kernel `estimator_valid` (and latch failsafe if armed) without
+/// writing the plant quaternion. Filter warm-up is not a trip.
+pub(crate) fn update_nav(
+    session: &WorldSession,
+    body_id: &'static str,
+    sample: ImuSample<BodyFrame>,
+    dt: f32,
+) -> Result<bool, BackendError> {
+    let trip = imu_trips_estimator(&sample, dt);
+    let filter_valid = {
+        let mut plant = session.lock();
+        if require_body(&plant.world, body_id)?.aerial.is_none() {
+            return Err(BackendError::Protocol);
+        }
+        let att = plant.attitude.entry(body_id).or_default();
+        if trip {
+            att.invalidate();
+            false
+        } else {
+            att.update(sample.gyro, sample.accel, dt);
+            att.is_valid()
+        }
+    };
+    if trip {
+        aerial_event(session, body_id, Event::EstimatorInvalid)?;
+        return Ok(false);
+    }
+    Ok(filter_valid)
 }

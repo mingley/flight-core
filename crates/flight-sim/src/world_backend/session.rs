@@ -24,6 +24,7 @@ impl WorldSession {
             inner: Arc::new(Mutex::new(Plant {
                 world,
                 clock: VirtualClock::new(),
+                attitude: Default::default(),
             })),
         }
     }
@@ -361,7 +362,8 @@ impl WorldSession {
     }
 
     /// One verified step. Property failure is `BackendError::Rejected` and
-    /// the plant stays at the previous legal snapshot.
+    /// the plant stays at the previous legal snapshot. Does not run the
+    /// navigation loop — use [`Self::update_nav`].
     pub fn step(&self, dt_secs: f32) -> Result<(), BackendError> {
         let dt = clamp_dt(dt_secs);
         let mut plant = self.lock();
@@ -370,6 +372,33 @@ impl WorldSession {
         }
         plant.clock.advance(Duration::from_secs_f32(dt));
         Ok(())
+    }
+
+    /// Feed one IMU sample through [`flight_core::nav::ComplementaryAttitude`].
+    ///
+    /// Unusable samples (`SensorHealth::Invalid`, non-finite, bad `dt`)
+    /// post `Event::EstimatorInvalid`, which clears kernel `estimator_valid`
+    /// and latches failsafe if the vehicle is armed. The plant quaternion is
+    /// never written. Filter warm-up (fewer than eight good samples) returns
+    /// `Ok(false)` without tripping the kernel bit.
+    pub fn update_nav(
+        &self,
+        body_id: &'static str,
+        sample: ImuSample<BodyFrame>,
+        dt: f32,
+    ) -> Result<bool, BackendError> {
+        super::shared::update_nav(self, body_id, sample, dt)
+    }
+
+    /// Sample this body's plant IMU and run [`Self::update_nav`].
+    pub fn update_nav_from_plant(
+        &self,
+        body_id: &'static str,
+        dt: f32,
+    ) -> Result<bool, BackendError> {
+        let mut imu = self.imu(body_id);
+        let sample = imu.sample().map_err(|_| BackendError::Rejected("imu"))?;
+        self.update_nav(body_id, sample, dt)
     }
 
     /// IMU that reads this body's plant specific force and rate without

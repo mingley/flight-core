@@ -345,6 +345,49 @@ fn observation_broken_names_refused_try_step_without_extra_step() {
 }
 
 #[test]
+fn unusable_imu_nav_update_trips_estimator_and_still_holds() {
+    use flight_core::sensors::{ImuSample, SensorHealth};
+    use flight_core::time::MonotonicInstant;
+    use flight_core::vector::{Acceleration, AngularVelocity};
+
+    let mut lab = Lab::inland(3);
+    lab.attach_takeoff("drone").unwrap();
+    let q0 = body(&lab, "drone").quat;
+    let sample = ImuSample {
+        timestamp: MonotonicInstant::from_millis(0),
+        accel: Acceleration::body(0.0, 0.0, 0.0),
+        gyro: AngularVelocity::body_rad(0.0, 0.0, 0.0),
+        covariance: None,
+        temperature: None,
+        status: SensorHealth::Invalid,
+        sequence: 0,
+    };
+    assert!(!lab.update_nav("drone", sample, 0.02).unwrap());
+    let obs = lab.observe();
+    let a = obs
+        .robots
+        .iter()
+        .find(|r| r.id == "drone")
+        .unwrap()
+        .aerial
+        .as_ref()
+        .unwrap();
+    assert!(!a.estimator_valid);
+    assert!(a.failsafe);
+    assert_eq!(body(&lab, "drone").quat, q0);
+    lab.step(0.02);
+    let after = lab.observe();
+    assert!(lab.all_hold());
+    assert!(after.all_hold);
+    assert!(after.broken.is_empty());
+    assert!(lab
+        .world()
+        .last_properties
+        .iter()
+        .any(|p| p.id == "unit_attitude" && p.holds));
+}
+
+#[test]
 fn legal_tools_lists_env_and_robot_cmds_as_json() {
     let lab = Lab::coastal(1);
     let obs = lab.observe();
