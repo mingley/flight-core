@@ -790,21 +790,17 @@ mod tests {
         let VehicleHandle::Offboard(mut v) = VehicleHandle::from_state(backend, safety) else {
             panic!("offboard safety maps to Offboard");
         };
-        assert_eq!(
-            AerialOffboard::COMMANDS,
-            &["set_velocity", "set_position", "hold"]
-        );
         let _ = v.backend_mut().trigger_failsafe_now();
         assert!(v.backend().authority_epoch() >= 1);
-        let vel = v.set_velocity_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0));
-        assert!(matches!(vel, Err(ErrorKind::StaleAuthority(_))), "{vel:?}");
-        let pos = v.set_position_now(Position::<Ned>::ned(0.0, 0.0, -1.0));
-        assert!(matches!(pos, Err(ErrorKind::StaleAuthority(_))), "{pos:?}");
-        let hold = v.hold_now();
-        assert!(
-            matches!(hold, Err(ErrorKind::StaleAuthority(_))),
-            "{hold:?}"
-        );
+        let mut names = Vec::new();
+        v.for_each_offboard_now(|name, result| {
+            names.push(name);
+            assert!(
+                matches!(result, Err(ErrorKind::StaleAuthority(_))),
+                "{name}: {result:?}"
+            );
+        });
+        assert_eq!(names.as_slice(), AerialOffboard::COMMANDS);
         assert!(v.safety().offboard);
     }
 }

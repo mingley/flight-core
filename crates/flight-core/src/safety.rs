@@ -368,7 +368,8 @@ macro_rules! define_aerial_authority {
         );
 
         /// Public capability command names. Typestate `*_now` and async
-        /// wrappers are generated from this list (`impl_aerial_offboard_now`).
+        /// wrappers are generated from the same idents via
+        /// `with_aerial_offboard_commands` (lockstep `OFFBOARD_NOW_COMMANDS`).
         #[cfg(not(creusot))]
         pub const AERIAL_OFFBOARD_COMMANDS: &[&str] = &[$(stringify!($cmd_name)),+];
 

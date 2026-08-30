@@ -1058,6 +1058,26 @@ mod tests {
         assert_eq!(AerialOffboard::GATE, "OffboardControl");
     }
 
+    #[test]
+    fn for_each_offboard_now_covers_the_dsl_commands() {
+        let safety = safety::step_all(
+            ready_safety(),
+            &[Event::Arm, Event::HeartbeatFresh, Event::EnterOffboard],
+        )
+        .unwrap();
+        let VehicleHandle::Offboard(mut v) =
+            VehicleHandle::from_state(NullBackend::default(), safety)
+        else {
+            panic!("offboard safety maps to Offboard");
+        };
+        let mut names = Vec::new();
+        v.for_each_offboard_now(|name, result| {
+            names.push(name);
+            result.unwrap_or_else(|e| panic!("{name}: {e}"));
+        });
+        assert_eq!(names.as_slice(), AerialOffboard::COMMANDS);
+    }
+
     #[tokio::test]
     async fn happy_mission_with_null_backend() {
         let v = Vehicle::<Disconnected, NullBackend>::null()

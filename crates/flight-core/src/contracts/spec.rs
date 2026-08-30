@@ -158,17 +158,114 @@ vehicle_contract! {
     }
 }
 
+/// Pass the aerial OffboardControl command idents to a callback macro.
+///
+/// Must stringify to [`crate::safety::AERIAL_OFFBOARD_COMMANDS`]. A new ident
+/// without an [`impl_aerial_offboard_command`] arm fails `cargo check`.
+#[macro_export]
+macro_rules! with_aerial_offboard_commands {
+    ($callback:path) => {
+        $callback!(set_velocity, set_position, hold);
+    };
+}
+
+/// One OffboardControl command generated from the aerial table.
+///
+/// Adding a name to `define_aerial_authority!` `commands` without an arm here
+/// fails `cargo check`.
+#[macro_export]
+macro_rules! impl_aerial_offboard_command {
+    (set_velocity) => {
+        /// Same grant as [`Self::set_velocity`] without stepping the plant.
+        pub fn set_velocity_now(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
+            self.admit_offboard_now()?;
+            self.inner
+                .backend
+                .set_velocity_ned_now(velocity)
+                .map_err(ErrorKind::Backend)
+        }
+
+        /// Same grant as [`Self::set_velocity_now`], then one backend tick.
+        pub async fn set_velocity(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
+            self.set_velocity_now(velocity)?;
+            self.inner
+                .backend
+                .tick(0.02)
+                .await
+                .map_err(ErrorKind::Backend)?;
+            Ok(())
+        }
+    };
+    (set_position) => {
+        /// Same grant as [`Self::set_position`] without stepping the plant.
+        pub fn set_position_now(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
+            self.admit_offboard_now()?;
+            self.inner
+                .backend
+                .set_position_ned_now(position)
+                .map_err(ErrorKind::Backend)
+        }
+
+        /// Same grant as [`Self::set_position_now`], then one backend tick.
+        pub async fn set_position(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
+            self.set_position_now(position)?;
+            self.inner
+                .backend
+                .tick(0.02)
+                .await
+                .map_err(ErrorKind::Backend)?;
+            Ok(())
+        }
+    };
+    (hold) => {
+        /// Hold at the current NED pose. Same grant as [`Self::set_position_now`].
+        pub fn hold_now(&mut self) -> Result<(), ErrorKind> {
+            self.admit_offboard_now()?;
+            self.inner.backend.hold_now().map_err(ErrorKind::Backend)
+        }
+
+        /// Same grant as [`Self::hold_now`], then one backend tick.
+        pub async fn hold(&mut self) -> Result<(), ErrorKind> {
+            self.hold_now()?;
+            self.inner
+                .backend
+                .tick(0.02)
+                .await
+                .map_err(ErrorKind::Backend)?;
+            Ok(())
+        }
+    };
+}
+
+/// Dummy now-call for [`Vehicle::for_each_offboard_now`]. Same idents as
+/// [`impl_aerial_offboard_command`].
+#[macro_export]
+macro_rules! call_aerial_offboard_now {
+    ($v:ident, set_velocity) => {
+        $v.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+    };
+    ($v:ident, set_position) => {
+        $v.set_position_now(Position::<Ned>::ned(0.0, 0.0, -2.0))
+    };
+    ($v:ident, hold) => {
+        $v.hold_now()
+    };
+}
+
 /// Generate OffboardControl now-methods, async wrappers, and stamped-command
 /// apply from the aerial command table.
 ///
 /// Expand in `vehicle/typestate.rs` (same module as [`Vehicle`] private fields).
-/// Public names must match [`crate::safety::AERIAL_OFFBOARD_COMMANDS`].
+/// `()` dispatches [`with_aerial_offboard_commands`]; those idents must
+/// stringify to [`crate::safety::AERIAL_OFFBOARD_COMMANDS`].
 #[macro_export]
 macro_rules! impl_aerial_offboard_now {
     () => {
+        $crate::with_aerial_offboard_commands!($crate::impl_aerial_offboard_now);
+    };
+    ($($cmd:ident),+) => {
         /// Public command names generated with the `*_now` methods.
-        pub const OFFBOARD_NOW_COMMANDS: &'static [&'static str] =
-            &["set_velocity", "set_position", "hold"];
+        pub const OFFBOARD_NOW_COMMANDS: &'static [&'static str] = &[$(stringify!($cmd)),+];
 
         impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
             /// AerialOffboard command gate: live permit, then kernel
@@ -180,62 +277,7 @@ macro_rules! impl_aerial_offboard_now {
                 Ok(())
             }
 
-            /// Same grant as [`Self::set_velocity`] without stepping the plant.
-            pub fn set_velocity_now(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
-                self.admit_offboard_now()?;
-                self.inner
-                    .backend
-                    .set_velocity_ned_now(velocity)
-                    .map_err(ErrorKind::Backend)
-            }
-
-            /// Same grant as [`Self::set_position`] without stepping the plant.
-            pub fn set_position_now(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
-                self.admit_offboard_now()?;
-                self.inner
-                    .backend
-                    .set_position_ned_now(position)
-                    .map_err(ErrorKind::Backend)
-            }
-
-            /// Hold at the current NED pose. Same grant as [`Self::set_position_now`].
-            pub fn hold_now(&mut self) -> Result<(), ErrorKind> {
-                self.admit_offboard_now()?;
-                self.inner.backend.hold_now().map_err(ErrorKind::Backend)
-            }
-
-            /// Same grant as [`Self::set_velocity_now`], then one backend tick.
-            pub async fn set_velocity(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
-                self.set_velocity_now(velocity)?;
-                self.inner
-                    .backend
-                    .tick(0.02)
-                    .await
-                    .map_err(ErrorKind::Backend)?;
-                Ok(())
-            }
-
-            /// Same grant as [`Self::set_position_now`], then one backend tick.
-            pub async fn set_position(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
-                self.set_position_now(position)?;
-                self.inner
-                    .backend
-                    .tick(0.02)
-                    .await
-                    .map_err(ErrorKind::Backend)?;
-                Ok(())
-            }
-
-            /// Same grant as [`Self::hold_now`], then one backend tick.
-            pub async fn hold(&mut self) -> Result<(), ErrorKind> {
-                self.hold_now()?;
-                self.inner
-                    .backend
-                    .tick(0.02)
-                    .await
-                    .map_err(ErrorKind::Backend)?;
-                Ok(())
-            }
+            $($crate::impl_aerial_offboard_command!($cmd);)+
 
             /// Apply a stamped planner command. Permit must still be live **and**
             /// the command younger than [`crate::safety::COMMAND_MAX_AGE_MS`].
@@ -249,6 +291,22 @@ macro_rules! impl_aerial_offboard_now {
                 }
                 self.require_command_age(command.age_ms(now))?;
                 self.set_velocity_now(command.payload)
+            }
+
+            /// Invoke every generated OffboardControl now-method.
+            ///
+            /// The leftover fault lab uses this so a command added to the
+            /// kernel table is either covered here or does not compile.
+            pub fn for_each_offboard_now<F>(&mut self, mut f: F)
+            where
+                F: FnMut(&'static str, Result<(), ErrorKind>),
+            {
+                $(
+                    f(
+                        stringify!($cmd),
+                        $crate::call_aerial_offboard_now!(self, $cmd),
+                    );
+                )+
             }
         }
     };

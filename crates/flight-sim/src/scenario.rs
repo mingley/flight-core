@@ -11,7 +11,7 @@ use flight_core::frames::Ned;
 use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use flight_core::temporal::{heartbeat_revoke_event, Estimate, Observation};
 use flight_core::time::MonotonicInstant;
-use flight_core::vector::{Position, Velocity};
+use flight_core::vector::Velocity;
 use flight_core::vehicle::{ErrorKind, Offboard, Vehicle, VehicleHandle};
 use robot_world::World;
 
@@ -284,30 +284,28 @@ pub fn run_revoke_table() -> Result<ScenarioReport, String> {
     })
 }
 
-/// Lockstep: adding a name to [`AerialOffboard::COMMANDS`] without covering
-/// it here fails this runner. Leftover typestate stays Offboard.
+/// Leftover typestate stays Offboard. Every kernel command is exercised
+/// through [`Vehicle::for_each_offboard_now`] (unknown table command = compile fail).
 fn leftover_offboard_refuses_commands(
     v: &mut Vehicle<Offboard, WorldBackend>,
     event: Event,
 ) -> Result<(), String> {
-    const COVERED: &[&str] = &["set_velocity", "set_position", "hold"];
-    if AerialOffboard::COMMANDS != COVERED {
+    let mut names = Vec::new();
+    let mut first_err = None;
+    v.for_each_offboard_now(|name, result| {
+        names.push(name);
+        if first_err.is_none() && !matches!(result, Err(ErrorKind::StaleAuthority(_))) {
+            first_err = Some(format!("{name} after {event:?}: {result:?}"));
+        }
+    });
+    if names.as_slice() != AerialOffboard::COMMANDS {
         return Err(format!(
-            "AerialOffboard::COMMANDS {:?} must be exercised after inject ({COVERED:?})",
+            "for_each_offboard_now names {names:?} must match COMMANDS {:?}",
             AerialOffboard::COMMANDS
         ));
     }
-    let vel = v.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2));
-    if !matches!(vel, Err(ErrorKind::StaleAuthority(_))) {
-        return Err(format!("set_velocity after {event:?}: {vel:?}"));
-    }
-    let pos = v.set_position_now(Position::<Ned>::ned(0.0, 0.0, -2.0));
-    if !matches!(pos, Err(ErrorKind::StaleAuthority(_))) {
-        return Err(format!("set_position after {event:?}: {pos:?}"));
-    }
-    let hold = v.hold_now();
-    if !matches!(hold, Err(ErrorKind::StaleAuthority(_))) {
-        return Err(format!("hold after {event:?}: {hold:?}"));
+    if let Some(e) = first_err {
+        return Err(e);
     }
     if !v.safety().offboard {
         return Err(format!(
@@ -583,6 +581,7 @@ mod tests {
 
     #[test]
     fn gps_loss_revokes_position_control_authority() {
+        use flight_core::vector::Position;
         use flight_core::vehicle::VehicleHandle;
 
         let session = WorldSession::inland(1);

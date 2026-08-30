@@ -315,10 +315,12 @@ if those disagree with the kernel predicates.
 **is** the kernel function; `admit` **is** `admit_offboard_command`;
 `inject` is `Some(event)` iff `revokes`;
 `COMMANDS` **is** `AERIAL_OFFBOARD_COMMANDS`; `TRANSITIONS` / `GATE` /
-`UI_FORBIDDEN` are the capability surface). `impl_aerial_offboard_now!`
-generates `admit_offboard_now` / `set_velocity_now` / `set_position_now` /
-`hold_now`, the matching async wrappers (`set_velocity` / `set_position` /
-`hold`), and `apply_velocity_command_now`. `AerialOffboard::evaluate` runs `MONITORS` (including
+`UI_FORBIDDEN` are the capability surface). `with_aerial_offboard_commands!`
+passes the OffboardControl command idents (lockstepped to the kernel
+`commands` table) to `impl_aerial_offboard_now!`, which
+generates `admit_offboard_now`, each `*_now` / async wrapper, `for_each_offboard_now`,
+and `apply_velocity_command_now`. A command ident without a method arm
+fails `cargo check`. `AerialOffboard::evaluate` runs `MONITORS` (including
 `OffboardAdmitted`, which is kernel `admit_offboard_command`).
 `prove_aerial_authority!` expands to Kani `dsl_revokes_match_kernel`.
 Checked-in generated artifacts under [`docs/generated/`](generated/) must
