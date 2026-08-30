@@ -15,7 +15,6 @@ use flight_core::vector::Velocity;
 use flight_core::vehicle::{Offboard, Vehicle, VehicleHandle};
 use robot_world::World;
 
-use super::world_backend::shared::aerial_event;
 use super::world_backend::{WorldBackend, WorldSession};
 
 /// Fault injected at a simulation time.
@@ -264,7 +263,8 @@ pub fn run_revoke_table() -> Result<ScenarioReport, String> {
         };
         v.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
             .map_err(|err| format!("live set_velocity before {e:?}: {err}"))?;
-        aerial_event(session.aerial("drone").session(), "drone", inject)
+        session
+            .inject_revoke("drone", inject)
             .map_err(|err| format!("inject {e:?}: {err}"))?;
         leftover_offboard_refuses_commands(&mut v, inject)?;
         // Step after leftover checks so P13 can wipe an ungranted command
@@ -405,15 +405,10 @@ pub fn replay_jsonl(text: &str, reqs: &[Requirement]) -> Result<(), MonitorFail>
     evaluate_trace(&samples, reqs)
 }
 
-fn inject_drone_event(session: &WorldSession, e: Event) -> Result<(), String> {
-    aerial_event(session.aerial("drone").session(), "drone", e).map_err(|err| format!("{err}"))
-}
-
-/// Only DSL revoke events are injectable. Plant/environment faults stay `None`.
 fn inject_revoke(session: &WorldSession, e: Event) -> Result<(), String> {
-    let e = AerialOffboard::inject(e)
-        .ok_or_else(|| format!("{e:?} is not an AerialOffboard inject"))?;
-    inject_drone_event(session, e)
+    session
+        .inject_revoke("drone", e)
+        .map_err(|err| format!("{e:?}: {err}"))
 }
 
 fn apply_fault(session: &WorldSession, fault: Fault) -> Result<(), String> {
@@ -635,7 +630,8 @@ mod tests {
             let inject = AerialOffboard::inject(*e).expect("REVOKE_ON is injectable");
             let session = WorldSession::named("inland", 1).expect("catalog");
             session.attach_offboard("drone").expect("grant");
-            aerial_event(session.aerial("drone").session(), "drone", inject)
+            session
+                .inject_revoke("drone", inject)
                 .unwrap_or_else(|err| panic!("inject {e:?}: {err}"));
             assert!(
                 session.world().body("drone").unwrap().authority_epoch > 0,

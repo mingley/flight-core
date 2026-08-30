@@ -61,6 +61,23 @@ impl WorldSession {
         MarineWorldBackend::from_session(self.clone(), body_id)
     }
 
+    /// DSL revoke inject. [`flight_core::contracts::AerialOffboard::inject`]
+    /// first: non-revoke events (e.g. `MissionCommand`) are
+    /// [`BackendError::Rejected`]. The kernel event then walks the aerial
+    /// machine and bumps `authority_epoch` when the event revokes.
+    /// HITL / ROS 2 leftover tables share this path with world
+    /// `run_revoke_table`.
+    pub fn inject_revoke(
+        &self,
+        body_id: &'static str,
+        event: flight_core::safety::Event,
+    ) -> Result<(), BackendError> {
+        let Some(e) = flight_core::contracts::AerialOffboard::inject(event) else {
+            return Err(BackendError::Rejected("not a revoke inject"));
+        };
+        super::shared::aerial_event(self, body_id, e)
+    }
+
     /// Bind Ready, walk arm → offboard, return the live aerial backend.
     ///
     /// Actuators are granted without firing Takeoff, so `Land` is not yet

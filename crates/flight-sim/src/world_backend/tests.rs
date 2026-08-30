@@ -1102,6 +1102,29 @@ fn world_failsafe_revokes_attached_offboard_permit() {
 }
 
 #[test]
+fn inject_revoke_rejects_non_revoke_and_bumps_epoch() {
+    let session = WorldSession::inland(1);
+    session.attach_offboard("drone").unwrap();
+    assert!(matches!(
+        session.inject_revoke("drone", Event::MissionCommand),
+        Err(BackendError::Rejected("not a revoke inject"))
+    ));
+    session
+        .inject_revoke("drone", Event::TriggerFailsafe)
+        .unwrap();
+    assert!(session.world().body("drone").unwrap().authority_epoch > 0);
+    assert!(
+        session
+            .world()
+            .body("drone")
+            .unwrap()
+            .aerial
+            .unwrap()
+            .failsafe
+    );
+}
+
+#[test]
 fn attach_takeoff_walks_ready_to_takeoff_on_the_plant() {
     let session = WorldSession::inland(1);
     let mut drone = session.attach_takeoff("drone").unwrap();
