@@ -22,12 +22,14 @@
 //! ```
 //!
 //! `--backend px4-sitl` evaluates a converted HEARTBEAT/ulog JSONL or `.ulg`
-//! (`--replay`). Live SIH is `cargo test -p flight-px4 --test sitl_live -- --ignored`.
+//! (`--replay`). Leftover leftover-contracts default to checked-in converter
+//! corpora (`px4_sitl_<name>.jsonl`). Live SIH is
+//! `cargo test -p flight-px4 --test sitl_live -- --ignored`.
 
 use flight_core::contracts::{evaluate_trace, parse_trace_jsonl, AerialOffboard, Requirement};
 use flight_sim::{
-    differential_contract, differential_revoke_table, is_ulog, parse_ulog, replay_jsonl,
-    run_hitl_miss, run_world, write_ulog, Scenario,
+    differential_contract, differential_revoke_table, is_ulog, parse_ulog,
+    px4_sitl_leftover_corpus, replay_jsonl, run_hitl_miss, run_world, write_ulog, Scenario,
 };
 
 fn usage() -> ! {
@@ -173,18 +175,20 @@ fn main() {
         "px4-sitl" => {
             let path = match replay {
                 Some(path) => path,
-                None if scenario.name == Scenario::GPS_LOSS.name => {
-                    corpus_file("px4_sitl_gps_loss.jsonl")
-                }
-                None => {
-                    eprintln!(
-                        "px4-sitl backend needs --replay FILE.jsonl or FILE.ulg \
-                         (ulog/HEARTBEAT converted to TraceSample).\n\
-                         gps-loss defaults to the checked-in converter corpus.\n\
-                         Live SIH: cargo test -p flight-px4 --test sitl_live -- --ignored"
-                    );
-                    std::process::exit(2);
-                }
+                None => match scenario.name {
+                    name if px4_sitl_leftover_corpus(name).is_some() => {
+                        corpus_file(&format!("px4_sitl_{}.jsonl", name.replace('-', "_")))
+                    }
+                    _ => {
+                        eprintln!(
+                            "px4-sitl backend needs --replay FILE.jsonl or FILE.ulg \
+                             (ulog/HEARTBEAT converted to TraceSample).\n\
+                             leftover leftover-contracts default to checked-in converter corpora.\n\
+                             Live SIH: cargo test -p flight-px4 --test sitl_live -- --ignored"
+                        );
+                        std::process::exit(2);
+                    }
+                },
             };
             let (samples, kind) = load_trace(&path);
             evaluate_samples(&samples, scenario.require);
@@ -196,8 +200,11 @@ fn main() {
         }
         "all" => {
             differential_contract(scenario).expect("differential contract");
-            if scenario.name == "gps-loss" {
-                println!("PASS scenario=gps-loss backend=all (world, ulog, px4-sitl corpus)");
+            if px4_sitl_leftover_corpus(scenario.name).is_some() {
+                println!(
+                    "PASS scenario={} backend=all (world, ulog, px4-sitl corpus)",
+                    scenario.name
+                );
             } else {
                 println!(
                     "PASS scenario={} backend=all (world, replay, ulog roundtrip)",

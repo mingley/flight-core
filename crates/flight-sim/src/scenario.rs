@@ -395,8 +395,8 @@ pub fn differential_world(scenario: &Scenario) -> Result<(), String> {
 }
 
 /// Same safety contract on the verified world, JSONL replay, and a ULog
-/// round-trip. GPS-loss also evaluates the checked-in ULog and converted
-/// PX4 SITL corpus. Differential conformance, not a second physics.
+/// round-trip. Named leftover contracts also evaluate the converted PX4 SITL
+/// corpus (`px4_sitl_<name>.jsonl`). Differential conformance, not a second physics.
 pub fn differential_contract(scenario: &Scenario) -> Result<(), String> {
     let reqs = scenario.require;
     let world = run_world(scenario)?;
@@ -422,14 +422,27 @@ pub fn differential_contract(scenario: &Scenario) -> Result<(), String> {
             .map_err(|e| format!("ulog: {} at {}", e.requirement, e.index))?;
         AerialOffboard::evaluate(&ulog)
             .map_err(|e| format!("ulog capability: {} at {}", e.requirement, e.index))?;
-        let sitl = parse_trace_jsonl(include_str!("../corpus/px4_sitl_gps_loss.jsonl"))
-            .map_err(|_| "px4-sitl: parse_jsonl".to_string())?;
+    }
+    if let Some(sitl) = px4_sitl_leftover_corpus(scenario.name) {
+        let sitl = parse_trace_jsonl(sitl).map_err(|_| "px4-sitl: parse_jsonl".to_string())?;
         evaluate_trace(&sitl, reqs)
             .map_err(|e| format!("px4-sitl: {} at {}", e.requirement, e.index))?;
         AerialOffboard::evaluate(&sitl)
             .map_err(|e| format!("px4-sitl capability: {} at {}", e.requirement, e.index))?;
     }
     Ok(())
+}
+
+/// Converted PX4 SITL JSONL for a named leftover contract.
+/// `flight-sim` does not depend on `flight-px4`; live SIH is `sitl_live`.
+pub fn px4_sitl_leftover_corpus(name: &str) -> Option<&'static str> {
+    match name {
+        "gps-loss" => Some(include_str!("../corpus/px4_sitl_gps_loss.jsonl")),
+        "heartbeat-stale" => Some(include_str!("../corpus/px4_sitl_heartbeat_stale.jsonl")),
+        "hitl-miss" => Some(include_str!("../corpus/px4_sitl_hitl_miss.jsonl")),
+        "imu-loss" => Some(include_str!("../corpus/px4_sitl_imu_loss.jsonl")),
+        _ => None,
+    }
 }
 
 /// Same GPS-loss contract on the verified world, checked-in ULog, and
@@ -611,6 +624,23 @@ mod tests {
     #[test]
     fn gps_loss_same_contract_on_world_ulog_and_sitl() {
         differential_gps_loss().expect("world + ulog + px4-sitl");
+    }
+
+    #[test]
+    fn leftover_contracts_have_px4_sitl_corpora() {
+        for c in AerialOffboard::LEFTOVER_CONTRACTS {
+            let sitl = px4_sitl_leftover_corpus(c.name)
+                .unwrap_or_else(|| panic!("{} missing px4-sitl corpus", c.name));
+            let samples = parse_trace_jsonl(sitl).expect("parse leftover sitl corpus");
+            evaluate_trace(&samples, c.require)
+                .unwrap_or_else(|e| panic!("{} sitl {} at {}", c.name, e.requirement, e.index));
+            AerialOffboard::evaluate(&samples).unwrap_or_else(|e| {
+                panic!(
+                    "{} sitl capability {} at {}",
+                    c.name, e.requirement, e.index
+                )
+            });
+        }
     }
 
     #[test]

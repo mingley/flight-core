@@ -1,0 +1,4 @@
+{"t":0.0,"armed":true,"actuators":true,"failsafe":false,"epoch":0,"alt":2.1,"heartbeat_age_ms":0,"command_age_ms":0,"estimator_ts_ms":0,"cmd":[0.0,0.0,0.0]}
+{"t":0.08,"armed":true,"actuators":true,"failsafe":false,"epoch":0,"alt":2.1,"heartbeat_age_ms":80,"command_age_ms":0,"estimator_ts_ms":80,"cmd":[0.0,0.0,0.0]}
+{"t":0.16,"armed":true,"actuators":false,"failsafe":true,"epoch":1,"alt":2.0,"heartbeat_age_ms":250,"command_age_ms":0,"estimator_ts_ms":160,"cmd":null}
+{"t":0.24,"armed":true,"actuators":false,"failsafe":true,"epoch":1,"alt":1.9,"heartbeat_age_ms":250,"command_age_ms":0,"estimator_ts_ms":240,"cmd":null}
