@@ -247,6 +247,13 @@ impl Deadline {
     pub fn met(self, now: MonotonicInstant) -> bool {
         now <= self.due
     }
+
+    /// Last instant a planner command issued at `issued_at` may actuate.
+    /// Matches [`crate::safety::command_age_ok`]: age `< COMMAND_MAX_AGE_MS`.
+    pub const fn for_command(issued_at: MonotonicInstant) -> Self {
+        let last_ok_ms = (COMMAND_MAX_AGE_MS as u64).saturating_sub(1);
+        Self::at(issued_at.saturating_add(Duration::from_millis(last_ok_ms)))
+    }
 }
 
 /// Time-bounded grant. [`crate::contracts::ActuationPermit`] is the vehicle-bound
@@ -264,6 +271,14 @@ impl Lease {
 
     pub fn live(self, now: MonotonicInstant) -> bool {
         now.saturating_duration_since(self.issued_at) < self.max_age
+    }
+
+    pub const fn issued_at(self) -> MonotonicInstant {
+        self.issued_at
+    }
+
+    pub const fn max_age(self) -> Duration {
+        self.max_age
     }
 }
 
@@ -295,6 +310,16 @@ impl<T> Command<T> {
     /// Same bound as [`Self::within_command_bound`], as a [`FreshnessError`].
     pub fn check_age(&self, now: MonotonicInstant) -> Result<(), FreshnessError> {
         CommandFresh::<()>::check_age(self.age_ms(now))
+    }
+
+    /// Actuation deadline generated from the kernel command-age bound.
+    pub fn deadline(&self) -> Deadline {
+        Deadline::for_command(self.issued_at)
+    }
+
+    /// Fail closed: typed deadline **and** kernel `command_age_ok`.
+    pub fn within_deadline(&self, now: MonotonicInstant) -> bool {
+        self.deadline().met(now) && self.within_command_bound(now)
     }
 }
 
@@ -370,6 +395,10 @@ mod tests {
         assert!(!cmd.within_command_bound(MonotonicInstant::from_millis(100)));
         assert!(cmd.check_age(MonotonicInstant::from_millis(99)).is_ok());
         assert!(cmd.check_age(MonotonicInstant::from_millis(100)).is_err());
+        assert!(cmd.deadline().met(MonotonicInstant::from_millis(99)));
+        assert!(!cmd.deadline().met(MonotonicInstant::from_millis(100)));
+        assert!(cmd.within_deadline(MonotonicInstant::from_millis(99)));
+        assert!(!cmd.within_deadline(MonotonicInstant::from_millis(100)));
         for age in 0..=300 {
             assert_eq!(
                 HeartbeatFresh::check_age(age).is_ok(),
@@ -391,6 +420,13 @@ mod tests {
                 heartbeat_revoke_event(age).is_some(),
                 !crate::safety::heartbeat_age_ok(age),
                 "heartbeat revoke age {age}"
+            );
+            let stamped = Command::new((), MonotonicInstant::ZERO);
+            let now = MonotonicInstant::from_millis(u64::from(age));
+            assert_eq!(
+                stamped.within_deadline(now),
+                crate::safety::command_age_ok(age),
+                "command deadline age {age}"
             );
         }
         let ts = Timestamp::from_millis(5);

@@ -9,6 +9,7 @@
 //! the hardware/plant boundary. A permit that does not match is memory, not
 //! authority.
 
+use crate::temporal::Lease;
 use crate::time::{Duration, MonotonicInstant};
 use core::fmt;
 
@@ -136,6 +137,14 @@ impl ActuationPermit {
         self.max_age
     }
 
+    /// Clock half of a bounded permit. `None` when the grant is unbounded.
+    pub const fn lease(&self) -> Option<Lease> {
+        match self.max_age {
+            Some(max) => Some(Lease::new(self.issued_at, max)),
+            None => None,
+        }
+    }
+
     /// Compile-time-shaped check against live plant/backend reality.
     pub fn check(
         &self,
@@ -149,8 +158,9 @@ impl ActuationPermit {
         if self.epoch != live_epoch {
             return Err(AuthorityReject::StaleEpoch);
         }
-        if let Some(max) = self.max_age {
-            if now.saturating_duration_since(self.issued_at) >= max {
+        if let Some(lease) = self.lease() {
+            let raw_expired = now.saturating_duration_since(self.issued_at) >= lease.max_age();
+            if !lease.live(now) || raw_expired {
                 return Err(AuthorityReject::Expired);
             }
         }
@@ -211,6 +221,8 @@ mod tests {
             ),
             Err(AuthorityReject::Expired)
         );
+        assert!(p.lease().is_some());
+        assert!(!p.lease().unwrap().live(MonotonicInstant::from_millis(20)));
     }
 
     #[test]

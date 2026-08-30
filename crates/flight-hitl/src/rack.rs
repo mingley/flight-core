@@ -377,7 +377,13 @@ impl WorldRack {
     fn finish(&mut self, inner: Inner, compute_ns: u64) -> Result<RackFrame, BackendError> {
         let ns = inner.compute_override.unwrap_or(compute_ns);
         let outcome = deadline_outcome(ns, self.spec);
-        if outcome.missed() {
+        let due = flight_core::temporal::Deadline::at(
+            flight_core::time::MonotonicInstant::from_nanos(self.spec.budget_ns),
+        );
+        let compute = flight_core::time::MonotonicInstant::from_nanos(ns);
+        // Fail closed: typed Deadline and kernel DeadlineSpec must agree.
+        let missed = outcome.missed() || !due.met(compute);
+        if missed {
             self.missed = self.missed.saturating_add(1);
             self.last_missed = true;
             self.trip_deadline_failsafe()?;
@@ -389,7 +395,14 @@ impl WorldRack {
         Ok(RackFrame {
             t: world.t,
             compute_ns: ns,
-            outcome,
+            outcome: if missed && !outcome.missed() {
+                DeadlineOutcome::Missed {
+                    compute_ns: ns,
+                    budget_ns: self.spec.budget_ns,
+                }
+            } else {
+                outcome
+            },
             applied_aerial: inner.applied_aerial,
             all_hold: world.all_hold(),
             missed_total: self.missed,
