@@ -642,23 +642,29 @@ impl<S: CanTouchdown, B: VehicleBackend> Vehicle<S, B> {
 }
 
 impl<S: MotorsEnabled, B: VehicleBackend> Vehicle<S, B> {
-    pub async fn set_motor_thrust(&mut self, thrust: MotorThrust) -> Result<(), ErrorKind> {
+    /// Permit first, then kernel `EnableActuators` / `MissionCommand`.
+    /// A leftover `Vehicle<Armed>` after an async disarm cannot enable
+    /// actuators on the way to a `StaleEpoch` reject.
+    pub fn set_motor_thrust_now(&mut self, thrust: MotorThrust) -> Result<(), ErrorKind> {
+        self.require_live_permit()?;
         if !self.inner.safety.actuators_enabled {
             self.apply_event(Event::EnableActuators)?;
             self.inner
                 .backend
-                .enable_actuators()
-                .await
+                .enable_actuators_now()
                 .map_err(ErrorKind::Backend)?;
         }
-        self.require_live_permit()?;
         self.apply_event(Event::HeartbeatFresh)?;
         self.apply_event(Event::MissionCommand)?;
         self.inner
             .backend
-            .set_motor_thrust(thrust)
-            .await
+            .set_motor_thrust_now(thrust)
             .map_err(ErrorKind::Backend)
+    }
+
+    /// Same as [`Self::set_motor_thrust_now`].
+    pub async fn set_motor_thrust(&mut self, thrust: MotorThrust) -> Result<(), ErrorKind> {
+        self.set_motor_thrust_now(thrust)
     }
 }
 
@@ -1521,6 +1527,31 @@ mod tests {
             ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
         ));
         assert!(err.vehicle.safety().armed);
+    }
+
+    #[test]
+    fn leftover_armed_cannot_enable_actuators_or_motor_thrust() {
+        let VehicleHandle::PreflightReady(drone) =
+            VehicleHandle::from_state(NullBackend::default(), ready_safety())
+        else {
+            panic!("ready maps to PreflightReady");
+        };
+        let mut armed = drone.arm_now().unwrap();
+        assert!(armed.safety().armed);
+        assert!(!armed.safety().actuators_enabled);
+        armed.backend_mut().revoke_authority();
+        let err = armed
+            .set_motor_thrust_now(MotorThrust::hover(4, 0.4))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
+        ));
+        assert!(armed.safety().armed);
+        assert!(
+            !armed.safety().actuators_enabled,
+            "stale Armed must not EnableActuators before the permit reject"
+        );
     }
 
     #[test]

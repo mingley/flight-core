@@ -290,6 +290,14 @@ pub trait VehicleBackend: Send {
         }
     }
 
+    /// Direct motor thrust without an async runtime. See [`Self::arm_now`].
+    fn set_motor_thrust_now(&mut self, thrust: MotorThrust) -> Result<(), BackendError> {
+        match poll_ready(self.set_motor_thrust(thrust)) {
+            Some(r) => r,
+            None => Err(BackendError::Timeout),
+        }
+    }
+
     /// Hold at the current NED pose without an async runtime.
     /// Default reads [`Self::telemetry_now`] and writes [`Self::set_position_ned_now`].
     /// PX4 companion backends stream a position `SET_POSITION_TARGET_LOCAL_NED`
