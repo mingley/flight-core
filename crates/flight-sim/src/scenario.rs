@@ -9,10 +9,10 @@ use flight_core::contracts::{
 };
 use flight_core::frames::Ned;
 use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
-use flight_core::temporal::{heartbeat_revoke_event, Estimate, Observation};
+use flight_core::temporal::{heartbeat_revoke_event, Estimate, Observation, Sequence};
 use flight_core::time::MonotonicInstant;
 use flight_core::vector::Velocity;
-use flight_core::vehicle::{Offboard, Vehicle, VehicleHandle};
+use flight_core::vehicle::{Offboard, Vehicle, VehicleBackend, VehicleHandle};
 use robot_world::World;
 
 use super::world_backend::{WorldBackend, WorldSession};
@@ -263,9 +263,14 @@ pub fn run_revoke_table() -> Result<ScenarioReport, String> {
         };
         v.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
             .map_err(|err| format!("live set_velocity before {e:?}: {err}"))?;
+        let mut seq = Sequence::new();
+        seq.observe(v.backend().authority_epoch())
+            .map_err(|_| format!("sequence before {e:?}"))?;
         session
             .inject_revoke("drone", inject)
             .map_err(|err| format!("inject {e:?}: {err}"))?;
+        seq.observe(v.backend().authority_epoch())
+            .map_err(|_| format!("epoch jumped backward after {e:?}"))?;
         leftover_offboard_refuses_commands(&mut v, inject)?;
         // Step after leftover checks so P13 can wipe an ungranted command
         // before the contract sample (Disarm/Disconnect do not clear it).
