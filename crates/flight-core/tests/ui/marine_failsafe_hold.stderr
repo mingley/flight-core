@@ -1,0 +1,18 @@
+error[E0599]: the method `hold_now` exists for struct `MarineVehicle<MarineFailsafe, B>`, but its trait bounds were not satisfied
+ --> tests/ui/marine_failsafe_hold.rs:5:18
+  |
+5 |     let _ = hull.hold_now();
+  |                  ^^^^^^^^ method cannot be called on `MarineVehicle<MarineFailsafe, B>` due to unsatisfied trait bounds
+  |
+ ::: src/vehicle/marine.rs
+  |
+  | pub struct MarineFailsafe;
+  | ------------------------- doesn't satisfy `flight_core::vehicle::MarineFailsafe: CanThrust`
+  |
+  = note: the following trait bounds were not satisfied:
+          `flight_core::vehicle::MarineFailsafe: CanThrust`
+          `B: VehicleBackend`
+help: consider restricting the type parameter to satisfy the trait bound
+  |
+4 | fn boom<B>(mut hull: MarineVehicle<MarineFailsafe, B>) where B: VehicleBackend {
+  |                                                        +++++++++++++++++++++++

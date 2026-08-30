@@ -21,7 +21,7 @@ The workspace already has a usable slice of that goal. In-scope functional items
 
 **Already true (do not re-implement):**
 
-- Consume-self typestate for aerial / ground / marine vehicles (`Vehicle`, `GroundVehicle`, `MarineVehicle`) with compile-fail UI tests under `crates/flight-core/tests/ui/` (123 `.rs` files).
+- Consume-self typestate for aerial / ground / marine vehicles (`Vehicle`, `GroundVehicle`, `MarineVehicle`) with compile-fail UI tests under `crates/flight-core/tests/ui/` (125 `.rs` files).
 - `OffboardControl` gates `set_velocity` / `set_position` / `hold`. `MotorsEnabled` gates `set_motor_thrust`. Recovery is a real aerial typestate.
 - One mechanically verified plant: `robot-world::World::try_step` clones, advances, and commits only if all **22** named properties hold. NED z-down. Catalogs `coastal` / `harbor` / `inland` / `open_water`.
 - `WorldSession` attach walks (`attach_takeoff`, `attach_drive`, `attach_undock`, `attach_hold`, `attach_ground_hold`, failsafe / recover / return / station / airborne, …) shared by HITL, ROS 2, PX4 `WorldPlant`, and `robot-lab`.

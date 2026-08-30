@@ -246,6 +246,26 @@ impl<S: CanThrust, B: VehicleBackend> MarineVehicle<S, B> {
     pub fn set_ned_velocity_now(&mut self, v: Velocity<Ned>) -> Result<(), MarineError> {
         self.command_thrust_now(v)
     }
+
+    /// Hold at the current NED pose. Distinct from [`MarineVehicle::hold_station`]
+    /// (the StationKeep machine). Compiles only while thrust is granted
+    /// (`tests/ui/docked_hold.rs`, `tests/ui/marine_failsafe_hold.rs`).
+    pub fn hold_now(&mut self) -> Result<(), MarineError> {
+        self.safety = marine::marine_step(self.safety, MarineEvent::ThrustCommand)
+            .map_err(MarineError::Safety)?;
+        self.push_marine()?;
+        self.backend.hold_now().map_err(MarineError::Backend)
+    }
+
+    /// Same grant as [`Self::hold_now`], then tick the plant 20 ms.
+    pub async fn hold(&mut self) -> Result<(), MarineError> {
+        self.hold_now()?;
+        self.backend
+            .tick(0.02)
+            .await
+            .map_err(MarineError::Backend)?;
+        Ok(())
+    }
 }
 
 impl<B: VehicleBackend> MarineVehicle<Docked, B> {
@@ -386,6 +406,43 @@ fn wrap_marine<S, B>(backend: B, safety: MarineState) -> MarineVehicle<S, B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vector::Position;
+
+    #[test]
+    fn hold_now_tracks_telemetry_pose_from_underway() {
+        let backend = NullBackend {
+            position: Some(Position::<Ned>::ned(2.0, 0.5, 0.0)),
+            ..NullBackend::default()
+        };
+        let mut v = MarineVehicle::<Docked, _>::new(backend).undock().unwrap();
+        v.hold_now().unwrap();
+        let p = v.backend().position.unwrap();
+        assert_eq!((p.x(), p.y(), p.z()), (2.0, 0.5, 0.0));
+        assert_eq!(
+            v.backend().marine.map(|s| s.phase),
+            Some(MarinePhase::Underway)
+        );
+    }
+
+    #[test]
+    fn hold_now_tracks_telemetry_pose_from_station_keep() {
+        let backend = NullBackend {
+            position: Some(Position::<Ned>::ned(-1.0, 3.0, 0.0)),
+            ..NullBackend::default()
+        };
+        let mut v = MarineVehicle::<Docked, _>::new(backend)
+            .undock()
+            .unwrap()
+            .hold_station()
+            .unwrap();
+        v.hold_now().unwrap();
+        let p = v.backend().position.unwrap();
+        assert_eq!((p.x(), p.y(), p.z()), (-1.0, 3.0, 0.0));
+        assert_eq!(
+            v.backend().marine.map(|s| s.phase),
+            Some(MarinePhase::StationKeep)
+        );
+    }
 
     #[tokio::test]
     async fn docked_then_undock_thrust() {
