@@ -21,7 +21,7 @@
 
 pub mod world_plant;
 
-use flight_core::contracts::{evaluate_trace, AerialOffboard, TraceSample};
+use flight_core::contracts::{evaluate_trace, AerialOffboard, LeftoverContract, TraceSample};
 use flight_core::frames::Ned;
 use flight_core::safety::{Event, Phase, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use flight_core::sensors::SensorHealth;
@@ -707,53 +707,100 @@ pub fn run_px4_revoke_table() -> Result<usize, String> {
     Ok(n)
 }
 
-/// Companion GPS-loss: leftover Offboard after `EstimatorInvalid` cannot run
-/// `COMMANDS`, and the before/after trace satisfies [`AerialOffboard::GPS_LOSS_REQUIRE`].
-/// Does not require a live UDP link. Live SIH is `tests/sitl_live.rs`.
-pub fn run_px4_gps_loss() -> Result<Px4GpsLossReport, String> {
+/// Leftover Offboard after `contract.inject`: `COMMANDS` are `StaleAuthority`
+/// and the before/after trace satisfies `contract.require`.
+/// Does not require a live UDP link. Live SIH GPS-loss is `tests/sitl_live.rs`.
+pub fn run_px4_leftover_contract(
+    contract: LeftoverContract,
+) -> Result<LeftoverContractReport, String> {
     let mut backend = Px4Backend::new(Px4Config::default());
     backend.armed = true;
     backend.offboard = true;
     backend.last_heartbeat = Some(Instant::now());
     let VehicleHandle::Offboard(mut v) = VehicleHandle::from_state(backend, offboard_safety())
     else {
-        return Err("offboard safety maps to Offboard".into());
+        return Err(format!(
+            "{}: offboard safety maps to Offboard",
+            contract.name
+        ));
     };
     if v.leftover_commands_stale().is_ok() {
-        return Err("leftover Offboard already stale before GPS-loss inject".into());
+        return Err(format!(
+            "{}: leftover Offboard already stale before inject",
+            contract.name
+        ));
     }
     let epoch0 = v.backend().authority_epoch();
     let before = v
         .backend_mut()
         .telemetry_now()
-        .map_err(|e| format!("telemetry before: {e}"))?
+        .map_err(|e| format!("{} telemetry before: {e}", contract.name))?
         .to_trace_sample(epoch0);
     if before.failsafe {
-        return Err("failsafe already latched before GPS-loss inject".into());
+        return Err(format!(
+            "{}: failsafe already latched before inject",
+            contract.name
+        ));
     }
     v.backend_mut()
-        .inject_revoke(Event::EstimatorInvalid)
-        .map_err(|e| format!("inject EstimatorInvalid: {e}"))?;
+        .inject_revoke(contract.inject)
+        .map_err(|e| format!("{} inject {:?}: {e}", contract.name, contract.inject))?;
     v.leftover_commands_stale()
-        .map_err(|e| format!("leftover after GPS-loss: {e}"))?;
+        .map_err(|e| format!("{} leftover after inject: {e}", contract.name))?;
     let epoch1 = v.backend().authority_epoch();
     if epoch1 <= epoch0 {
-        return Err("GPS-loss inject did not bump epoch".into());
+        return Err(format!("{}: inject did not bump epoch", contract.name));
     }
     let after = v
         .backend_mut()
         .telemetry_now()
-        .map_err(|e| format!("telemetry after: {e}"))?
+        .map_err(|e| format!("{} telemetry after: {e}", contract.name))?
         .to_trace_sample(epoch1);
     if !after.failsafe {
-        return Err("EstimatorInvalid must latch failsafe".into());
+        return Err(format!(
+            "{}: {:?} must latch failsafe",
+            contract.name, contract.inject
+        ));
     }
     let samples = vec![before, after];
-    evaluate_trace(&samples, AerialOffboard::GPS_LOSS_REQUIRE)
-        .map_err(|e| format!("GPS_LOSS {} at {}", e.requirement, e.index))?;
-    AerialOffboard::evaluate(&samples)
-        .map_err(|e| format!("capability {} at {}", e.requirement, e.index))?;
-    Ok(Px4GpsLossReport { samples })
+    evaluate_trace(&samples, contract.require)
+        .map_err(|e| format!("{} {} at {}", contract.name, e.requirement, e.index))?;
+    AerialOffboard::evaluate(&samples).map_err(|e| {
+        format!(
+            "{} capability {} at {}",
+            contract.name, e.requirement, e.index
+        )
+    })?;
+    Ok(LeftoverContractReport {
+        name: contract.name,
+        inject: contract.inject,
+        samples,
+    })
+}
+
+/// Every distinct leftover contract at the PX4 companion.
+pub fn run_px4_leftover_contracts() -> Result<Vec<LeftoverContractReport>, String> {
+    AerialOffboard::LEFTOVER_CONTRACTS
+        .iter()
+        .copied()
+        .map(run_px4_leftover_contract)
+        .collect()
+}
+
+/// Companion GPS-loss: leftover Offboard after `EstimatorInvalid`.
+pub fn run_px4_gps_loss() -> Result<Px4GpsLossReport, String> {
+    let report = run_px4_leftover_contract(AerialOffboard::GPS_LOSS_CONTRACT)?;
+    Ok(Px4GpsLossReport {
+        samples: report.samples,
+    })
+}
+
+/// Result of [`run_px4_leftover_contract`].
+#[derive(Clone, Debug)]
+pub struct LeftoverContractReport {
+    pub name: &'static str,
+    pub inject: Event,
+    pub samples: Vec<TraceSample>,
 }
 
 /// Result of [`run_px4_gps_loss`].
@@ -1038,6 +1085,20 @@ mod tests {
         assert!(!report.samples[0].failsafe);
         assert!(report.samples[1].failsafe);
         assert!(report.samples[1].epoch > report.samples[0].epoch);
+    }
+
+    #[test]
+    fn leftover_named_contracts_satisfy_world_monitors() {
+        let reports = run_px4_leftover_contracts().expect("px4 leftover contracts");
+        assert_eq!(reports.len(), AerialOffboard::LEFTOVER_CONTRACTS.len());
+        for (report, contract) in reports.iter().zip(AerialOffboard::LEFTOVER_CONTRACTS) {
+            assert_eq!(report.name, contract.name);
+            assert_eq!(report.inject, contract.inject);
+            assert_eq!(report.samples.len(), 2);
+            assert!(!report.samples[0].failsafe);
+            assert!(report.samples[1].failsafe);
+            assert!(report.samples[1].epoch > report.samples[0].epoch);
+        }
     }
 
     #[test]
