@@ -12,7 +12,7 @@ use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_
 use flight_core::temporal::{heartbeat_revoke_event, Estimate, Observation};
 use flight_core::time::MonotonicInstant;
 use flight_core::vector::Velocity;
-use flight_core::vehicle::{ErrorKind, Offboard, Vehicle, VehicleHandle};
+use flight_core::vehicle::{Offboard, Vehicle, VehicleHandle};
 use robot_world::World;
 
 use super::world_backend::shared::aerial_event;
@@ -285,34 +285,13 @@ pub fn run_revoke_table() -> Result<ScenarioReport, String> {
 }
 
 /// Leftover typestate stays Offboard. Every kernel command is exercised
-/// through [`Vehicle::for_each_offboard_now`] (unknown table command = compile fail).
+/// through [`Vehicle::leftover_commands_stale`] (unknown table command = compile fail).
 fn leftover_offboard_refuses_commands(
     v: &mut Vehicle<Offboard, WorldBackend>,
     event: Event,
 ) -> Result<(), String> {
-    let mut names = Vec::new();
-    let mut first_err = None;
-    v.for_each_offboard_now(|name, result| {
-        names.push(name);
-        if first_err.is_none() && !matches!(result, Err(ErrorKind::StaleAuthority(_))) {
-            first_err = Some(format!("{name} after {event:?}: {result:?}"));
-        }
-    });
-    if names.as_slice() != AerialOffboard::COMMANDS {
-        return Err(format!(
-            "for_each_offboard_now names {names:?} must match COMMANDS {:?}",
-            AerialOffboard::COMMANDS
-        ));
-    }
-    if let Some(e) = first_err {
-        return Err(e);
-    }
-    if !v.safety().offboard {
-        return Err(format!(
-            "leftover handle after {event:?} must still be typed Offboard"
-        ));
-    }
-    Ok(())
+    v.leftover_commands_stale()
+        .map_err(|e| format!("leftover after {event:?}: {e}"))
 }
 
 /// Contract requirements that a concatenated revoke-table trace can prove.

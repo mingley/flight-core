@@ -308,6 +308,29 @@ macro_rules! impl_aerial_offboard_now {
                     );
                 )+
             }
+
+            /// Leftover Offboard after a revoke: every generated command is
+            /// `StaleAuthority` and the handle is still typed Offboard.
+            /// World `run_revoke_table` and PX4 `run_px4_revoke_table` share this.
+            pub fn leftover_commands_stale(&mut self) -> Result<(), ErrorKind> {
+                let expected = $crate::contracts::AerialOffboard::COMMANDS;
+                let mut i = 0usize;
+                let mut fail = false;
+                self.for_each_offboard_now(|name, result| {
+                    if expected.get(i) != Some(&name)
+                        || !matches!(result, Err(ErrorKind::StaleAuthority(_)))
+                    {
+                        fail = true;
+                    }
+                    i += 1;
+                });
+                if fail || i != expected.len() || !self.safety().offboard {
+                    return Err(ErrorKind::Backend(BackendError::Rejected(
+                        "leftover_offboard_still_has_authority",
+                    )));
+                }
+                Ok(())
+            }
         }
     };
 }
