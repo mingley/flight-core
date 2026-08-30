@@ -516,16 +516,19 @@ those tables).
 
 ### F7. Typed geometry
 
-**Status: landed.** `Transform<A,B> * Transform<B,C>` only. `Point3` is a
-newtype (not a `Position` alias): `p + d` is a point, `p - q` is a
-displacement, `p + q` does not compile. A transform maps a point as
-`R p + t` and free vectors (`apply_displacement` / `apply_velocity` /
-`apply_acceleration` / `apply_force` / `apply_torque`) by rotation only.
+**Status: landed.** `Transform<A,B> * Transform<B,C>` only. `Position<F>`
+**is** [`Point3<F>`](../crates/flight-core/src/vector.rs): a pose newtype, not
+`Vector3<Meter, F>`. `p + d` is a point, `p - q` is a displacement, `p + q`
+does not compile even in one frame (`position_plus_position`,
+`point_plus_point`). Mixed frames still fail (`mix_frames`). A transform maps
+a point as `R p + t` and free vectors (`apply_displacement` / `apply_velocity`
+/ `apply_acceleration` / `apply_force` / `apply_torque`) by rotation only.
 `Orientation<F>` is not `AngularVelocity`. trybuild `transform_wrong_frames`,
 `orientation_is_not_angular_velocity`, `force_is_not_torque`,
 `velocity_is_not_acceleration`, `point_is_not_displacement`,
-`point_plus_point`, `transform_point_is_not_velocity`, `unsafe_mission`.
-Copper `cu_transform` is interop, not a copy (`docs/copper.md`).
+`point_plus_point`, `position_plus_position`, `transform_point_is_not_velocity`,
+`unsafe_mission`. Copper `cu_transform` is interop, not a copy
+(`docs/copper.md`).
 
 ### F8. Copper integration
 

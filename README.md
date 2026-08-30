@@ -43,11 +43,11 @@ increments the epoch. The old permit is still memory. It has no authority.
                    PASS — same contract on recorded ULog
 ```
 
-Today: (2) is 134 trybuild compile-fails (including `unsafe_mission`,
+Today: (2) is 135 trybuild compile-fails (including `unsafe_mission`,
 `permit_is_not_clone`,
 `orientation_is_not_angular_velocity`, `force_is_not_torque`,
 `velocity_is_not_acceleration`, `point_is_not_displacement`,
-`point_plus_point`, `transform_point_is_not_velocity`). (4) is Kani
+`point_plus_point`, `position_plus_position`, `transform_point_is_not_velocity`). (4) is Kani
 including `permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel` (kernel
 table = `AUTHORITY_REVOKE_EVENTS`, heartbeat/command bounds, estimator
 monotonicity), and actuators-require-arm. (5) is GPS-loss: an invalid
@@ -233,6 +233,7 @@ MarineVehicle::<StationKeep, _>::recover_docked(...)   // station is not Failsaf
 MarineVehicle::<Docked, _>::declare_failsafe(...)      // failsafe is Underway or StationKeep (`CanTripMarineFailsafe`)
 MarineVehicle::<MarineFailsafe, _>::declare_failsafe(...) // already-failsafe hull cannot re-trip
 MarineVehicle::<MarineFailsafe, _>::set_ned_velocity(...) // thrust is CanThrust, not failsafe
+Position::<Ned> + Position::<Ned>                    // a pose is a point, not a free vector
 Position::<Ned> + Position::<Enu>                      // frames are types
 AngularVelocity<DegreePerSecond, Body>                 // where rad/s is required
 ```
@@ -469,7 +470,7 @@ cargo run -p robot-lab --example replay inland
 
 ## What is typed
 
-**Units and frames.** `Vector3<U, F>` is a zero-cost 3-vector. Addition requires the same `U` and `F`. NED ↔ ENU is an explicit conversion. Deg/s → rad/s is an explicit conversion. Force and torque are first-class.
+**Units and frames.** `Vector3<U, F>` is a zero-cost 3-vector. Addition requires the same `U` and `F`. `Position<F>` is a `Point3` (pose), not a meter vector: two poses cannot be added even in one frame. NED ↔ ENU is an explicit conversion. Deg/s → rad/s is an explicit conversion. Force and torque are first-class.
 
 **Sensors above `embedded-hal`.** An `ImuSample<Body>` carries a monotonic timestamp, body-frame accel/gyro in SI units, optional covariance, temperature, health, and a sequence number. `Clock` / `Imu` / `Actuators` are traits. Production, simulation, jsonl replay, fuzz, and a symbolic Kani clock all implement the same traits.
 

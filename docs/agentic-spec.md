@@ -81,7 +81,7 @@ The agent is always a **client of the machines**. `Lab::act` / `act_through_atta
 
 **Today (v0, landed):**
 
-- `Vehicle<S, B>`, `GroundVehicle<S, B>`, `MarineVehicle<S, B>` with 134 trybuild compile-fails
+- `Vehicle<S, B>`, `GroundVehicle<S, B>`, `MarineVehicle<S, B>` with 135 trybuild compile-fails
 - `OffboardControl` gates velocity / position / hold; `MotorsEnabled` gates motor thrust; Recovery is a real aerial typestate
 - `WorldSession` attach walks shared by HITL, ROS 2, PX4 `WorldPlant`, and `robot-lab`
 - Live PX4 SIH companion (`sitl_live`, CI job `sitl`): unpacked `PX4_MAIN_MODE_OFFBOARD`, climb/hold stay in offboard, `NAV_LAND` for land
