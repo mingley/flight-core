@@ -243,6 +243,41 @@ pub fn leftover_after_failsafe(seed: u64) -> Result<(), BackendError> {
     Ok(())
 }
 
+/// Bind leftover OffboardControl (inland grant is Takeoff) before
+/// [`apply_disarm`]. After the attach trip, leftover `COMMANDS` are
+/// `StaleAuthority`. Disarm must not latch failsafe.
+pub fn leftover_after_disarm(seed: u64) -> Result<(), BackendError> {
+    let mut plant = FleetPlant::inland(seed);
+    plant.grant_all()?;
+    let VehicleHandle::Takeoff(mut leftover) = plant.session().aerial("drone").attach()? else {
+        return Err(BackendError::Rejected("inland grant must bind Takeoff"));
+    };
+    if leftover.leftover_commands_stale().is_ok() {
+        return Err(BackendError::Rejected("leftover_already_stale"));
+    }
+    apply_disarm(plant.drone())?;
+    if leftover
+        .backend()
+        .world()
+        .body("drone")
+        .and_then(|b| b.aerial)
+        .is_some_and(|s| s.failsafe)
+    {
+        return Err(BackendError::Rejected("disarm_latched_failsafe"));
+    }
+    leftover
+        .leftover_commands_stale()
+        .map_err(|_| BackendError::Rejected("leftover_offboard_still_has_authority"))?;
+    Ok(())
+}
+
+/// Same leftover OffboardControl `COMMANDS` check as world / PX4 / HITL,
+/// after [`apply_disarm`] at the ROS 2 plant boundary.
+pub fn run_ros2_disarm_leftover() -> Result<usize, String> {
+    leftover_after_disarm(1).map_err(|e| format!("ros2 leftover disarm: {e}"))?;
+    Ok(1)
+}
+
 /// Same leftover OffboardControl `COMMANDS` check as world / PX4 / HITL,
 /// after [`apply_failsafe`] at the ROS 2 plant boundary.
 pub fn run_ros2_failsafe_leftover() -> Result<usize, String> {
@@ -1553,6 +1588,12 @@ mod tests {
     fn leftover_commands_stale_after_apply_failsafe() {
         leftover_after_failsafe(1).expect("leftover after apply_failsafe");
         assert_eq!(run_ros2_failsafe_leftover().expect("runner"), 1);
+    }
+
+    #[test]
+    fn leftover_commands_stale_after_apply_disarm() {
+        leftover_after_disarm(1).expect("leftover after apply_disarm");
+        assert_eq!(run_ros2_disarm_leftover().expect("runner"), 1);
     }
 
     #[test]
