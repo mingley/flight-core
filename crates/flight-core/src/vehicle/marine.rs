@@ -339,6 +339,7 @@ impl<B: VehicleBackend> MarineVehicle<MarineFailsafe, B> {
     pub fn recover_docked(mut self) -> Result<MarineVehicle<Docked, B>, MarineError> {
         self.safety =
             marine::marine_step(self.safety, MarineEvent::Recover).map_err(MarineError::Safety)?;
+        self.backend.restore_actuation();
         self.push_marine()?;
         Ok(self.retarget())
     }
@@ -430,7 +431,7 @@ fn wrap_marine<S, B: VehicleBackend>(backend: B, safety: MarineState) -> MarineV
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vector::Position;
+    use crate::vector::{Position, Velocity};
 
     #[test]
     fn hold_now_tracks_telemetry_pose_from_underway() {
@@ -508,8 +509,15 @@ mod tests {
             .declare_failsafe();
         assert!(v.safety().failsafe);
         assert!(!v.safety().thrust_enabled);
+        assert!(v.backend().actuation_revoked);
         let docked = v.recover_docked().unwrap();
         assert_eq!(docked.phase(), MarinePhase::Docked);
+        assert!(!docked.backend().actuation_revoked);
+        let mut underway = docked.undock().unwrap();
+        underway
+            .set_ned_velocity_now(Velocity::<Ned>::ned(0.2, 0.0, 0.0))
+            .unwrap();
+        assert!(underway.backend().velocity.is_some());
     }
 
     #[test]

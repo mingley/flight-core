@@ -540,6 +540,14 @@ impl VehicleBackend for Px4Backend {
         self.authority_epoch
     }
 
+    fn actuation_revoked(&self) -> bool {
+        self.actuation_revoked
+    }
+
+    fn restore_actuation(&mut self) {
+        self.actuation_revoked = false;
+    }
+
     fn authority_vehicle_id(&self) -> u8 {
         self.config.target_system
     }

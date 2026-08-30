@@ -230,7 +230,24 @@ pub trait VehicleBackend: Send {
     }
 
     /// Increment the safety epoch so every outstanding permit is stale.
+    ///
+    /// Does **not** mark [`Self::actuation_revoked`]. Connect / `begin_session`
+    /// bump the epoch so leftover `Vehicle` handles die, while `hold_now`
+    /// before arm (never armed) must still be able to stream a setpoint.
     fn revoke_authority(&mut self) {}
+
+    /// Physical-authority commands after failsafe or a revoking disarm must
+    /// refuse at this backend: setpoints, `enter_offboard`, climb,
+    /// `enable_actuators`, and motor thrust. Land / disarm / failsafe stay
+    /// ungated. Default `false` (this backend does not yet refuse).
+    fn actuation_revoked(&self) -> bool {
+        false
+    }
+
+    /// Admit physical-authority commands again. Arm, aerial recover, ground
+    /// ClearEstop, and marine Recover call this. Does not decrement the epoch,
+    /// so leftover `Vehicle` permits stay stale. Default is a no-op.
+    fn restore_actuation(&mut self) {}
 
     /// Age of the last vehicle heartbeat, in milliseconds.
     ///
@@ -404,6 +421,22 @@ pub struct NullBackend {
     pub ground: Option<GroundState>,
     pub marine: Option<MarineState>,
     pub authority_epoch: u32,
+    /// Set on disarm / failsafe. Cleared by [`VehicleBackend::restore_actuation`].
+    /// Connect / [`VehicleBackend::revoke_authority`] leave this false so
+    /// leftover `Vehicle` handles die on epoch while `hold_now` before arm
+    /// still works.
+    pub actuation_revoked: bool,
+}
+
+impl NullBackend {
+    /// Same refuse as PX4 / ArduPilot: leftover Armed / Offboard handles die
+    /// on epoch; this bit stops backend-direct actuation after disarm/failsafe.
+    fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
+        if self.actuation_revoked {
+            return Err(BackendError::Rejected("actuation authority revoked"));
+        }
+        Ok(())
+    }
 }
 
 impl VehicleBackend for NullBackend {
@@ -431,6 +464,7 @@ impl VehicleBackend for NullBackend {
     }
 
     async fn arm(&mut self) -> Result<(), BackendError> {
+        self.restore_actuation();
         self.armed = true;
         Ok(())
     }
@@ -439,30 +473,36 @@ impl VehicleBackend for NullBackend {
         self.armed = false;
         self.actuators = false;
         self.offboard = false;
+        self.actuation_revoked = true;
         self.revoke_authority();
         Ok(())
     }
 
     async fn enter_offboard(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.offboard = true;
         Ok(())
     }
 
     async fn set_velocity_ned(&mut self, velocity: Velocity<Ned>) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.velocity = Some(velocity);
         Ok(())
     }
 
     async fn set_position_ned(&mut self, position: Position<Ned>) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.position = Some(position);
         Ok(())
     }
 
     async fn set_motor_thrust(&mut self, _thrust: MotorThrust) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         Ok(())
     }
 
     async fn enable_actuators(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.actuators = true;
         Ok(())
     }
@@ -498,12 +538,21 @@ impl VehicleBackend for NullBackend {
     }
 
     async fn trigger_failsafe(&mut self) -> Result<(), BackendError> {
+        self.actuation_revoked = true;
         self.revoke_authority();
         Ok(())
     }
 
     fn authority_epoch(&self) -> u32 {
         self.authority_epoch
+    }
+
+    fn actuation_revoked(&self) -> bool {
+        self.actuation_revoked
+    }
+
+    fn restore_actuation(&mut self) {
+        self.actuation_revoked = false;
     }
 
     fn authority_now(&self) -> MonotonicInstant {
@@ -533,5 +582,112 @@ impl VehicleBackend for NullBackend {
     fn set_yaw_rate(&mut self, yaw_rate: f32) -> Result<(), BackendError> {
         self.yaw_rate = yaw_rate;
         Ok(())
+    }
+
+    fn recover_now(&mut self) -> Result<(), BackendError> {
+        self.restore_actuation();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vector::{Position, Velocity};
+
+    fn assert_physical_authority_refused(b: &mut NullBackend) {
+        assert!(b.actuation_revoked());
+        let v = Velocity::<Ned>::ned(1.0, 0.0, 0.0);
+        let p = Position::<Ned>::ned(0.0, 0.0, 0.0);
+        let thrust = MotorThrust::hover(4, 0.4);
+        assert!(
+            matches!(b.enter_offboard_now(), Err(BackendError::Rejected(_))),
+            "enter_offboard"
+        );
+        assert!(
+            matches!(b.set_velocity_ned_now(v), Err(BackendError::Rejected(_))),
+            "set_velocity"
+        );
+        assert!(
+            matches!(b.set_position_ned_now(p), Err(BackendError::Rejected(_))),
+            "set_position"
+        );
+        assert!(
+            matches!(b.enable_actuators_now(), Err(BackendError::Rejected(_))),
+            "enable_actuators"
+        );
+        assert!(
+            matches!(
+                b.set_motor_thrust_now(thrust),
+                Err(BackendError::Rejected(_))
+            ),
+            "set_motor_thrust"
+        );
+        assert!(
+            matches!(b.hold_now(), Err(BackendError::Rejected(_))),
+            "hold_now uses set_position"
+        );
+        assert!(b.land_now().is_ok(), "land stays an ungated safety action");
+        assert!(b.velocity.is_none(), "refused velocity must not be stored");
+    }
+
+    #[test]
+    fn hold_now_after_connect_is_not_a_revoked_setpoint() {
+        let mut b = NullBackend::default();
+        b.connect_now().unwrap();
+        assert!(b.authority_epoch() >= 1);
+        assert!(!b.actuation_revoked());
+        b.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, 0.0))
+            .unwrap();
+        b.hold_now().unwrap();
+        b.set_velocity_ned_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+            .unwrap();
+    }
+
+    #[test]
+    fn revoke_authority_does_not_refuse_backend_direct_setpoints() {
+        let mut b = NullBackend::default();
+        b.connect_now().unwrap();
+        b.arm_now().unwrap();
+        b.enter_offboard_now().unwrap();
+        b.revoke_authority();
+        assert!(!b.actuation_revoked());
+        b.set_velocity_ned_now(Velocity::<Ned>::ned(0.4, 0.0, 0.0))
+            .unwrap();
+        assert!(b.velocity.is_some());
+    }
+
+    #[test]
+    fn disarm_refuses_backend_direct_physical_authority() {
+        let mut b = NullBackend::default();
+        b.connect_now().unwrap();
+        b.arm_now().unwrap();
+        b.enter_offboard_now().unwrap();
+        b.set_velocity_ned_now(Velocity::<Ned>::ned(0.4, 0.0, 0.0))
+            .unwrap();
+        b.disarm_now().unwrap();
+        b.velocity = None;
+        assert_physical_authority_refused(&mut b);
+        b.arm_now().unwrap();
+        assert!(!b.actuation_revoked());
+        b.enter_offboard_now().unwrap();
+        b.set_velocity_ned_now(Velocity::<Ned>::ned(0.2, 0.0, 0.0))
+            .unwrap();
+        assert!(b.velocity.is_some());
+    }
+
+    #[test]
+    fn failsafe_refuses_backend_direct_physical_authority() {
+        let mut b = NullBackend::default();
+        b.connect_now().unwrap();
+        b.arm_now().unwrap();
+        b.enter_offboard_now().unwrap();
+        b.trigger_failsafe_now().unwrap();
+        b.velocity = None;
+        assert_physical_authority_refused(&mut b);
+        b.restore_actuation();
+        b.set_velocity_ned_now(Velocity::<Ned>::ned(0.1, 0.0, 0.0))
+            .unwrap();
+        assert!(b.velocity.is_some());
     }
 }

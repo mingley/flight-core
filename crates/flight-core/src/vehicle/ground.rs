@@ -317,6 +317,7 @@ impl<B: VehicleBackend> GroundVehicle<EStopped, B> {
     pub fn reset(mut self) -> Result<GroundVehicle<Parked, B>, GroundError> {
         self.safety = ground::ground_step(self.safety, GroundEvent::ClearEstop)
             .map_err(GroundError::Safety)?;
+        self.backend.restore_actuation();
         self.push_ground()?;
         Ok(self.retarget())
     }
@@ -401,7 +402,7 @@ fn wrap_ground<S, B: VehicleBackend>(backend: B, safety: GroundState) -> GroundV
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vector::Position;
+    use crate::vector::{Position, Velocity};
 
     #[tokio::test]
     async fn parked_then_drive() {
@@ -439,6 +440,12 @@ mod tests {
         assert!(stopped.backend().velocity.is_none());
         let parked = stopped.reset().unwrap();
         assert_eq!(parked.phase(), GroundPhase::Parked);
+        assert!(!parked.backend().actuation_revoked);
+        let mut moving = parked.enable_drive().unwrap();
+        moving
+            .set_velocity_ned_now(Velocity::<Ned>::ned(0.3, 0.0, 0.0))
+            .unwrap();
+        assert!(moving.backend().velocity.is_some());
     }
 
     #[test]
