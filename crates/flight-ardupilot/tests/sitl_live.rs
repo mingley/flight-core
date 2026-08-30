@@ -42,6 +42,6 @@ async fn sitl_takeoff_hold_land() {
         after_takeoff.altitude_agl().get()
     );
 
-    let _ = vehicle.hold().await.expect("hold");
+    vehicle.hold().await.expect("hold");
     let _ = vehicle.land().await.expect("land");
 }
