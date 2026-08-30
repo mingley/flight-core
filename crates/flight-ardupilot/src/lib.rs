@@ -149,6 +149,9 @@ impl ArduPilotBackend {
         }
     }
 
+    /// Physical-authority commands after failsafe or a revoking
+    /// disarm/disconnect: setpoints, GUIDED entry, climb, actuators, thrust.
+    /// Land / disarm / failsafe stay ungated. `pump_setpoint` stays ungated.
     fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
         if self.failsafe_latched || self.actuation_revoked {
             return Err(BackendError::Rejected("actuation authority revoked"));
@@ -390,6 +393,7 @@ impl VehicleBackend for ArduPilotBackend {
     }
 
     async fn enter_offboard(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         for _ in 0..10 {
             self.pump_setpoint()?;
             self.ingest_inbox();
@@ -423,12 +427,14 @@ impl VehicleBackend for ArduPilotBackend {
     }
 
     async fn set_motor_thrust(&mut self, _thrust: MotorThrust) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         Err(BackendError::Rejected(
             "direct motor thrust is not exposed over ArduPilot GUIDED; use velocity/position setpoints",
         ))
     }
 
     async fn enable_actuators(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         Ok(())
     }
 
@@ -523,6 +529,7 @@ impl VehicleBackend for ArduPilotBackend {
 
     /// GUIDED climb. `NAV_TAKEOFF` is AUTO and fights typestate velocity climb.
     fn takeoff_now(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         for _ in 0..5 {
             self.pump_setpoint()?;
         }
@@ -534,6 +541,7 @@ impl VehicleBackend for ArduPilotBackend {
     }
 
     fn reached_altitude_now(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.pump_setpoint()?;
         self.send(&set_guided_mode(
             self.config.target_system,
@@ -800,6 +808,99 @@ mod tests {
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.hold_now();
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.enter_offboard_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.takeoff_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.enable_actuators_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+    }
+
+    #[test]
+    fn unexpected_disarm_heartbeat_revokes_stale_armed_vehicle() {
+        use flight_core::contracts::AuthorityReject;
+        use flight_core::safety::{step_all, Event, SafetyState};
+        use flight_core::vehicle::{ErrorKind, VehicleHandle};
+        let mut backend = ArduPilotBackend::new(ArduPilotConfig::default());
+        backend.armed = true;
+        let safety = step_all(
+            SafetyState::disconnected(),
+            &[
+                Event::Connect,
+                Event::InitComplete,
+                Event::Initialized,
+                Event::ImuHealthy,
+                Event::EstimatorValid,
+                Event::PreflightPassed,
+                Event::Arm,
+            ],
+        )
+        .expect("armed");
+        let VehicleHandle::Armed(mut armed) = VehicleHandle::from_state(backend, safety) else {
+            panic!("armed safety maps to Armed");
+        };
+        assert_eq!(armed.backend().authority_epoch(), 0);
+        let MavMessage::HEARTBEAT(h) = ardupilot_vehicle_heartbeat(false, 0) else {
+            panic!("heartbeat");
+        };
+        armed.backend_mut().ingest_heartbeat(h);
+        assert!(
+            armed.backend().authority_epoch() >= 1,
+            "async ArduPilot disarm must bump the epoch"
+        );
+        let err = armed.enter_offboard_now().unwrap_err();
+        assert!(
+            matches!(
+                err.error,
+                ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
+            ),
+            "{:?}",
+            err.error
+        );
+        let mut armed = err.vehicle;
+        let err = armed
+            .set_motor_thrust_now(MotorThrust::hover(4, 0.4))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
+        ));
+        assert!(armed.safety().armed);
+        assert!(!armed.safety().actuators_enabled);
+    }
+
+    #[test]
+    fn unexpected_disarm_refuses_setpoint_at_the_backend() {
+        let mut b = ArduPilotBackend::new(ArduPilotConfig::default());
+        b.armed = true;
+        b.offboard = true;
+        let MavMessage::HEARTBEAT(h) = ardupilot_vehicle_heartbeat(false, 0) else {
+            panic!("heartbeat");
+        };
+        b.ingest_heartbeat(h);
+        assert!(b.authority_epoch() >= 1);
+        assert!(!b.telemetry_now().unwrap().failsafe);
+        let err = b.set_velocity_ned_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, -1.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.hold_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.enter_offboard_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.takeoff_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.reached_altitude_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.enable_actuators_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.set_motor_thrust_now(MotorThrust::hover(4, 0.4));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.land_now();
+        assert!(
+            matches!(err, Err(BackendError::Disconnected)),
+            "land stays an ungated safety action: {err:?}"
+        );
     }
 
     #[test]
