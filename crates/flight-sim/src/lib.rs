@@ -15,12 +15,16 @@ pub mod backend;
 pub mod fuzz;
 pub mod physics;
 pub mod replay;
+pub mod scenario;
 pub mod world_backend;
 
 pub use backend::{SimBackend, SimConfig};
 pub use fuzz::FuzzedImu;
 pub use physics::{Physics, GRAVITY_NED};
 pub use replay::{JsonlReplay, RecordedSample};
+pub use scenario::{
+    differential_world, replay_jsonl, replay_report, run_world, Fault, Scenario, ScenarioReport,
+};
 pub use world_backend::{
     GroundWorldBackend, MarineWorldBackend, WorldBackend, WorldImu, WorldSession,
 };

@@ -31,8 +31,9 @@ use flight_core::vehicle::{
     Telemetry, Vehicle, VehicleBackend,
 };
 use flight_mavlink::{
-    arm_disarm, flight_termination, gcs_heartbeat, nav_land, set_offboard_mode, set_position_ned,
-    set_velocity_ned, UdpLink,
+    arm_disarm, flight_termination, gcs_heartbeat, heartbeat_reports_armed,
+    heartbeat_revokes_authority, nav_land, set_offboard_mode, set_position_ned, set_velocity_ned,
+    UdpLink,
 };
 use mavlink::common::{MavMessage, MavType};
 use std::time::{Duration, Instant};
@@ -71,6 +72,9 @@ pub struct Px4Backend {
     offboard: bool,
     seen_px4: bool,
     seen_local_position: bool,
+    failsafe_latched: bool,
+    authority_epoch: u32,
+    last_heartbeat: Option<Instant>,
 }
 
 impl Px4Backend {
@@ -86,6 +90,9 @@ impl Px4Backend {
             offboard: false,
             seen_px4: false,
             seen_local_position: false,
+            failsafe_latched: false,
+            authority_epoch: 0,
+            last_heartbeat: None,
         }
     }
 
@@ -114,8 +121,13 @@ impl Px4Backend {
                     self.last_velocity = Velocity::ned(p.vx, p.vy, p.vz);
                     self.seen_local_position = true;
                 }
-                Ok((_, ref msg)) if is_px4_heartbeat(msg) => {
+                Ok((_, MavMessage::HEARTBEAT(h)))
+                    if h.mavtype == MavType::MAV_TYPE_QUADROTOR
+                        || h.mavtype == MavType::MAV_TYPE_GENERIC =>
+                {
                     self.seen_px4 = true;
+                    self.last_heartbeat = Some(Instant::now());
+                    self.apply_vehicle_heartbeat(&h);
                 }
                 Ok(_) => {}
                 Err(_) => break,
@@ -166,6 +178,30 @@ impl Px4Backend {
             )
         };
         self.send(&msg)
+    }
+
+    /// PX4 asynchronously left offboard authority. Idempotent: one epoch bump
+    /// per latch, so a 1 Hz HEARTBEAT stream does not increment forever.
+    fn apply_vehicle_heartbeat(&mut self, h: &mavlink::common::HEARTBEAT_DATA) {
+        let hb_armed = heartbeat_reports_armed(h);
+        let vehicle_failsafe = heartbeat_revokes_authority(h);
+        let unexpected_disarm = self.armed && !hb_armed;
+        if !(vehicle_failsafe || unexpected_disarm) {
+            return;
+        }
+        if unexpected_disarm {
+            self.armed = false;
+            self.offboard = false;
+        }
+        if vehicle_failsafe {
+            self.offboard = false;
+        }
+        if !self.failsafe_latched {
+            if vehicle_failsafe {
+                self.failsafe_latched = true;
+            }
+            self.revoke_authority();
+        }
     }
 }
 
@@ -312,25 +348,61 @@ impl VehicleBackend for Px4Backend {
             yaw_rad: 0.0,
             imu: None,
             imu_health: SensorHealth::Ok,
-            imu_healthy: true,
-            estimator_valid: true,
+            imu_healthy: self.seen_px4,
+            estimator_valid: self.seen_local_position,
             armed: self.armed,
-            actuators_enabled: self.armed,
+            actuators_enabled: self.armed && !self.failsafe_latched,
             offboard: self.offboard,
-            failsafe: false,
-            heartbeat_age_secs: 0.0,
+            failsafe: self.failsafe_latched,
+            heartbeat_age_secs: self
+                .last_heartbeat
+                .map(|t| t.elapsed().as_secs_f32())
+                .unwrap_or(1.0e6),
             last_command: "px4",
         })
     }
 
     async fn trigger_failsafe(&mut self) -> Result<(), BackendError> {
+        self.failsafe_latched = true;
+        self.offboard = false;
+        self.revoke_authority();
         self.send(&flight_termination(
             self.config.target_system,
             self.config.target_component,
             true,
         ))?;
-        self.offboard = false;
         Ok(())
+    }
+
+    fn authority_epoch(&self) -> u32 {
+        self.authority_epoch
+    }
+
+    fn authority_vehicle_id(&self) -> u8 {
+        self.config.target_system
+    }
+
+    fn authority_now(&self) -> MonotonicInstant {
+        MonotonicInstant::from_millis(u64::from(self.boot_ms))
+    }
+
+    fn revoke_authority(&mut self) {
+        self.authority_epoch = self.authority_epoch.saturating_add(1);
+    }
+
+    fn authority_heartbeat_age_ms(&self) -> Option<u32> {
+        Some(
+            self.last_heartbeat
+                .map(|t| {
+                    let ms = t.elapsed().as_millis();
+                    if ms > u128::from(u32::MAX) {
+                        u32::MAX
+                    } else {
+                        ms as u32
+                    }
+                })
+                .unwrap_or(u32::MAX),
+        )
     }
 
     /// Offboard climb: keep streaming and re-assert PX4 offboard. `NAV_TAKEOFF`
@@ -420,6 +492,51 @@ mod tests {
             b.set_position_ned_now(Position::ned(0.0, 0.0, -2.0)),
             Err(BackendError::Disconnected)
         ));
+    }
+
+    #[test]
+    fn failsafe_revokes_epoch_even_when_disconnected() {
+        let mut b = Px4Backend::new(Px4Config::default());
+        assert_eq!(b.authority_epoch(), 0);
+        let err = b.trigger_failsafe_now();
+        assert!(matches!(err, Err(BackendError::Disconnected)));
+        assert_eq!(b.authority_epoch(), 1);
+        assert!(b.telemetry_now().unwrap().failsafe);
+        assert!(!b.telemetry_now().unwrap().estimator_valid);
+    }
+
+    #[tokio::test]
+    async fn critical_heartbeat_revokes_epoch_once() {
+        use flight_mavlink::{
+            px4_custom_mode, px4_vehicle_heartbeat_status, PX4_MAIN_MODE_OFFBOARD,
+        };
+        use mavlink::common::MavState;
+        let (port, cfg) = ephemeral_udpin();
+        let fake = thread::spawn(move || {
+            let mut link =
+                UdpLink::connect(&format!("udpout:127.0.0.1:{port}"), 1, 1).expect("fake px4 bind");
+            for _ in 0..40 {
+                let _ = link.send(&px4_vehicle_heartbeat_status(
+                    true,
+                    px4_custom_mode(PX4_MAIN_MODE_OFFBOARD, 0),
+                    MavState::MAV_STATE_CRITICAL,
+                ));
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let mut backend = Px4Backend::new(cfg);
+        backend.connect().await.expect("connect");
+        assert!(backend.telemetry_now().unwrap().failsafe);
+        let epoch = backend.authority_epoch();
+        assert!(epoch >= 1);
+        backend.ingest_inbox();
+        backend.ingest_inbox();
+        assert_eq!(
+            backend.authority_epoch(),
+            epoch,
+            "1 Hz critical HEARTBEAT must not keep bumping"
+        );
+        let _ = fake.join();
     }
 
     fn ephemeral_udpin() -> (u16, Px4Config) {

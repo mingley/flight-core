@@ -13,10 +13,42 @@ use mavlink::{connect, Connection, MavConnection, MavHeader};
 pub const PX4_MAIN_MODE_OFFBOARD: u8 = 6;
 /// PX4 `PX4_CUSTOM_MAIN_MODE_AUTO`.
 pub const PX4_MAIN_MODE_AUTO: u8 = 4;
+/// PX4 `PX4_CUSTOM_SUB_MODE_AUTO_RTL`.
+pub const PX4_SUB_MODE_AUTO_RTL: u8 = 5;
+/// PX4 `PX4_CUSTOM_SUB_MODE_AUTO_LAND`.
+pub const PX4_SUB_MODE_AUTO_LAND: u8 = 6;
 
 /// Pack a PX4 custom_mode uint32 (`sub_mode << 24 | main_mode << 16`).
 pub const fn px4_custom_mode(main_mode: u8, sub_mode: u8) -> u32 {
     ((sub_mode as u32) << 24) | ((main_mode as u32) << 16)
+}
+
+/// Unpack PX4 `custom_mode` main nibble (`(mode >> 16) & 0xff`).
+pub const fn px4_custom_main_mode(custom_mode: u32) -> u8 {
+    ((custom_mode >> 16) & 0xff) as u8
+}
+
+/// Unpack PX4 `custom_mode` sub nibble (`(mode >> 24) & 0xff`).
+pub const fn px4_custom_sub_mode(custom_mode: u32) -> u8 {
+    ((custom_mode >> 24) & 0xff) as u8
+}
+
+/// Vehicle HEARTBEAT that means the physical vehicle has left the companion's
+/// offboard authority: critical/emergency/termination, or AUTO+RTL.
+pub fn heartbeat_revokes_authority(h: &HEARTBEAT_DATA) -> bool {
+    matches!(
+        h.system_status,
+        MavState::MAV_STATE_CRITICAL
+            | MavState::MAV_STATE_EMERGENCY
+            | MavState::MAV_STATE_FLIGHT_TERMINATION
+    ) || (px4_custom_main_mode(h.custom_mode) == PX4_MAIN_MODE_AUTO
+        && px4_custom_sub_mode(h.custom_mode) == PX4_SUB_MODE_AUTO_RTL)
+}
+
+/// `MAV_MODE_FLAG_SAFETY_ARMED` on a PX4-shaped heartbeat.
+pub fn heartbeat_reports_armed(h: &HEARTBEAT_DATA) -> bool {
+    h.base_mode
+        .contains(MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED)
 }
 
 /// Ignore position, acceleration, force, yaw, yaw-rate — velocity only.
@@ -271,6 +303,15 @@ pub fn local_position_ned(
 
 /// Heartbeat a PX4-shaped plant publishes (quadrotor + PX4 autopilot).
 pub fn px4_vehicle_heartbeat(armed: bool, custom_mode: u32) -> MavMessage {
+    px4_vehicle_heartbeat_status(armed, custom_mode, MavState::MAV_STATE_ACTIVE)
+}
+
+/// Same as [`px4_vehicle_heartbeat`] with an explicit `system_status`.
+pub fn px4_vehicle_heartbeat_status(
+    armed: bool,
+    custom_mode: u32,
+    system_status: MavState,
+) -> MavMessage {
     let mut base =
         MavModeFlag::MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MavModeFlag::MAV_MODE_FLAG_GUIDED_ENABLED;
     if armed {
@@ -281,7 +322,7 @@ pub fn px4_vehicle_heartbeat(armed: bool, custom_mode: u32) -> MavMessage {
         mavtype: MavType::MAV_TYPE_QUADROTOR,
         autopilot: MavAutopilot::MAV_AUTOPILOT_PX4,
         base_mode: base,
-        system_status: MavState::MAV_STATE_ACTIVE,
+        system_status,
         mavlink_version: 3,
     })
 }
@@ -343,6 +384,47 @@ mod tests {
     fn custom_mode_packing() {
         assert_eq!(px4_custom_mode(6, 0), 6 << 16);
         assert_eq!(px4_custom_mode(4, 3), (3 << 24) | (4 << 16));
+        assert_eq!(px4_custom_main_mode(px4_custom_mode(6, 0)), 6);
+        assert_eq!(
+            px4_custom_sub_mode(px4_custom_mode(PX4_MAIN_MODE_AUTO, PX4_SUB_MODE_AUTO_RTL)),
+            PX4_SUB_MODE_AUTO_RTL
+        );
+    }
+
+    #[test]
+    fn heartbeat_revokes_on_critical_and_rtl_not_on_active_offboard() {
+        let MavMessage::HEARTBEAT(ok) =
+            px4_vehicle_heartbeat(true, px4_custom_mode(PX4_MAIN_MODE_OFFBOARD, 0))
+        else {
+            panic!("hb");
+        };
+        assert!(!heartbeat_revokes_authority(&ok));
+        assert!(heartbeat_reports_armed(&ok));
+        let MavMessage::HEARTBEAT(crit) = px4_vehicle_heartbeat_status(
+            true,
+            px4_custom_mode(PX4_MAIN_MODE_OFFBOARD, 0),
+            MavState::MAV_STATE_CRITICAL,
+        ) else {
+            panic!("crit");
+        };
+        assert!(heartbeat_revokes_authority(&crit));
+        let MavMessage::HEARTBEAT(rtl) = px4_vehicle_heartbeat(
+            true,
+            px4_custom_mode(PX4_MAIN_MODE_AUTO, PX4_SUB_MODE_AUTO_RTL),
+        ) else {
+            panic!("rtl");
+        };
+        assert!(heartbeat_revokes_authority(&rtl));
+        let MavMessage::HEARTBEAT(land) = px4_vehicle_heartbeat(
+            true,
+            px4_custom_mode(PX4_MAIN_MODE_AUTO, PX4_SUB_MODE_AUTO_LAND),
+        ) else {
+            panic!("land");
+        };
+        assert!(
+            !heartbeat_revokes_authority(&land),
+            "NAV_LAND AUTO LAND must not look like failsafe"
+        );
     }
 
     #[test]

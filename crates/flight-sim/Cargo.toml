@@ -22,3 +22,10 @@ name = "fleet"
 
 [[example]]
 name = "fuzzed_world"
+
+[[example]]
+name = "gps_loss"
+
+[[bin]]
+name = "flight-test"
+path = "src/bin/flight_test.rs"
