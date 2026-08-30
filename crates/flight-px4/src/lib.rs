@@ -25,6 +25,7 @@ use flight_core::contracts::AerialOffboard;
 use flight_core::frames::Ned;
 use flight_core::safety::{Event, Phase, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use flight_core::sensors::SensorHealth;
+use flight_core::temporal::Sequence;
 use flight_core::time::MonotonicInstant;
 use flight_core::vector::{Position, Velocity};
 use flight_core::vehicle::{
@@ -664,9 +665,14 @@ pub fn run_px4_revoke_table() -> Result<usize, String> {
                 "leftover Offboard already stale before PX4 inject {e:?}"
             ));
         }
+        let mut seq = Sequence::new();
+        seq.observe(v.backend().authority_epoch())
+            .map_err(|_| format!("sequence before {e:?}"))?;
         v.backend_mut()
             .inject_revoke(inject)
             .map_err(|err| format!("inject {e:?}: {err}"))?;
+        seq.observe(v.backend().authority_epoch())
+            .map_err(|_| format!("epoch jumped backward after {e:?}"))?;
         if v.backend().authority_epoch() == 0 {
             return Err(format!("event {e:?} did not bump epoch"));
         }
