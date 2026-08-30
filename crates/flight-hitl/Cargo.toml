@@ -18,6 +18,9 @@ name = "rack"
 [[example]]
 name = "contract_miss"
 
+[[example]]
+name = "udp_card"
+
 [[bin]]
 name = "flight-test-hitl"
 path = "src/bin/flight_test_hitl.rs"

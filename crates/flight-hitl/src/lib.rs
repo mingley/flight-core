@@ -18,13 +18,17 @@
 //! frame clears it. After [`WorldRack::return_all`] the drone is Ready, so
 //! hold is Protocol. [`WorldRack::harbor`]
 //! is the four-body shoreline; [`WorldRack::open_water`] is air + hulls. The
-//! plant can be the verified world or a UDP I/O card speaking the `FCH1`
-//! datagrams in [`protocol`].
+//! plant is the verified world. A physical or mock I/O card speaks `FCH1` on
+//! UDP ([`Fch1UdpCard`]); [`WorldRack::drain_io`] / [`WorldRack::frame_from_io`]
+//! apply wire commands through [`RackCommand::from_fch1`]. The card does
+//! **not** step the plant.
 
 #![deny(unsafe_code)]
 
+pub mod card;
 pub mod protocol;
 pub mod rack;
 
+pub use card::{run_fch1_udp_mock, Fch1MockReport, Fch1UdpCard, Fch1WireEvent};
 pub use protocol::{decode_command, decode_sample, encode_command, encode_sample, Command, Sample};
 pub use rack::{command_from_datagram, RackCommand, RackFrame, WorldRack};

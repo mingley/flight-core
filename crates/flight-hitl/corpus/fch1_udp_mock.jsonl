@@ -1,0 +1,10 @@
+{"kind":"command","slot":2,"apply":1,"vn":1,"ve":0,"vd":0}
+{"kind":"command","slot":3,"apply":1,"vn":0,"ve":1,"vd":0}
+{"kind":"command","slot":0,"apply":0,"vn":0,"ve":3,"vd":-5}
+{"kind":"command","slot":0,"apply":1,"vn":0,"ve":0,"vd":-1.2}
+{"kind":"sample","slot":0,"t_ns":20000000}
+{"kind":"sample","slot":1,"t_ns":20000000}
+{"kind":"sample","slot":0,"t_ns":40000000}
+{"kind":"sample","slot":1,"t_ns":40000000}
+{"kind":"sample","slot":0,"t_ns":60000000}
+{"kind":"sample","slot":1,"t_ns":60000000}

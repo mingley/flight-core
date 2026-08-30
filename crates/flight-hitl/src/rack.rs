@@ -28,7 +28,8 @@
 //! [`WorldSession::attach_hold`]. Idle frames leave the hold in place;
 //! a live aerial velocity frame clears it. Ready after return is Protocol.
 
-use std::net::UdpSocket;
+use std::io::ErrorKind;
+use std::net::{SocketAddr, UdpSocket};
 use std::time::Instant;
 
 use flight_core::contracts::{AerialOffboard, TraceSample};
@@ -175,13 +176,57 @@ impl WorldRack {
         self
     }
 
+    /// Bind a UDP socket, send `FCH1` samples to `peer`, and accept commands
+    /// from that peer via [`Self::drain_io`]. Returns the rack's local address
+    /// so a card can connect back. This is the physical / mock-card path;
+    /// it is not an in-process plant shortcut.
+    pub fn bind_io(&mut self, peer: &str) -> Result<SocketAddr, BackendError> {
+        let sock = UdpSocket::bind("127.0.0.1:0").map_err(|_| BackendError::Io)?;
+        sock.connect(peer).map_err(|_| BackendError::Io)?;
+        sock.set_nonblocking(true).map_err(|_| BackendError::Io)?;
+        let local = sock.local_addr().map_err(|_| BackendError::Io)?;
+        self.out = Some(sock);
+        Ok(local)
+    }
+
     /// Bind a UDP socket and send `FCH1` samples each frame (best-effort).
     pub fn mirror_udp(&mut self, addr: &str) -> Result<(), BackendError> {
-        let sock = UdpSocket::bind("127.0.0.1:0").map_err(|_| BackendError::Io)?;
-        sock.connect(addr).map_err(|_| BackendError::Io)?;
-        sock.set_nonblocking(true).map_err(|_| BackendError::Io)?;
-        self.out = Some(sock);
-        Ok(())
+        self.bind_io(addr).map(|_| ())
+    }
+
+    /// Drain waiting FCH1 command datagrams. `apply == 0` zeros that slot
+    /// ([`RackCommand::from_fch1`]). Empty inbox is idle (all zeros).
+    pub fn drain_io(&mut self) -> RackCommand {
+        let Some(sock) = self.out.as_mut() else {
+            return RackCommand::default();
+        };
+        let mut cmds = [Command {
+            slot: 255,
+            velocity_ned: [0.0, 0.0, 0.0],
+            apply: 0,
+        }; 16];
+        let mut n = 0;
+        let mut buf = [0u8; 64];
+        while n < cmds.len() {
+            match sock.recv(&mut buf) {
+                Ok(len) => {
+                    if let Some(c) = command_from_datagram(&buf[..len]) {
+                        cmds[n] = c;
+                        n += 1;
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(_) => break,
+            }
+        }
+        RackCommand::from_fch1(&cmds[..n])
+    }
+
+    /// One rack frame whose setpoints came off the UDP card, not a struct
+    /// the test assembled in-process.
+    pub fn frame_from_io(&mut self, dt: f32, compute_ns: u64) -> Result<RackFrame, BackendError> {
+        let cmd = self.drain_io();
+        self.frame_with_compute(dt, cmd, compute_ns)
     }
 
     pub fn spec(&self) -> DeadlineSpec {
