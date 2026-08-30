@@ -99,8 +99,8 @@
 //! The same facts are Creusot `#[requires]` / `#[ensures]` on the kernel
 //! (`flight-core` feature `creusot`, enabled here). Dummy macros on rustc.
 //! `cargo creusot prove -- -p flight-core --features creusot` (Creusot 0.5.0)
-//! discharges aerial `step`, `ground_step`, `marine_step`, and HITL deadline
 //! / apply-allowed (recorded: 81 libraries, 0 failures). f32 facts stay Kani.
+//! Agent-facing digest: `docs/generated/proof-summary.txt`.
 
 #![deny(unsafe_code)]
 #![allow(unexpected_cfgs)]
@@ -1064,5 +1064,30 @@ mod tests {
                 assert!(((h[0] + h[1]) - (h1[0] + h1[1])).abs() < 1e-5);
             }
         }
+    }
+
+    #[test]
+    fn proof_summary_lockstep_with_harness_count() {
+        const SUMMARY: &str = include_str!("../../../docs/generated/proof-summary.txt");
+        const README: &str = include_str!("../../../README.md");
+        const SPEC: &str = include_str!("../../../docs/remaining-spec.md");
+        const SRC: &str = include_str!("lib.rs");
+        assert!(SUMMARY.contains("kani_harnesses: 45"));
+        assert!(SUMMARY.contains("creusot_libraries: 81"));
+        assert!(SUMMARY.contains("creusot_modules: safety ground marine hitl"));
+        assert!(SUMMARY.contains("f32_stays_kani: hold buoyancy hydro_mass hitl_miss_zero"));
+        assert!(
+            SRC.contains("prove_aerial_authority!"),
+            "prove_aerial_authority! expands to a #[kani::proof] in this crate"
+        );
+        let inline = SRC.lines().filter(|l| l.trim() == "#[kani::proof]").count();
+        assert!(
+            inline >= 40,
+            "flight-verify inline #[kani::proof] count drifted: {inline}"
+        );
+        assert!(README.contains("45 harnesses"));
+        assert!(README.contains("81 libraries"));
+        assert!(SPEC.contains("45 harnesses"));
+        assert!(SPEC.contains("81 libraries"));
     }
 }

@@ -1,0 +1,6 @@
+# flight-core proof summary (agent input)
+# Counts lockstep README, remaining-spec, and flight-verify.
+kani_harnesses: 45
+creusot_libraries: 81
+creusot_modules: safety ground marine hitl
+f32_stays_kani: hold buoyancy hydro_mass hitl_miss_zero
