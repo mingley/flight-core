@@ -61,11 +61,15 @@ native ULog `fc_trace` replay. The same contract also runs as
 Offboard cannot `set_velocity` / `set_position` / `hold`; JSONL and ULog
 round-trip the same samples). `flight-test-px4` is the leftover table
 at the PX4 companion (`inject_revoke` for every `REVOKE_ON` event) plus
-GPS-loss leftover (`run_px4_gps_loss`, same `GPS_LOSS.require` as world).
+GPS-loss leftover (`run_px4_gps_loss`, `AerialOffboard::GPS_LOSS_REQUIRE`).
+`flight-test-ardupilot` is the Copter GUIDED leftover table plus leftover GPS-loss
+(`run_ardupilot_gps_loss`).
 `flight-test-hitl` is leftover OffboardControl `COMMANDS` after a rack
-deadline/`Rate` miss **and** after every `REVOKE_ON` (`WorldSession::inject_revoke`).
+deadline/`Rate` miss **and** after every `REVOKE_ON` (`WorldSession::inject_revoke`)
+plus leftover GPS-loss (`run_hitl_gps_loss`).
 `flight-test-ros2` is leftover OffboardControl after `apply_failsafe`,
-`apply_disarm`, and every `REVOKE_ON` (no rclrs). A leftover
+`apply_disarm`, and every `REVOKE_ON`, plus leftover GPS-loss (`run_ros2_gps_loss`;
+no rclrs). A leftover
 `Vehicle<Armed>` after an async PX4 disarm HEARTBEAT is still typed Armed and
 has no actuation authority (`enter_offboard_now` is `StaleEpoch`). A leftover
 `Vehicle<Offboard>` after `connect` / `begin_session` is still typed Offboard
@@ -248,9 +252,9 @@ Rust does not automatically “verify” a robot. It lets you move physical-syst
 | `flight-mhs` | MHS-shaped driver (discover / compiled reference / read / write / chain / stdio MCP). Not official MHS. Writes are `Lab::act_through_attach`. |
 | `flight-mavlink` | MAVLink messages for heartbeat, arm, PX4 offboard / ArduCopter GUIDED, NED velocity / position |
 | `flight-px4` | PX4 offboard backend (`udpin:0.0.0.0:14540`) and `WorldPlant` — same MAVLink setpoints, verified world step; `hold` writes the current NED pose |
-| `flight-ardupilot` | ArduPilot GUIDED companion (`udpin:0.0.0.0:14550`); leftover Offboard `COMMANDS` after every `REVOKE_ON` via `flight-test-ardupilot`; live Copter `#[ignore]` loopback-only |
-| `flight-ros2` | PX4 external modes: ROS 2 CDR `px4_msgs` setpoints (NED), NED→ENU Twist onto aerial / ground / marine `WorldSession` bodies (`FleetPlant` on coastal, harbor, inland, open water; `hold` writes the current NED pose; leftover OffboardControl after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` via `flight-test-ros2`), optional production `rclrs` 0.7 node |
-| `flight-hitl` | Deadline-aware HITL rack over every catalog: coastal / harbor (four bodies), inland (no hull), open water (no rover). Verified world as plant, `FCH1` UDP samples **and** a faithful UDP card (`Fch1UdpCard` / `frame_from_io`; recorded `corpus/fch1_udp_mock.jsonl`); miss ⇒ attach failsafe (or idempotent re-trip) + zero command; `apply == 0` zeros the slot (`from_fch1`); OffboardControl `Rate` lockstep with `DeadlineSpec`; leftover OffboardControl `COMMANDS` stale after a miss and after every `REVOKE_ON` (`flight-test-hitl`); on-time frames write NED only while attach is Offboard-control / Moving / Underway / StationKeep; `airborne` / `station_all` / `resume_all` / `dock_all` / `park_all` / `hold` walk climb-complete, hull station, hull dock, rover halt, and NED position hold |
+| `flight-ardupilot` | ArduPilot GUIDED companion (`udpin:0.0.0.0:14550`); leftover Offboard `COMMANDS` after every `REVOKE_ON` and leftover GPS-loss via `flight-test-ardupilot`; live Copter `#[ignore]` loopback-only |
+| `flight-ros2` | PX4 external modes: ROS 2 CDR `px4_msgs` setpoints (NED), NED→ENU Twist onto aerial / ground / marine `WorldSession` bodies (`FleetPlant` on coastal, harbor, inland, open water; `hold` writes the current NED pose; leftover OffboardControl after `apply_failsafe`, `apply_disarm`, every `REVOKE_ON`, and leftover GPS-loss via `flight-test-ros2`), optional production `rclrs` 0.7 node |
+| `flight-hitl` | Deadline-aware HITL rack over every catalog: coastal / harbor (four bodies), inland (no hull), open water (no rover). Verified world as plant, `FCH1` UDP samples **and** a faithful UDP card (`Fch1UdpCard` / `frame_from_io`; recorded `corpus/fch1_udp_mock.jsonl`); miss ⇒ attach failsafe (or idempotent re-trip) + zero command; `apply == 0` zeros the slot (`from_fch1`); OffboardControl `Rate` lockstep with `DeadlineSpec`; leftover OffboardControl `COMMANDS` stale after a miss, after every `REVOKE_ON`, and leftover GPS-loss (`flight-test-hitl`); on-time frames write NED only while attach is Offboard-control / Moving / Underway / StationKeep; `airborne` / `station_all` / `resume_all` / `dock_all` / `park_all` / `hold` walk climb-complete, hull station, hull dock, rover halt, and NED position hold |
 | `flight-verify` | Kani proofs: actuators, drive, thrust, contact, drag, buoyancy, hydro mass, HITL miss, position-hold restore |
 | `flight-demo` | Live lab console (safety trips, return, station / resume / airborne / hold) |
 

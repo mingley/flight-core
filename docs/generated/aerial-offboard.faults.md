@@ -19,22 +19,24 @@ Offboard. The same events appear as Offboard → Failsafe edges in
 
 CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`
 (world leftover Offboard + JSONL + ULog). PX4 companion leftover table
-and leftover GPS-loss (`EstimatorInvalid` + `Scenario::GPS_LOSS.require`):
+and leftover GPS-loss (`EstimatorInvalid` + `AerialOffboard::GPS_LOSS_REQUIRE`):
 `cargo run -p flight-px4 --bin flight-test-px4` (`run_px4_revoke_table` /
 `run_px4_gps_loss`; `flight-sim` does not depend on `flight-px4`). Live SIH
 leftover GPS-loss is `sitl_gps_loss_revokes_leftover_offboard` (`#[ignore]`;
 CI job `sitl`).
-ArduPilot GUIDED leftover table:
+ArduPilot GUIDED leftover table and leftover GPS-loss:
 `cargo run -p flight-ardupilot --bin flight-test-ardupilot`
-(`ArduPilotBackend::inject_revoke` for every `REVOKE_ON` event;
+(`run_ardupilot_revoke_table` / `run_ardupilot_gps_loss`;
 `flight-sim` does not depend on `flight-ardupilot`; live Copter is
 loopback-only, no CI sitl job).
-HITL leftover after a rack deadline/`Rate` miss, and leftover after every
-`REVOKE_ON` through `WorldRack::inject_revoke`:
+HITL leftover after a rack deadline/`Rate` miss, leftover after every
+`REVOKE_ON` through `WorldRack::inject_revoke`, and leftover GPS-loss:
 `cargo run -p flight-hitl --bin flight-test-hitl`
 (`WorldRack::leftover_after_deadline_miss` / `run_hitl_revoke_table` /
-`run_fch1_udp_mock`; `flight-sim` does not depend on `flight-hitl`). ROS 2 leftover after
-`apply_failsafe`, `apply_disarm`, and every `REVOKE_ON`:
+`run_hitl_gps_loss` / `run_fch1_udp_mock`; `flight-sim` does not depend on
+`flight-hitl`). ROS 2 leftover after `apply_failsafe`, `apply_disarm`,
+every `REVOKE_ON`, and leftover GPS-loss:
 `cargo run -p flight-ros2 --bin flight-test-ros2`
-(`plant::leftover_after_failsafe` / `leftover_after_disarm` / `run_ros2_revoke_table`;
+(`plant::leftover_after_failsafe` / `leftover_after_disarm` /
+`run_ros2_revoke_table` / `run_ros2_gps_loss`;
 `flight-sim` does not depend on `flight-ros2`; no rclrs).
