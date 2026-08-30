@@ -7,7 +7,7 @@
 use crate::safety::{
     admit_offboard_command, command_age_ok, estimator_ts_monotonic, OFFBOARD_HEARTBEAT_MAX_AGE_MS,
 };
-use crate::temporal::{CommandFresh, HeartbeatFresh, Timestamp};
+use crate::temporal::{CommandFresh, HeartbeatFresh, Sequence, Timestamp};
 
 /// One sample of physical/control state for contract evaluation.
 #[derive(Clone, Copy, Debug)]
@@ -127,15 +127,14 @@ pub fn evaluate_trace(samples: &[TraceSample], reqs: &[Requirement]) -> Result<(
                 }
             }
             Requirement::PermitEpochMonotonic => {
-                let mut prev = samples[0].epoch;
-                for (i, s) in samples.iter().enumerate().skip(1) {
-                    if s.epoch < prev {
+                let mut seq = Sequence::new();
+                for (i, s) in samples.iter().enumerate() {
+                    if seq.observe(s.epoch).is_err() {
                         return Err(MonitorFail {
                             requirement: "permit_epoch_monotonic",
                             index: i,
                         });
                     }
-                    prev = s.epoch;
                 }
             }
             Requirement::FailsafeWithinMs(ms) => {
