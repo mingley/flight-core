@@ -111,6 +111,28 @@ impl Telemetry {
     pub fn altitude_agl(&self) -> Qty<Meter> {
         self.position.altitude_agl()
     }
+
+    /// Convert a companion/plant snapshot into the contract monitor sample.
+    pub fn to_trace_sample(&self, epoch: u32) -> crate::contracts::TraceSample {
+        let age = self.heartbeat_age_secs * 1000.0;
+        let heartbeat_age_ms = if age <= 0.0 {
+            0
+        } else if age >= u32::MAX as f32 {
+            u32::MAX
+        } else {
+            age as u32
+        };
+        crate::contracts::TraceSample {
+            t_secs: self.timestamp.as_secs_f32(),
+            armed: self.armed,
+            actuators_enabled: self.actuators_enabled,
+            failsafe: self.failsafe,
+            epoch,
+            heartbeat_age_ms,
+            command: None,
+            altitude_m: self.position.altitude_agl().get(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,6 +200,33 @@ pub trait VehicleBackend: Send {
     ) -> impl Future<Output = Result<Telemetry, BackendError>> + Send;
     fn telemetry(&mut self) -> impl Future<Output = Result<Telemetry, BackendError>> + Send;
     fn trigger_failsafe(&mut self) -> impl Future<Output = Result<(), BackendError>> + Send;
+
+    /// Live safety epoch. Permits issued against a previous value have no
+    /// authority. Default `0` for backends that do not yet track revocation.
+    fn authority_epoch(&self) -> u32 {
+        0
+    }
+
+    /// Vehicle identity the permit is bound to.
+    fn authority_vehicle_id(&self) -> u8 {
+        0
+    }
+
+    /// Clock sample used for lease expiry. Default is zero (unbounded leases).
+    fn authority_now(&self) -> MonotonicInstant {
+        MonotonicInstant::ZERO
+    }
+
+    /// Increment the safety epoch so every outstanding permit is stale.
+    fn revoke_authority(&mut self) {}
+
+    /// Age of the last vehicle heartbeat, in milliseconds.
+    ///
+    /// `None` means this backend does not track a companion heartbeat (null /
+    /// point-mass). PX4 reports elapsed time since the last PX4 HEARTBEAT.
+    fn authority_heartbeat_age_ms(&self) -> Option<u32> {
+        None
+    }
 
     /// Arm without an async runtime. Default polls [`Self::arm`] when it is
     /// already complete (world / null backends). A pending PX4 handshake is
@@ -334,6 +383,7 @@ pub struct NullBackend {
     pub yaw_rate: f32,
     pub ground: Option<GroundState>,
     pub marine: Option<MarineState>,
+    pub authority_epoch: u32,
 }
 
 impl VehicleBackend for NullBackend {
@@ -368,6 +418,7 @@ impl VehicleBackend for NullBackend {
         self.armed = false;
         self.actuators = false;
         self.offboard = false;
+        self.revoke_authority();
         Ok(())
     }
 
@@ -426,7 +477,20 @@ impl VehicleBackend for NullBackend {
     }
 
     async fn trigger_failsafe(&mut self) -> Result<(), BackendError> {
+        self.revoke_authority();
         Ok(())
+    }
+
+    fn authority_epoch(&self) -> u32 {
+        self.authority_epoch
+    }
+
+    fn authority_now(&self) -> MonotonicInstant {
+        MonotonicInstant::from_millis(u64::from(self.ticks) * 10)
+    }
+
+    fn revoke_authority(&mut self) {
+        self.authority_epoch = self.authority_epoch.saturating_add(1);
     }
 
     fn sync_ground(&mut self, safety: GroundState) -> Result<(), BackendError> {

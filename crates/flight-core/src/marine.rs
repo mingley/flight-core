@@ -156,6 +156,11 @@ impl MarineEvent {
     }
 }
 
+/// Failsafe and dock revoke hull thrust authority.
+pub const fn marine_event_revokes_authority(event: MarineEvent) -> bool {
+    matches!(event, MarineEvent::Failsafe | MarineEvent::Dock)
+}
+
 #[derive(Copy)]
 #[cfg_attr(not(creusot), derive(Clone, Debug, PartialEq, Eq))]
 #[cfg_attr(

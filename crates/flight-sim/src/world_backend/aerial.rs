@@ -358,6 +358,43 @@ impl VehicleBackend for WorldBackend {
         Ok(())
     }
 
+    fn authority_epoch(&self) -> u32 {
+        self.session
+            .lock()
+            .world
+            .body(self.body_id)
+            .map(|b| b.authority_epoch)
+            .unwrap_or(0)
+    }
+
+    fn authority_vehicle_id(&self) -> u8 {
+        flight_core::contracts::VehicleId::from_name(self.body_id).raw()
+    }
+
+    fn authority_now(&self) -> MonotonicInstant {
+        Clock::now(self)
+    }
+
+    fn revoke_authority(&mut self) {
+        self.session.with_world_mut(|w| {
+            if let Some(b) = w.body_mut(self.body_id) {
+                b.bump_authority();
+            }
+        });
+    }
+
+    fn authority_heartbeat_age_ms(&self) -> Option<u32> {
+        self.session.lock().world.body(self.body_id).and_then(|b| {
+            b.aerial.map(|s| {
+                if s.offboard_heartbeat_fresh {
+                    0
+                } else {
+                    flight_core::safety::OFFBOARD_HEARTBEAT_MAX_AGE_MS
+                }
+            })
+        })
+    }
+
     fn takeoff_now(&mut self) -> Result<(), BackendError> {
         WorldBackend::takeoff_now(self)
     }

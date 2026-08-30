@@ -9,7 +9,7 @@
 //! cargo kani -p flight-verify
 //! ```
 //!
-//! CI job `kani` runs that last command (42 `#[kani::proof]` harnesses).
+//! CI job `kani` runs that last command (45 `#[kani::proof]` harnesses).
 //! Workspace MSRV stays 1.85; rustc ≥ 1.88 is the installer only.
 //!
 //! Theorems:
@@ -37,6 +37,8 @@
 //! - body→NED rotation preserves vector length; quadrotor thrust lies on −body z
 //! - two-cell periodic shallow water conserves mass and keeps h ≥ 0
 //! - a HITL deadline miss applies the zero command, never the late setpoint
+//! - a permit issued at epoch N is stale at epoch M ≠ N (`permit_epoch_mismatch_is_stale`)
+//! - the `vehicle_contract!` revoke table matches `event_revokes_authority` (`dsl_revokes_match_kernel`)
 //! - attach maps Ready → PreflightReady, Takeoff → Takeoff, failsafe → Failsafe, Recovery → Recovery
 //! - attach maps Parked → Parked, Moving → Moving, E-stop → EStopped
 //! - attach maps Docked → Docked, Underway → Underway, StationKeep → StationKeep, failsafe → Failsafe
@@ -916,6 +918,39 @@ mod proofs {
             }
             Err(_) => assert!(s.failsafe || !s.thrust_enabled),
         }
+    }
+
+    #[kani::proof]
+    fn permit_epoch_mismatch_is_stale() {
+        use flight_core::contracts::{ActuationPermit, SafetyEpoch, VehicleId};
+        use flight_core::time::MonotonicInstant;
+        let live: u32 = kani::any();
+        let issued: u32 = kani::any();
+        kani::assume(live != issued);
+        let p = ActuationPermit::unbounded(
+            VehicleId::from_raw(1),
+            SafetyEpoch(issued),
+            MonotonicInstant::ZERO,
+        );
+        assert!(p
+            .check(
+                SafetyEpoch(live),
+                VehicleId::from_raw(1),
+                MonotonicInstant::ZERO
+            )
+            .is_err());
+    }
+
+    #[kani::proof]
+    fn dsl_revokes_match_kernel() {
+        use flight_core::contracts::AerialOffboard;
+        use flight_core::safety::{event_revokes_authority, Event};
+        let bits: u8 = kani::any();
+        kani::assume(bits <= 23);
+        let Some(e) = Event::from_u8(bits) else {
+            return;
+        };
+        assert_eq!(AerialOffboard::revokes(e), event_revokes_authority(e));
     }
 }
 

@@ -1081,6 +1081,27 @@ fn attach_offboard_grants_actuators_without_takeoff() {
 }
 
 #[test]
+fn world_failsafe_revokes_attached_offboard_permit() {
+    let session = WorldSession::inland(1);
+    session.attach_offboard("drone").unwrap();
+    let VehicleHandle::Offboard(mut v) = session.aerial("drone").attach().unwrap() else {
+        panic!("attach_offboard must bind Offboard");
+    };
+    v.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+        .unwrap();
+    session.attach_failsafe("drone").unwrap();
+    assert!(session.world().body("drone").unwrap().authority_epoch > 0);
+    let err = v
+        .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        flight_core::vehicle::ErrorKind::StaleAuthority(_)
+    ));
+    assert!(v.safety().offboard);
+}
+
+#[test]
 fn attach_takeoff_walks_ready_to_takeoff_on_the_plant() {
     let session = WorldSession::inland(1);
     let mut drone = session.attach_takeoff("drone").unwrap();

@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/ui/transform_wrong_frames.rs:4:20
+  |
+4 |     let _ = a.then(b);
+  |               ---- ^ expected `Transform<Body, _>`, found `Transform<Ned, Enu>`
+  |               |
+  |               arguments to this method are incorrect
+  |
+  = note: expected struct `flight_core::geometry::Transform<flight_core::frames::Body, _>`
+             found struct `flight_core::geometry::Transform<flight_core::frames::Ned, flight_core::frames::Enu>`
+note: method defined here
+ --> src/geometry.rs
+  |
+  |     pub fn then<C: Frame>(self, next: Transform<To, C>) -> Transform<From, C> {
+  |            ^^^^

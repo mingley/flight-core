@@ -19,8 +19,10 @@
 //! ```
 
 use super::backend::{BackendError, MotorThrust, NullBackend, Telemetry, VehicleBackend};
+use crate::contracts::{ActuationPermit, AuthorityReject};
 use crate::frames::Ned;
 use crate::safety::{self, Event, Phase, Reject, SafetyState};
+use crate::time::Duration;
 use crate::units::{Meter, Qty};
 use crate::vector::{Position, Velocity};
 use core::fmt;
@@ -128,6 +130,7 @@ pub struct Inner<B> {
     pub backend: B,
     pub safety: SafetyState,
     pub connection_system_id: u8,
+    pub permit: Option<crate::contracts::ActuationPermit>,
 }
 
 #[derive(Debug)]
@@ -163,6 +166,7 @@ pub enum ErrorKind {
     Backend(BackendError),
     PreflightFailed,
     Timeout,
+    StaleAuthority(AuthorityReject),
 }
 
 impl fmt::Display for ErrorKind {
@@ -172,6 +176,7 @@ impl fmt::Display for ErrorKind {
             Self::Backend(b) => write!(f, "backend: {b}"),
             Self::PreflightFailed => write!(f, "preflight checks failed"),
             Self::Timeout => write!(f, "timed out waiting for the vehicle"),
+            Self::StaleAuthority(r) => write!(f, "stale authority: {r}"),
         }
     }
 }
@@ -188,6 +193,7 @@ impl ErrorKind {
             Self::Timeout => BackendError::Timeout,
             Self::Safety(_) => BackendError::Rejected("safety"),
             Self::PreflightFailed => BackendError::Rejected("preflight"),
+            Self::StaleAuthority(_) => BackendError::Rejected("stale_authority"),
         }
     }
 }
@@ -248,6 +254,28 @@ impl<S: State, B> Vehicle<S, B> {
     }
 }
 
+impl<S: State, B: VehicleBackend> Vehicle<S, B> {
+    /// Live permit, if this handle currently holds actuation evidence.
+    pub fn permit(&self) -> Option<&ActuationPermit> {
+        self.inner.permit.as_ref()
+    }
+
+    fn issue_unbounded_permit(&mut self) {
+        self.inner.permit = Some(super::authority::issue(&self.inner.backend));
+    }
+
+    fn require_live_permit(&self) -> Result<(), ErrorKind> {
+        super::authority::require(self.inner.permit.as_ref(), &self.inner.backend)
+            .map_err(ErrorKind::StaleAuthority)?;
+        if let Some(age) = self.inner.backend.authority_heartbeat_age_ms() {
+            if !safety::heartbeat_age_ok(age) {
+                return Err(ErrorKind::StaleAuthority(AuthorityReject::StaleHeartbeat));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<B: VehicleBackend> Vehicle<Disconnected, B> {
     pub fn new(backend: B) -> Self {
         Self {
@@ -255,6 +283,7 @@ impl<B: VehicleBackend> Vehicle<Disconnected, B> {
                 backend,
                 safety: SafetyState::disconnected(),
                 connection_system_id: 0,
+                permit: None,
             },
             _state: PhantomData,
         }
@@ -330,6 +359,7 @@ impl<B: VehicleBackend> Vehicle<PreflightReady, B> {
                 if let Err(error) = self.apply_event(Event::Arm) {
                     return Err(self.fail(error));
                 }
+                self.issue_unbounded_permit();
                 Ok(self.retarget())
             }
             Err(e) => Err(self.fail(ErrorKind::Backend(e))),
@@ -363,10 +393,29 @@ impl<B: VehicleBackend> Vehicle<Armed, B> {
                 if let Err(e) = self.inner.backend.enable_actuators_now() {
                     return Err(self.fail(ErrorKind::Backend(e)));
                 }
+                self.issue_unbounded_permit();
                 Ok(self.retarget())
             }
             Err(e) => Err(self.fail(error_from_backend(e))),
         }
+    }
+
+    /// Enter offboard and bind a time-bounded actuation lease.
+    pub fn acquire_offboard_control_now(
+        self,
+        lease: Duration,
+    ) -> Result<Vehicle<Offboard, B>, TransitionError<Armed, B>> {
+        let mut v = self.enter_offboard_now()?;
+        v.inner.permit = Some(super::authority::issue_bounded(&v.inner.backend, lease));
+        Ok(v)
+    }
+
+    /// Same as [`Self::acquire_offboard_control_now`].
+    pub async fn acquire_offboard_control(
+        self,
+        lease: Duration,
+    ) -> Result<Vehicle<Offboard, B>, TransitionError<Armed, B>> {
+        self.acquire_offboard_control_now(lease)
     }
 
     pub async fn takeoff(
@@ -518,6 +567,7 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
     /// Same grant as [`Self::set_velocity`] without stepping the plant.
     /// Pair with a backend flush and one shared world step.
     pub fn set_velocity_now(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
+        self.require_live_permit()?;
         self.apply_event(Event::HeartbeatFresh)?;
         self.apply_event(Event::MissionCommand)?;
         self.inner
@@ -539,6 +589,7 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
     /// Same grant as [`Self::set_position`] without stepping the plant.
     /// Pair with a backend flush and one shared world step.
     pub fn set_position_now(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
+        self.require_live_permit()?;
         self.apply_event(Event::HeartbeatFresh)?;
         self.apply_event(Event::MissionCommand)?;
         self.inner
@@ -549,6 +600,7 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
 
     /// Hold at the current NED pose. Same grant as [`Self::set_position_now`].
     pub fn hold_now(&mut self) -> Result<(), ErrorKind> {
+        self.require_live_permit()?;
         self.apply_event(Event::HeartbeatFresh)?;
         self.apply_event(Event::MissionCommand)?;
         self.inner.backend.hold_now().map_err(ErrorKind::Backend)
@@ -574,6 +626,19 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
 
     fn command_velocity(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
         self.set_velocity_now(velocity)
+    }
+
+    /// Re-issue a time-bounded offboard lease. Fails if the live epoch already
+    /// revoked the current permit.
+    pub fn acquire_offboard_control_now(&mut self, lease: Duration) -> Result<(), ErrorKind> {
+        self.require_live_permit()?;
+        self.inner.permit = Some(super::authority::issue_bounded(&self.inner.backend, lease));
+        Ok(())
+    }
+
+    /// Same as [`Self::acquire_offboard_control_now`].
+    pub async fn acquire_offboard_control(&mut self, lease: Duration) -> Result<(), ErrorKind> {
+        self.acquire_offboard_control_now(lease)
     }
 }
 
@@ -615,6 +680,7 @@ impl<S: MotorsEnabled, B: VehicleBackend> Vehicle<S, B> {
                 .await
                 .map_err(ErrorKind::Backend)?;
         }
+        self.require_live_permit()?;
         self.apply_event(Event::HeartbeatFresh)?;
         self.apply_event(Event::MissionCommand)?;
         self.inner
@@ -665,6 +731,8 @@ async fn descend_and_disarm<B: VehicleBackend>(inner: &mut Inner<B>) -> Result<(
     loop {
         inner.safety =
             safety::step(inner.safety, Event::HeartbeatFresh).map_err(ErrorKind::Safety)?;
+        super::authority::require(inner.permit.as_ref(), &inner.backend)
+            .map_err(ErrorKind::StaleAuthority)?;
         inner.safety =
             safety::step(inner.safety, Event::MissionCommand).map_err(ErrorKind::Safety)?;
         inner
@@ -838,6 +906,14 @@ impl AerialKind {
             Self::Recovery => "recovery",
         }
     }
+
+    /// Armed through Landing hold motor or offboard authority.
+    pub const fn grants_actuation(self) -> bool {
+        matches!(
+            self,
+            Self::Armed | Self::Offboard | Self::Takeoff | Self::Airborne | Self::Landing
+        )
+    }
 }
 
 impl fmt::Display for AerialKind {
@@ -884,7 +960,7 @@ pub enum VehicleHandle<B> {
     Recovery(Vehicle<Recovery, B>),
 }
 
-impl<B> VehicleHandle<B> {
+impl<B: VehicleBackend> VehicleHandle<B> {
     pub fn from_state(backend: B, safety: SafetyState) -> Self {
         match aerial_kind(safety) {
             AerialKind::Disconnected => Self::Disconnected(wrap(backend, safety)),
@@ -899,7 +975,9 @@ impl<B> VehicleHandle<B> {
             AerialKind::Recovery => Self::Recovery(wrap(backend, safety)),
         }
     }
+}
 
+impl<B> VehicleHandle<B> {
     pub fn kind(&self) -> AerialKind {
         match self {
             Self::Disconnected(_) => AerialKind::Disconnected,
@@ -976,12 +1054,18 @@ impl<B> VehicleHandle<B> {
     }
 }
 
-fn wrap<S: State, B>(backend: B, safety: SafetyState) -> Vehicle<S, B> {
+fn wrap<S: State, B: VehicleBackend>(backend: B, safety: SafetyState) -> Vehicle<S, B> {
+    let permit = if aerial_kind(safety).grants_actuation() {
+        Some(super::authority::issue(&backend))
+    } else {
+        None
+    };
     Vehicle {
         inner: Inner {
             backend,
             safety,
             connection_system_id: 0,
+            permit,
         },
         _state: PhantomData,
     }
@@ -1135,6 +1219,10 @@ mod tests {
         );
         let via_from: BackendError = ErrorKind::Timeout.into();
         assert_eq!(via_from, BackendError::Timeout);
+        assert_eq!(
+            ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch).into_backend(),
+            BackendError::Rejected("stale_authority")
+        );
     }
 
     #[test]
@@ -1327,5 +1415,50 @@ mod tests {
         let armed = ready.arm_now().unwrap();
         assert!(armed.safety().armed);
         assert_eq!(armed.phase(), Phase::Armed);
+    }
+
+    #[test]
+    fn revoke_makes_offboard_setpoint_stale_while_type_is_still_offboard() {
+        let VehicleHandle::PreflightReady(drone) =
+            VehicleHandle::from_state(NullBackend::default(), ready_safety())
+        else {
+            panic!("ready maps to PreflightReady");
+        };
+        let mut v = drone.arm_now().unwrap().enter_offboard_now().unwrap();
+        v.set_velocity_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0))
+            .unwrap();
+        v.backend_mut().revoke_authority();
+        let err = v
+            .set_velocity_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
+        ));
+        assert!(v.safety().offboard);
+    }
+
+    #[test]
+    fn bounded_lease_expires_when_the_backend_clock_advances() {
+        let VehicleHandle::PreflightReady(drone) =
+            VehicleHandle::from_state(NullBackend::default(), ready_safety())
+        else {
+            panic!("ready maps to PreflightReady");
+        };
+        let mut v = drone
+            .arm_now()
+            .unwrap()
+            .acquire_offboard_control_now(Duration::from_millis(20))
+            .unwrap();
+        v.set_velocity_now(Velocity::<Ned>::ned(0.1, 0.0, 0.0))
+            .unwrap();
+        v.backend_mut().ticks = 3;
+        let err = v
+            .set_velocity_now(Velocity::<Ned>::ned(0.1, 0.0, 0.0))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ErrorKind::StaleAuthority(AuthorityReject::Expired)
+        ));
     }
 }

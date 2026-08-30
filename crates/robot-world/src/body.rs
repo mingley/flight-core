@@ -63,6 +63,8 @@ pub struct Body {
     pub aerial: Option<SafetyState>,
     pub ground: Option<GroundState>,
     pub marine: Option<MarineState>,
+    /// Revocation counter for actuation permits. Not a kernel packed bit.
+    pub authority_epoch: u32,
 }
 
 impl Body {
@@ -119,6 +121,7 @@ impl Body {
             aerial: Some(safety),
             ground: None,
             marine: None,
+            authority_epoch: 0,
         }
     }
 
@@ -163,6 +166,7 @@ impl Body {
             aerial: None,
             ground: Some(GroundState::parked()),
             marine: None,
+            authority_epoch: 0,
         }
     }
 
@@ -207,6 +211,7 @@ impl Body {
             aerial: None,
             ground: None,
             marine: Some(flight_core::marine::MarineState::docked()),
+            authority_epoch: 0,
         }
     }
 
@@ -253,7 +258,12 @@ impl Body {
             aerial: None,
             ground: None,
             marine: Some(flight_core::marine::MarineState::docked()),
+            authority_epoch: 0,
         }
+    }
+
+    pub fn bump_authority(&mut self) {
+        self.authority_epoch = self.authority_epoch.saturating_add(1);
     }
 
     pub fn sphere(&self) -> flight_core::mech::SphereBody {

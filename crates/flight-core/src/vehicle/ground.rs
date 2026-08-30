@@ -41,6 +41,7 @@ impl CanTripEstop for Moving {}
 pub struct GroundVehicle<S, B> {
     backend: B,
     safety: GroundState,
+    permit: Option<crate::contracts::ActuationPermit>,
     _state: PhantomData<S>,
 }
 
@@ -49,6 +50,7 @@ pub struct GroundVehicle<S, B> {
 pub enum GroundError {
     Safety(GroundReject),
     Backend(BackendError),
+    StaleAuthority(crate::contracts::AuthorityReject),
 }
 
 impl fmt::Display for GroundError {
@@ -56,6 +58,7 @@ impl fmt::Display for GroundError {
         match self {
             GroundError::Safety(r) => write!(f, "ground safety: {r}"),
             GroundError::Backend(b) => write!(f, "ground backend: {b}"),
+            GroundError::StaleAuthority(r) => write!(f, "ground stale authority: {r}"),
         }
     }
 }
@@ -69,6 +72,7 @@ impl GroundError {
         match self {
             Self::Backend(b) => b,
             Self::Safety(_) => BackendError::Rejected("ground safety"),
+            Self::StaleAuthority(_) => BackendError::Rejected("stale_authority"),
         }
     }
 }
@@ -97,6 +101,10 @@ impl GroundKind {
             Self::Moving => "moving",
             Self::EStopped => "estopped",
         }
+    }
+
+    pub const fn grants_actuation(self) -> bool {
+        matches!(self, Self::Moving)
     }
 }
 
@@ -143,6 +151,7 @@ impl<S, B> GroundVehicle<S, B> {
         GroundVehicle {
             backend: self.backend,
             safety: self.safety,
+            permit: self.permit,
             _state: PhantomData,
         }
     }
@@ -188,6 +197,7 @@ impl<B: VehicleBackend> GroundVehicle<Parked, B> {
         Self {
             backend,
             safety: GroundState::parked(),
+            permit: None,
             _state: PhantomData,
         }
     }
@@ -198,7 +208,9 @@ impl<B: VehicleBackend> GroundVehicle<Parked, B> {
         self.safety =
             ground::ground_step(self.safety, GroundEvent::Release).map_err(GroundError::Safety)?;
         self.push_ground()?;
-        Ok(self.retarget())
+        let mut v = self.retarget();
+        v.permit = Some(super::authority::issue(&v.backend));
+        Ok(v)
     }
 
     /// Emergency stop from parked.
@@ -240,6 +252,8 @@ impl<B: VehicleBackend> GroundVehicle<Moving, B> {
 
     /// Same grant as [`Self::set_velocity_ned`] without stepping the plant.
     pub fn set_velocity_ned_now(&mut self, v: Velocity<Ned>) -> Result<(), GroundError> {
+        super::authority::require(self.permit.as_ref(), &self.backend)
+            .map_err(GroundError::StaleAuthority)?;
         self.safety = ground::ground_step(self.safety, GroundEvent::DriveCommand)
             .map_err(GroundError::Safety)?;
         self.push_ground()?;
@@ -252,6 +266,8 @@ impl<B: VehicleBackend> GroundVehicle<Moving, B> {
     /// (`DriveCommand`). Compiles only while moving (`tests/ui/parked_hold.rs`,
     /// `tests/ui/estopped_hold.rs`).
     pub fn hold_now(&mut self) -> Result<(), GroundError> {
+        super::authority::require(self.permit.as_ref(), &self.backend)
+            .map_err(GroundError::StaleAuthority)?;
         self.safety = ground::ground_step(self.safety, GroundEvent::DriveCommand)
             .map_err(GroundError::Safety)?;
         self.push_ground()?;
@@ -316,7 +332,7 @@ pub enum GroundHandle<B> {
     EStopped(GroundVehicle<EStopped, B>),
 }
 
-impl<B> GroundHandle<B> {
+impl<B: VehicleBackend> GroundHandle<B> {
     pub fn from_state(backend: B, safety: GroundState) -> Self {
         match ground_kind(safety) {
             GroundKind::Parked => Self::Parked(wrap_ground(backend, safety)),
@@ -324,7 +340,9 @@ impl<B> GroundHandle<B> {
             GroundKind::EStopped => Self::EStopped(wrap_ground(backend, safety)),
         }
     }
+}
 
+impl<B> GroundHandle<B> {
     pub fn kind(&self) -> GroundKind {
         match self {
             Self::Parked(_) => GroundKind::Parked,
@@ -366,10 +384,16 @@ impl<B> GroundHandle<B> {
     }
 }
 
-fn wrap_ground<S, B>(backend: B, safety: GroundState) -> GroundVehicle<S, B> {
+fn wrap_ground<S, B: VehicleBackend>(backend: B, safety: GroundState) -> GroundVehicle<S, B> {
+    let permit = if ground_kind(safety).grants_actuation() {
+        Some(super::authority::issue(&backend))
+    } else {
+        None
+    };
     GroundVehicle {
         backend,
         safety,
+        permit,
         _state: PhantomData,
     }
 }
@@ -559,5 +583,23 @@ mod tests {
         estop.estop = true;
         estop.phase = GroundPhase::EStop;
         assert_eq!(ground_kind(estop), GroundKind::EStopped);
+    }
+
+    #[test]
+    fn revoke_rejects_drive_while_typestate_is_still_moving() {
+        let mut v = GroundVehicle::<Parked, NullBackend>::null()
+            .enable_drive()
+            .unwrap();
+        v.set_velocity_ned_now(Velocity::<Ned>::ned(0.4, 0.0, 0.0))
+            .unwrap();
+        v.backend_mut().revoke_authority();
+        let err = v
+            .set_velocity_ned_now(Velocity::<Ned>::ned(0.4, 0.0, 0.0))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            GroundError::StaleAuthority(crate::contracts::AuthorityReject::StaleEpoch)
+        ));
+        assert_eq!(v.phase(), GroundPhase::Moving);
     }
 }

@@ -1,4 +1,12 @@
-//! Pure vehicle safety state machine.
+//! Pure vehicle safety state machine — the trusted computing base.
+//!
+//! Constraints (enforced by construction, not by hope):
+//! `no_std`, no allocation, no `unsafe`, no `async`, no I/O, no threads,
+//! deterministic, bounded execution. PX4, ROS, MAVLink, planners, and
+//! typestate handles are untrusted relative to this module. Every command
+//! that becomes physical force is admitted only if [`step`] accepts it and,
+//! at the backend boundary, the live [`event_revokes_authority`] epoch still
+//! matches the caller's permit.
 //!
 //! This module is deliberately free of I/O, allocation, panic, and `unsafe`.
 //! `step` is the single transition function. Tests (and Kani) prove that every
@@ -248,6 +256,28 @@ impl Event {
             _ => None,
         }
     }
+}
+
+/// Offboard heartbeat bound. Shared by the contract DSL, `Fresh`, and monitors.
+pub const OFFBOARD_HEARTBEAT_MAX_AGE_MS: u32 = 250;
+
+/// Events that revoke actuation authority. A successful [`step`] of one of
+/// these (or a failsafe latch they cause) must increment the backend safety epoch.
+pub const fn event_revokes_authority(event: Event) -> bool {
+    matches!(
+        event,
+        Event::TriggerFailsafe
+            | Event::Disarm
+            | Event::Disconnect
+            | Event::HeartbeatStale
+            | Event::EstimatorInvalid
+            | Event::ImuUnhealthy
+    )
+}
+
+/// Runtime heartbeat age against [`OFFBOARD_HEARTBEAT_MAX_AGE_MS`].
+pub const fn heartbeat_age_ok(age_ms: u32) -> bool {
+    age_ms < OFFBOARD_HEARTBEAT_MAX_AGE_MS
 }
 
 #[derive(Copy)]
@@ -705,6 +735,17 @@ mod tests {
         assert_eq!(s.phase, Phase::Airborne);
         assert!(s.armed && s.actuators_enabled && s.offboard);
         assert!(check_invariants(&s));
+    }
+
+    #[test]
+    fn revoke_events_are_the_named_set() {
+        assert!(event_revokes_authority(Event::TriggerFailsafe));
+        assert!(event_revokes_authority(Event::Disarm));
+        assert!(event_revokes_authority(Event::HeartbeatStale));
+        assert!(!event_revokes_authority(Event::MissionCommand));
+        assert!(!event_revokes_authority(Event::Arm));
+        assert!(heartbeat_age_ok(249));
+        assert!(!heartbeat_age_ok(250));
     }
 
     #[test]

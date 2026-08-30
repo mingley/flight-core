@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `ActuationPermit` in the current scope
+ --> tests/ui/permit_is_not_clone.rs:4:15
+  |
+4 |     let _ = p.clone();
+  |               ^^^^^ method not found in `ActuationPermit`

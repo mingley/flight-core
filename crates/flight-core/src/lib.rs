@@ -1,8 +1,11 @@
 //! Strongly typed core for autonomous vehicle control.
 //!
-//! This crate is the API robotics should have if ownership, capabilities, units,
-//! reference frames, mechanical contact, and legal state transitions were part
-//! of the language — aerial, ground, surface, and underwater.
+//! This crate is the high-assurance Rust **control boundary** between
+//! autonomous software and a physical vehicle: typestate evidence,
+//! revocable [`crate::contracts::ActuationPermit`]s, typed units/frames, a
+//! pure `no_std` safety kernel, and generated contract tables. PX4, ROS,
+//! Copper, and planners run the vehicle. flight-core makes physically
+//! invalid authority difficult to express and possible to revoke.
 //!
 //! ```compile_fail
 //! use flight_core::prelude::*;
@@ -34,9 +37,13 @@
 /// Creusot 0.5 ICEs on `dyn fmt::Write` (Debug/Display bodies). Isolate the four
 /// discrete machines so `cargo creusot` does not translate the rest of the crate.
 #[cfg(not(creusot))]
+pub mod contracts;
+#[cfg(not(creusot))]
 pub mod domain;
 #[cfg(not(creusot))]
 pub mod frames;
+#[cfg(not(creusot))]
+pub mod geometry;
 pub mod ground;
 pub mod hitl;
 #[cfg(not(creusot))]
@@ -54,6 +61,8 @@ pub mod safety;
 #[cfg(not(creusot))]
 pub mod sensors;
 #[cfg(not(creusot))]
+pub mod temporal;
+#[cfg(not(creusot))]
 pub mod time;
 #[cfg(not(creusot))]
 pub mod units;
@@ -68,10 +77,19 @@ pub mod vehicle;
 
 /// Common types for vehicle applications.
 pub mod prelude {
+    #[cfg(feature = "std")]
+    pub use crate::contracts::parse_trace_jsonl;
+    #[cfg(not(creusot))]
+    pub use crate::contracts::{
+        evaluate_trace, ActuationPermit, AerialOffboard, AuthorityReject, Requirement, SafetyEpoch,
+        TraceSample, VehicleId,
+    };
     #[cfg(not(creusot))]
     pub use crate::domain::{Domain, Medium};
     #[cfg(not(creusot))]
     pub use crate::frames::{Body, Enu, Frame, Frd, Ned};
+    #[cfg(not(creusot))]
+    pub use crate::geometry::{Covariance, Displacement, Point3, Rotation, Transform};
     pub use crate::ground::{ground_step, GroundEvent, GroundPhase, GroundReject, GroundState};
     #[cfg(not(creusot))]
     pub use crate::hitl::{command_after_deadline, hitl_invariants};
@@ -100,9 +118,16 @@ pub mod prelude {
     pub use crate::nav::{imu_trips_estimator, ComplementaryAttitude};
     #[cfg(not(creusot))]
     pub use crate::plan::{NedPath, Waypoint};
-    pub use crate::safety::{step, Event, Phase, Reject, SafetyState};
+    pub use crate::safety::{
+        event_revokes_authority, heartbeat_age_ok, step, Event, Phase, Reject, SafetyState,
+        OFFBOARD_HEARTBEAT_MAX_AGE_MS,
+    };
     #[cfg(not(creusot))]
     pub use crate::sensors::{ActuatorCommand, Actuators, Imu, ImuSample, SensorHealth};
+    #[cfg(not(creusot))]
+    pub use crate::temporal::{
+        Command, Deadline, Estimate, Fresh, HeartbeatFresh, Lease, Observation, Rate, Sequence,
+    };
     #[cfg(not(creusot))]
     pub use crate::time::{Clock, Duration, MonotonicInstant, VirtualClock};
     #[cfg(not(creusot))]

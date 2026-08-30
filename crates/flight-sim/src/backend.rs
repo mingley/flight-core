@@ -69,6 +69,7 @@ pub struct SimBackend {
     last_command: &'static str,
     last_command_at: MonotonicInstant,
     rng: u64,
+    authority_epoch: u32,
 }
 
 impl SimBackend {
@@ -88,6 +89,7 @@ impl SimBackend {
             actuators: false,
             last_command: "idle",
             last_command_at: MonotonicInstant::ZERO,
+            authority_epoch: 0,
         }
     }
 
@@ -293,6 +295,7 @@ impl VehicleBackend for SimBackend {
         self.actuators = false;
         self.setpoint = None;
         self.last_command = "disarm";
+        self.revoke_authority();
         Ok(())
     }
 
@@ -372,7 +375,20 @@ impl VehicleBackend for SimBackend {
     async fn trigger_failsafe(&mut self) -> Result<(), BackendError> {
         self.setpoint = None;
         self.last_command = "failsafe";
+        self.revoke_authority();
         Ok(())
+    }
+
+    fn authority_epoch(&self) -> u32 {
+        self.authority_epoch
+    }
+
+    fn authority_now(&self) -> MonotonicInstant {
+        self.clock.now()
+    }
+
+    fn revoke_authority(&mut self) {
+        self.authority_epoch = self.authority_epoch.saturating_add(1);
     }
 }
 

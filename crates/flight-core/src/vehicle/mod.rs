@@ -1,5 +1,6 @@
 //! Typestate vehicle handle and backend trait.
 
+mod authority;
 pub mod backend;
 pub mod ground;
 pub mod marine;

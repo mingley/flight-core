@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use flight_core::domain::Domain;
 use flight_core::frames::Body as BodyFrame;
-use flight_core::ground::{ground_step, GroundEvent};
-use flight_core::marine::{marine_step, MarineEvent, MarinePhase};
+use flight_core::ground::{ground_event_revokes_authority, ground_step, GroundEvent};
+use flight_core::marine::{marine_event_revokes_authority, marine_step, MarineEvent, MarinePhase};
 use flight_core::mech::quat_rotate_inv;
 use flight_core::nav::{imu_trips_estimator, ComplementaryAttitude};
-use flight_core::safety::{self, Event, Phase};
+use flight_core::safety::{self, event_revokes_authority, Event, Phase};
 use flight_core::sensors::{ImuSample, SensorHealth};
 use flight_core::time::{Clock, MonotonicInstant, VirtualClock};
 use flight_core::vector::{Acceleration, AngularVelocity, Position, Velocity};
@@ -80,8 +80,13 @@ pub(crate) fn aerial_event(
     let body = require_body_mut(&mut plant.world, id)?;
     let s = body.aerial.ok_or(BackendError::Protocol)?;
     let n = safety::step(s, e).map_err(|_| BackendError::Rejected("aerial safety"))?;
+    let revoke = event_revokes_authority(e) || (n.failsafe && !s.failsafe);
+    let failsafe = n.failsafe;
     body.aerial = Some(n);
-    if n.failsafe || e == Event::Touchdown || e == Event::Recover {
+    if revoke {
+        body.bump_authority();
+    }
+    if failsafe || e == Event::Touchdown || e == Event::Recover {
         body.clear_command();
     }
     Ok(())
@@ -96,8 +101,13 @@ pub(crate) fn ground_event(
     let body = require_body_mut(&mut plant.world, id)?;
     let s = body.ground.ok_or(BackendError::Protocol)?;
     let n = ground_step(s, e).map_err(|_| BackendError::Rejected("ground safety"))?;
+    let revoke = ground_event_revokes_authority(e) || (n.estop && !s.estop);
+    let estop = n.estop;
     body.ground = Some(n);
-    if n.estop || e == GroundEvent::Halt {
+    if revoke {
+        body.bump_authority();
+    }
+    if estop || e == GroundEvent::Halt {
         body.clear_command();
     }
     Ok(())
@@ -112,8 +122,13 @@ pub(crate) fn marine_event(
     let body = require_body_mut(&mut plant.world, id)?;
     let s = body.marine.ok_or(BackendError::Protocol)?;
     let n = marine_step(s, e).map_err(|_| BackendError::Rejected("marine safety"))?;
+    let revoke = marine_event_revokes_authority(e) || (n.failsafe && !s.failsafe);
+    let cut = n.failsafe || !n.thrust_enabled;
     body.marine = Some(n);
-    if n.failsafe || !n.thrust_enabled {
+    if revoke {
+        body.bump_authority();
+    }
+    if cut {
         body.clear_command();
     }
     Ok(())
@@ -202,7 +217,12 @@ pub(crate) fn snapshot(
         actuators_enabled: actuators,
         offboard,
         failsafe,
-        heartbeat_age_secs: 0.0,
+        heartbeat_age_secs: match body.aerial {
+            Some(s) if !s.offboard_heartbeat_fresh => {
+                flight_core::safety::OFFBOARD_HEARTBEAT_MAX_AGE_MS as f32 / 1000.0
+            }
+            _ => 0.0,
+        },
         last_command,
     })
 }

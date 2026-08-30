@@ -53,6 +53,7 @@ impl CanThrust for StationKeep {}
 pub struct MarineVehicle<S, B> {
     backend: B,
     safety: MarineState,
+    permit: Option<crate::contracts::ActuationPermit>,
     _state: PhantomData<S>,
 }
 
@@ -61,6 +62,7 @@ pub struct MarineVehicle<S, B> {
 pub enum MarineError {
     Safety(MarineReject),
     Backend(BackendError),
+    StaleAuthority(crate::contracts::AuthorityReject),
 }
 
 impl fmt::Display for MarineError {
@@ -68,6 +70,7 @@ impl fmt::Display for MarineError {
         match self {
             MarineError::Safety(r) => write!(f, "marine safety: {r}"),
             MarineError::Backend(b) => write!(f, "marine backend: {b}"),
+            MarineError::StaleAuthority(r) => write!(f, "marine stale authority: {r}"),
         }
     }
 }
@@ -81,6 +84,7 @@ impl MarineError {
         match self {
             Self::Backend(b) => b,
             Self::Safety(_) => BackendError::Rejected("marine safety"),
+            Self::StaleAuthority(_) => BackendError::Rejected("stale_authority"),
         }
     }
 }
@@ -110,6 +114,10 @@ impl MarineKind {
             Self::StationKeep => "station_keep",
             Self::Failsafe => "failsafe",
         }
+    }
+
+    pub const fn grants_actuation(self) -> bool {
+        matches!(self, Self::Underway | Self::StationKeep)
     }
 }
 
@@ -157,6 +165,7 @@ impl<S, B> MarineVehicle<S, B> {
         MarineVehicle {
             backend: self.backend,
             safety: self.safety,
+            permit: self.permit,
             _state: PhantomData,
         }
     }
@@ -182,6 +191,8 @@ impl<S, B: VehicleBackend> MarineVehicle<S, B> {
     }
 
     fn command_thrust_now(&mut self, v: Velocity<Ned>) -> Result<(), MarineError> {
+        super::authority::require(self.permit.as_ref(), &self.backend)
+            .map_err(MarineError::StaleAuthority)?;
         self.safety = marine::marine_step(self.safety, MarineEvent::ThrustCommand)
             .map_err(MarineError::Safety)?;
         self.push_marine()?;
@@ -251,6 +262,8 @@ impl<S: CanThrust, B: VehicleBackend> MarineVehicle<S, B> {
     /// (the StationKeep machine). Compiles only while thrust is granted
     /// (`tests/ui/docked_hold.rs`, `tests/ui/marine_failsafe_hold.rs`).
     pub fn hold_now(&mut self) -> Result<(), MarineError> {
+        super::authority::require(self.permit.as_ref(), &self.backend)
+            .map_err(MarineError::StaleAuthority)?;
         self.safety = marine::marine_step(self.safety, MarineEvent::ThrustCommand)
             .map_err(MarineError::Safety)?;
         self.push_marine()?;
@@ -274,6 +287,7 @@ impl<B: VehicleBackend> MarineVehicle<Docked, B> {
         Self {
             backend,
             safety: MarineState::docked(),
+            permit: None,
             _state: PhantomData,
         }
     }
@@ -283,7 +297,9 @@ impl<B: VehicleBackend> MarineVehicle<Docked, B> {
         self.safety =
             marine::marine_step(self.safety, MarineEvent::Undock).map_err(MarineError::Safety)?;
         self.push_marine()?;
-        Ok(self.retarget())
+        let mut v = self.retarget();
+        v.permit = Some(super::authority::issue(&v.backend));
+        Ok(v)
     }
 }
 
@@ -339,7 +355,7 @@ pub enum MarineHandle<B> {
     Failsafe(MarineVehicle<MarineFailsafe, B>),
 }
 
-impl<B> MarineHandle<B> {
+impl<B: VehicleBackend> MarineHandle<B> {
     pub fn from_state(backend: B, safety: MarineState) -> Self {
         match marine_kind(safety) {
             MarineKind::Docked => Self::Docked(wrap_marine(backend, safety)),
@@ -348,7 +364,9 @@ impl<B> MarineHandle<B> {
             MarineKind::Failsafe => Self::Failsafe(wrap_marine(backend, safety)),
         }
     }
+}
 
+impl<B> MarineHandle<B> {
     pub fn kind(&self) -> MarineKind {
         match self {
             Self::Docked(_) => MarineKind::Docked,
@@ -395,10 +413,16 @@ impl<B> MarineHandle<B> {
     }
 }
 
-fn wrap_marine<S, B>(backend: B, safety: MarineState) -> MarineVehicle<S, B> {
+fn wrap_marine<S, B: VehicleBackend>(backend: B, safety: MarineState) -> MarineVehicle<S, B> {
+    let permit = if marine_kind(safety).grants_actuation() {
+        Some(super::authority::issue(&backend))
+    } else {
+        None
+    };
     MarineVehicle {
         backend,
         safety,
+        permit,
         _state: PhantomData,
     }
 }
@@ -564,5 +588,23 @@ mod tests {
         fs.failsafe = true;
         fs.phase = MarinePhase::Failsafe;
         assert_eq!(marine_kind(fs), MarineKind::Failsafe);
+    }
+
+    #[test]
+    fn revoke_rejects_thrust_while_typestate_is_still_underway() {
+        let mut v = MarineVehicle::<Docked, NullBackend>::null()
+            .undock()
+            .unwrap();
+        v.set_ned_velocity_now(Velocity::<Ned>::ned(0.4, 0.0, 0.0))
+            .unwrap();
+        v.backend_mut().revoke_authority();
+        let err = v
+            .set_ned_velocity_now(Velocity::<Ned>::ned(0.4, 0.0, 0.0))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MarineError::StaleAuthority(crate::contracts::AuthorityReject::StaleEpoch)
+        ));
+        assert_eq!(v.phase(), MarinePhase::Underway);
     }
 }

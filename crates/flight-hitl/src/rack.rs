@@ -775,6 +775,27 @@ mod tests {
             flight_core::marine::MarinePhase::Failsafe
         );
         assert!(w.body("drone").unwrap().failsafe());
+        assert!(w.body("drone").unwrap().authority_epoch > 0);
+        let drone = w.body("drone").unwrap();
+        let aerial = drone.aerial.unwrap();
+        let sample = flight_core::contracts::TraceSample {
+            t_secs: w.t,
+            armed: aerial.armed,
+            actuators_enabled: aerial.actuators_enabled,
+            failsafe: aerial.failsafe,
+            epoch: drone.authority_epoch,
+            heartbeat_age_ms: 0,
+            command: drone.command,
+            altitude_m: drone.altitude_agl(),
+        };
+        flight_core::contracts::evaluate_trace(
+            &[sample],
+            &[
+                flight_core::contracts::Requirement::ActuatorsImplyArmed,
+                flight_core::contracts::Requirement::NeverActuateWhileDisarmed,
+            ],
+        )
+        .expect("HITL miss still satisfies the contract monitors");
         let next = rack
             .frame_with_compute(0.02, climb(), 1_000_000)
             .expect("after miss");

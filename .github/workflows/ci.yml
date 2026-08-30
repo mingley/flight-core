@@ -40,7 +40,7 @@ jobs:
   # kani-verifier 0.67.0 needs rustc ≥ 1.88 to *install*; workspace MSRV stays
   # 1.85 (rust-toolchain.toml). The action's rustc is the installer only.
   # Proofs run through cargo kani's bundled toolchain. Pin matches a recorded
-  # `cargo kani -p flight-verify` pass: 42 harnesses, 0 failures.
+  # `cargo kani -p flight-verify` pass: 45 harnesses, 0 failures.
   kani:
     name: kani
     runs-on: ubuntu-latest

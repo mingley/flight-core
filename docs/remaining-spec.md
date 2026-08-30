@@ -21,7 +21,8 @@ The workspace already has a usable slice of that goal. In-scope functional items
 
 **Already true (do not re-implement):**
 
-- Consume-self typestate for aerial / ground / marine vehicles (`Vehicle`, `GroundVehicle`, `MarineVehicle`) with compile-fail UI tests under `crates/flight-core/tests/ui/` (125 `.rs` files).
+- Consume-self typestate for aerial / ground / marine vehicles (`Vehicle`, `GroundVehicle`, `MarineVehicle`) with compile-fail UI tests under `crates/flight-core/tests/ui/` (127 `.rs` files).
+- Revocable `ActuationPermit` (non-`Clone`) plus backend `authority_epoch`. Failsafe / disarm / disconnect / stale heartbeat / estimator / IMU events increment the plant epoch. Stale permits cannot setpoint even when the Rust typestate is still `Offboard` / `Moving` / `Underway`.
 - `OffboardControl` gates `set_velocity` / `set_position` / `hold`. `MotorsEnabled` gates `set_motor_thrust`. Recovery is a real aerial typestate.
 - One mechanically verified plant: `robot-world::World::try_step` clones, advances, and commits only if all **22** named properties hold. NED z-down. Catalogs `coastal` / `harbor` / `inland` / `open_water`.
 - `WorldSession` attach walks (`attach_takeoff`, `attach_drive`, `attach_undock`, `attach_hold`, `attach_ground_hold`, `attach_marine_hold`, failsafe / recover / return / station / airborne, …) shared by HITL, ROS 2, PX4 `WorldPlant`, and `robot-lab`.
@@ -90,7 +91,7 @@ Do not re-attach `f32` `ensures` on 0.5. A later Creusot that can state floats i
 
 ### 3.2 Put Kani in a gate
 
-**Status: landed.** CI job `kani` runs `cargo kani -p flight-verify -j 2 --output-format terse` with `kani-verifier` **0.67.0** (`model-checking/kani-github-action@v1.1`). A recorded local pass on rustc 1.85.0: **42** harnesses, 0 failures. Workspace `rust-version` stays **1.85**; the installer rustc (≥ 1.88) is not MSRV. README harness count and `flight-verify` module theorems stay in lockstep with `#[kani::proof]`. New kernel transitions still need a harness when one is feasible — that is an ongoing constraint, not a leftover job.
+**Status: landed.** CI job `kani` runs `cargo kani -p flight-verify -j 2 --output-format terse` with `kani-verifier` **0.67.0** (`model-checking/kani-github-action@v1.1`). A recorded local pass on rustc 1.85.0: **45** harnesses, 0 failures. Workspace `rust-version` stays **1.85**; the installer rustc (≥ 1.88) is not MSRV. README harness count and `flight-verify` module theorems stay in lockstep with `#[kani::proof]`. New kernel transitions still need a harness when one is feasible — that is an ongoing constraint, not a leftover job.
 
 ### 3.3 Named world property for pose hold
 
@@ -232,7 +233,7 @@ Hold, airborne, station, resume, dock, park, return, recover are walked on `Worl
 
 ## 9. Tooling and CI
 
-**Current gate (`.github/workflows/ci.yml`):** Rust 1.85, `cargo fmt --all -- --check`, `clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo check -p flight-core --no-default-features`, job `gpu` (`FLIGHT_HYDRO_GPU=1 cargo test -p robot-world --lib gpu` with lavapipe), job `kani` (`cargo kani -p flight-verify`, kani-verifier 0.67.0, 42 harnesses), job `rclrs` (`cargo test -p flight-ros2 --features rclrs` on Jazzy / ubuntu-24.04), job `creusot` (`cargo creusot prove -- -p flight-core --features creusot`, Creusot 0.5.0, 81 libraries), and job `sitl` (`px4io/px4-sitl:v1.18.0-beta2` SIH + `cargo test -p flight-px4 --test sitl_live -- --ignored`).
+**Current gate (`.github/workflows/ci.yml`):** Rust 1.85, `cargo fmt --all -- --check`, `clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo check -p flight-core --no-default-features`, job `gpu` (`FLIGHT_HYDRO_GPU=1 cargo test -p robot-world --lib gpu` with lavapipe), job `kani` (`cargo kani -p flight-verify`, kani-verifier 0.67.0, 45 harnesses), job `rclrs` (`cargo test -p flight-ros2 --features rclrs` on Jazzy / ubuntu-24.04), job `creusot` (`cargo creusot prove -- -p flight-core --features creusot`, Creusot 0.5.0, 81 libraries), and job `sitl` (`px4io/px4-sitl:v1.18.0-beta2` SIH + `cargo test -p flight-px4 --test sitl_live -- --ignored`).
 
 **Missing from that gate:** none of the in-scope jobs. After HTML changes, §8 D2 is a local browser check, not a CI job.
 

@@ -1,0 +1,6 @@
+stateDiagram-v2
+    [*] --> Disarmed
+    Disarmed --> PreflightReady: verify_preflight
+    PreflightReady --> Armed: arm
+    Armed --> Offboard: acquire_offboard_control
+    Offboard --> Failsafe: TriggerFailsafe | Disarm | Disconnect | HeartbeatStale | EstimatorInvalid | ImuUnhealthy

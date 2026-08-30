@@ -244,6 +244,31 @@ impl VehicleBackend for GroundWorldBackend {
         GroundWorldBackend::failsafe_now(self)
     }
 
+    fn authority_epoch(&self) -> u32 {
+        self.session
+            .lock()
+            .world
+            .body(self.body_id)
+            .map(|b| b.authority_epoch)
+            .unwrap_or(0)
+    }
+
+    fn authority_vehicle_id(&self) -> u8 {
+        flight_core::contracts::VehicleId::from_name(self.body_id).raw()
+    }
+
+    fn authority_now(&self) -> MonotonicInstant {
+        self.session.lock().clock.now()
+    }
+
+    fn revoke_authority(&mut self) {
+        self.session.with_world_mut(|w| {
+            if let Some(b) = w.body_mut(self.body_id) {
+                b.bump_authority();
+            }
+        });
+    }
+
     fn sync_ground(&mut self, safety: GroundState) -> Result<(), BackendError> {
         let mut plant = self.session.lock();
         let body = require_body_mut(&mut plant.world, self.body_id)?;
