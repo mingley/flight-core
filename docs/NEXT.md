@@ -90,7 +90,7 @@ Goal: an agent can experiment and understand **without** reading kernel source, 
 
 ### A6. Local tool server (optional adapter)
 
-**Status: landed.** `flight-demo` binds `FLIGHT_DEMO_BIND` (default `0.0.0.0:47831`) with no auth. GET `/api/lab/observation`, GET `/api/lab/tools` (A1 `legal_cmds` / `env_cmds`), POST `/api/lab/action` (A1 `act_through_attach`), GET `/api/lab/replay`, POST `/api/lab/research` (closed-loop `Lab::research`, one `WorldSession::step` per tick). No raw NED velocity route. HTML/`include_str` unchanged (no remaining-spec §8 D2).
+**Status: landed.** `flight-demo` binds `FLIGHT_DEMO_BIND` (default `0.0.0.0:47831`) with no auth. GET `/api/lab/observation`, GET `/api/lab/tools` (A1 `legal_cmds` / `env_cmds`), POST `/api/lab/action` (A1 `act_through_attach`), GET `/api/lab/replay`, POST `/api/lab/research` (closed-loop `Lab::research`, one `WorldSession::step` per tick). MHS-shaped (E1, not official): GET `/api/mhs/discover`, GET `/api/mhs/reference`, POST `/api/mhs/read`, POST `/api/mhs/write` (preview `legal_cmds` + numeric limits, then the same pending queue as `/api/lab/action`). No raw NED velocity route. HTML/`include_str` unchanged (no remaining-spec §8 D2).
 
 **Why:** LLM agents speak HTTP/MCP. The lab must not grow auth or cloud.
 
@@ -236,12 +236,38 @@ Only after A is usable and B1–B2 have a written status (landed or explicitly d
 
 ---
 
+## Phase E — Model Hardware Standard (shaped adapter)
+
+Official [MHS](https://modelhardwarestandard.com) is a gated research preview (Anthropic + HHMI Janelia). Schemas are not public. This workspace does **not** claim official certification and does **not** guess a private wire format.
+
+It ships an **MHS-shaped** driver so agents can use the public shape — standardized discoverable devices, tags compiled into a reference file, read/write primitives, CLI / HTTP / stdio MCP, safety at the driver — **more efficiently and verifiably** than prose tags: every write is `Lab::act_through_attach`, numeric limits reject before the plant, catalog skips stay P11, chain files step once per tick (P12).
+
+### E1. MHS-shaped driver
+
+**Status: landed.** Crate `flight-mhs`: `Driver` + compiled `DeviceReference`, CLI `flight-mhs`, stdio MCP (`tools/list` / `tools/call`), demo `GET /api/mhs/discover` / `reference` / `POST /api/mhs/read` / `POST /api/mhs/write`. `official: false`, `conformance: "shaped"`.
+
+**Acceptance:**
+
+1. Honest conformance: `official` is false; profile is `flight-core.mhs-shaped.v0`.
+2. Discovery lists catalog bodies plus `env` and `lab`. Inland omits hulls; open_water omits the rover (P11).
+3. Tags compile to a reference file: measures, writes, `legal_now`, safety limits (machine / numeric / catalog) with remaining-spec ids where they apply.
+4. `read` does not step. `write` is `Lab::act_through_attach` only — no raw NED velocity that skips `legal_cmds`.
+5. Tests: parked `drive`, docked `thrust`, inland hull, open_water rover — rejected (not-legal or P11), not a crash.
+6. Numeric over-limit (e.g. Moving drive |v| above the driver clamp, `set_charge` above capacity) rejected when the write would otherwise be legal.
+7. Chain file: multi-device writes then `step` ops; each tick is one `WorldSession::step` (P12). Illegal write stops the chain with a structured reject.
+8. CLI + demo HTTP; stdio MCP `mhs_discover` / `mhs_reference` / `mhs_read` / `mhs_write` / `mhs_step` / `mhs_chain`. HTML/`include_str` unchanged (no remaining-spec §8 D2).
+9. JSON Schema for discovery / reference / read / write / chain report, validated in crate tests.
+
+---
+
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B5 landed.** Next: **C1–C3** (proofs, traces, scenarios).
+1. **A1–A6 landed. B1–B5 landed. E1 landed.** Next: **C1–C3** (proofs, traces, scenarios).
 2. **C1–C3** (proofs, traces, scenarios) can overlap A3.
 3. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
 4. **D\*** morphologies last.
+
+When official MHS is open-sourced, translate `flight-mhs` onto that schema. Do not collapse P1–P14 to make a driver “easier.”
 
 Items in remaining-spec §2 are constraints on **every** step, not a phase.
 

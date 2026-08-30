@@ -176,6 +176,7 @@ Rust does not automatically “verify” a robot. It lets you move physical-syst
 | `flight-sim` | Point-mass `SimBackend` (demo hover, not the property vector) plus `WorldSession` over the verified `robot-world` plant |
 | `robot-world` | Multi-domain world: terrain, wind, current, conserved shallow-water field (CPU or Vulkan compute), sphere contact, battery, rigid spin. Verified `step` |
 | `robot-lab` | Scenarios, property vector, agent observe/act JSON over the same `WorldSession` plant as the typestate fleet, timed-action replay, Foxglove MCAP bags |
+| `flight-mhs` | MHS-shaped driver (discover / compiled reference / read / write / chain / stdio MCP). Not official MHS. Writes are `Lab::act_through_attach`. |
 | `flight-mavlink` | MAVLink messages for heartbeat, arm, offboard, NED velocity |
 | `flight-px4` | PX4 offboard backend (`udpin:0.0.0.0:14540`) and `WorldPlant` — same MAVLink setpoints, verified world step; `hold` writes the current NED pose |
 | `flight-ros2` | PX4 external modes: ROS 2 CDR `px4_msgs` setpoints (NED), NED→ENU Twist onto aerial / ground / marine `WorldSession` bodies (`FleetPlant` on coastal, harbor, inland, open water; `hold` writes the current NED pose), optional production `rclrs` 0.7 node |
@@ -187,6 +188,7 @@ Rust does not automatically “verify” a robot. It lets you move physical-syst
 flight-core     units / frames / safety / ground / marine / mech / hydro / typestate
 robot-world     environment + bodies + shallow water (CPU | Vulkan) + verified step
 robot-lab       scenario + observe/act + WorldSession plant + properties
+flight-mhs      MHS-shaped discover / reference / read / write / chain / MCP
 flight-sim      production | recorded | fuzzed | symbolic IMU
 flight-verify   Kani / exhaustive induction
 ```
@@ -240,6 +242,10 @@ cargo run -p robot-lab --example agent typed-surveyor-station-resume # TypedSurv
 cargo run -p robot-lab --example agent scripted        # ScriptedCoastal: demo attach policy as a property certificate
 cargo run -p robot-lab --example typed           # JSON illegal acts, then attach typestate + hold_now
 cargo run -p flight-demo          # http://127.0.0.1:47831 (safety, return, station / resume / airborne / hold)
+cargo run -p flight-mhs -- discover --scenario coastal
+cargo run -p flight-mhs -- reference --scenario inland --device rover
+cargo run -p flight-mhs -- write --scenario coastal --device rover --channel release
+cargo run -p flight-mhs -- mcp --scenario harbor   # newline JSON-RPC stdio (MCP hosts)
 FLIGHT_HYDRO_GPU=1 cargo test -p robot-world --lib gpu
 cargo run -p flight-ros2 --example plant
 cargo run -p flight-ros2 --example fleet_plant
@@ -391,7 +397,7 @@ The v0 use / test / research / proof slice, including a recorded live PX4 SIH co
 The product north star is world-class **agentic robotics tooling in Rust** — experimenting, controlling, and understanding every domain and aspect:
 
 - [`docs/agentic-spec.md`](docs/agentic-spec.md) — spec
-- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase B hold/DP, estimator, paths, and fleet-hold certificate landed)
+- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase B hold/DP, estimator, paths, fleet-hold certificate, and MHS-shaped driver landed)
 
 A live PX4 SITL binary is optional locally (`cargo run -p flight-px4 --example sitl_hover`). Default `cargo test` skips `sitl_live` (`#[ignore]`). GitHub CI runs fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, a lavapipe GPU hydro job, `cargo kani -p flight-verify` (42 harnesses, kani-verifier 0.67.0), `cargo test -p flight-ros2 --features rclrs` (ROS 2 Jazzy), `cargo creusot prove -p flight-core` (Creusot 0.5.0, 81 libraries), and job `sitl` (PX4 SIH `px4io/px4-sitl:v1.18.0-beta2` + the ignored companion test).
 

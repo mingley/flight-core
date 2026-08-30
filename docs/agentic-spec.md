@@ -174,12 +174,17 @@ New catalogs must declare bodies explicitly and get a typed agent skip list (see
 
 ```text
                     ┌─────────────────────────────────────────┐
-                    │  Agent / operator / LLM tools / demo    │
-                    │  observe · legal_cmds · act · research  │
-                    └──────────────────┬──────────────────────┘
+                    │  Agent / operator / LLM tools / demo / MCP        │
+                    │  observe · legal_cmds · MHS-shaped read/write     │
+                    └──────────────────┬──────────────────────────────────┘
                                        │
-                    ┌──────────────────▼──────────────────────┐
-                    │  robot-lab  Lab  (JSON + attach walks)  │
+                    ┌──────────────────▼──────────────────────────────────┐
+                    │  flight-mhs  Driver  (discover · reference · chain)  │
+                    │  official=false · writes = Lab::act_through_attach  │
+                    └──────────────────┬──────────────────────────────────┘
+                                       │
+                    ┌──────────────────▼──────────────────────────────────┐
+                    │  robot-lab  Lab  (JSON + attach walks)               │
                     └──────────────────┬──────────────────────┘
                                        │
      flight-px4 / flight-ros2 / flight-hitl / Vehicle<S,B>
@@ -247,7 +252,7 @@ The first-class agent interface is **not** “any HTTP POST.” It is:
 
 1. Rust: `Lab` + typestate handles
 2. JSON: observe / act / research as today, with Schema
-3. Optional local tool adapter (OpenAPI or MCP-shaped) that **only** exposes legal commands plus env, observe, step, replay, probe
+3. Optional local tool adapter (OpenAPI or MCP-shaped) that **only** exposes legal commands plus env, observe, step, replay, probe. `flight-mhs` is that adapter for Model Hardware Standard–shaped hosts: discover, compiled reference, read, write, chain. It is not official MHS.
 
 No tool may step the plant twice for one agent tick. No tool may grant two competing setpoints without P12 flush-then-one-step.
 
