@@ -400,6 +400,10 @@ fn lab_from_scene_wraps_scene_errors() {
         LabError::from(SceneError::OpenWaterRover).to_string(),
         "open_water catalog cannot include a rover"
     );
+    assert_eq!(
+        LabError::from(SceneError::InvalidHydro).to_string(),
+        "invalid hydro grid"
+    );
 }
 
 #[test]

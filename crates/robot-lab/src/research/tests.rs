@@ -1,6 +1,6 @@
 use super::support::robot;
 use super::*;
-use crate::{AerialKind, GroundKind, Lab, LabCmd, MarineKind};
+use crate::{AerialKind, AgentAction, GroundKind, Lab, LabCmd, MarineKind, Observation};
 use robot_world::{Body, Environment, Scene};
 
 #[test]
@@ -1801,6 +1801,45 @@ fn typed_fleet_hold_holds_custom_pad_pair_catalog() {
     assert!(robot(&end, "skiff").is_none());
     assert!(robot(&end, "surveyor").is_none());
     assert!(robot(&end, "rover").is_some());
+}
+
+#[test]
+fn extra_body_research_steps_once_per_tick() {
+    struct Idle;
+    impl ResearchAgent for Idle {
+        fn name(&self) -> &'static str {
+            "idle"
+        }
+        fn act(&mut self, _: &mut Lab, _: &Observation) -> Vec<AgentAction> {
+            Vec::new()
+        }
+    }
+
+    let mut scout = Body::rover("scout");
+    scout.position_m = [18.0, -4.0, 0.0];
+    let mut lab = Lab::from_scene(
+        Scene::custom(
+            "pad_trio",
+            Environment::inland(),
+            [Body::aerial_ready("drone"), Body::rover("rover"), scout],
+        )
+        .expect("extra ground body is a new catalog")
+        .seed(3),
+    )
+    .expect("pad_trio");
+    assert_eq!(lab.world().bodies.len(), 3);
+    let t0 = lab.world().t;
+    let run = lab.research(&mut Idle, 0.02, 8);
+    assert!(run.ok(), "{run} broken={:?}", run.broken);
+    assert_eq!(run.steps, 8);
+    assert!(
+        (lab.world().t - t0 - 0.16).abs() < 1e-5,
+        "P12: one world step per tick, t={}",
+        lab.world().t
+    );
+    assert!(run.holds("no_body_interpenetration"));
+    assert!(run.holds("no_terrain_penetration"));
+    assert_eq!(run.properties.len(), 22);
 }
 
 #[test]
