@@ -341,10 +341,12 @@ An async PX4 disarm HEARTBEAT bumps the epoch; leftover `Vehicle<Armed>` cannot
 `enter_offboard_now` **or** `set_motor_thrust_now` (permit is checked **before**
 kernel `EnableActuators`). PX4 / ArduPilot / `NullBackend` / point-mass
 `SimBackend` refuse `enter_offboard`, climb, `enable_actuators`, setpoints,
-motor thrust, and yaw-rate at the backend after `actuation_revoked`. The
+motor thrust, and yaw-rate at the backend after `actuation_revoked`. Trait
+default `takeoff_now` / `reached_altitude_now` refuse the same way, so leftover
+Null/Sim climb is not a successful no-op. The
 verified-world `WorldBackend` reports `actuation_revoked` from plant failsafe
-and refuses the same physical-authority commands, including yaw (trait
-default `set_yaw_rate`; kernel `step` remains the TCB). Ground
+and refuses the same physical-authority commands, including yaw and climb (kernel
+`step` remains the TCB). Ground
 `GroundWorldBackend` reports it from plant E-stop and refuses drive / pose
 hold / yaw; marine `MarineWorldBackend` reports it from plant failsafe and
 refuses thrust / pose hold / yaw. Leftover `set_position` cannot skip
@@ -356,8 +358,9 @@ Failsafe / disarm / recover / land stay ungated (safety actions).
 
 **Acceptance:** NullBackend revoke test; NullBackend / SimBackend /
 WorldBackend / GroundWorldBackend / MarineWorldBackend backend-direct refuse
-after disarm/failsafe/estop (including yaw); PX4 / ArduPilot `set_yaw_rate`
-after failsafe and unexpected disarm; world two-handle
+after disarm/failsafe/estop (including yaw and climb); PX4 / ArduPilot
+`set_yaw_rate` / `takeoff_now` / `reached_altitude_now` after failsafe and
+unexpected disarm; world two-handle
 failsafe test; trybuild `permit_is_not_clone`; Kani
 `permit_epoch_mismatch_is_stale`.
 
