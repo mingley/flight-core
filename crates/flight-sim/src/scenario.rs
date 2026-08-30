@@ -90,19 +90,7 @@ impl Scenario {
                 east: 0.0,
             },
         ],
-        require: &[
-            Requirement::NeverActuateWhileDisarmed,
-            Requirement::ActuatorsImplyArmed,
-            Requirement::NoNanCommands,
-            Requirement::AltitudeBelow { meters: 120.0 },
-            Requirement::PermitEpochMonotonic,
-            Requirement::FailsafeWithinMs(250),
-            Requirement::EpochBumped,
-            Requirement::CommandAgeMs {
-                max_ms: COMMAND_MAX_AGE_MS,
-            },
-            Requirement::EstimatorTimestampsMonotonic,
-        ],
+        require: AerialOffboard::GPS_LOSS_REQUIRE,
     };
 
     /// Offboard heartbeat loss must latch failsafe.
@@ -593,6 +581,10 @@ mod tests {
     #[test]
     fn gps_loss_world_satisfies_contract() {
         let report = run_world(&Scenario::GPS_LOSS).expect("run");
+        assert!(core::ptr::eq(
+            Scenario::GPS_LOSS.require,
+            AerialOffboard::GPS_LOSS_REQUIRE
+        ));
         assert!(report.samples.iter().any(|s| s.failsafe));
         assert!(report.samples.iter().any(|s| s.epoch > 0));
         report

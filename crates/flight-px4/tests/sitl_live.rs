@@ -136,7 +136,7 @@ async fn sitl_gps_loss_revokes_leftover_offboard() {
         "leftover set_position must be StaleAuthority, got {err:?}"
     );
 
-    evaluate_trace(&[before, after], flight_sim::Scenario::GPS_LOSS.require)
+    evaluate_trace(&[before, after], AerialOffboard::GPS_LOSS_REQUIRE)
         .expect("live GPS_LOSS require");
     AerialOffboard::evaluate(&[before, after]).expect("live GPS_LOSS capability");
 

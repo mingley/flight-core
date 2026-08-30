@@ -158,6 +158,27 @@ vehicle_contract! {
     }
 }
 
+impl AerialOffboard {
+    /// Leftover GPS-loss monitors (invalid `Estimate` / `EstimatorInvalid`).
+    /// World `Scenario::GPS_LOSS.require` must alias this slice so companion
+    /// leftover runners cannot drift from the scenario lab.
+    pub const GPS_LOSS_REQUIRE: &'static [crate::contracts::Requirement] = &[
+        crate::contracts::Requirement::NeverActuateWhileDisarmed,
+        crate::contracts::Requirement::ActuatorsImplyArmed,
+        crate::contracts::Requirement::NoNanCommands,
+        crate::contracts::Requirement::AltitudeBelow { meters: 120.0 },
+        crate::contracts::Requirement::PermitEpochMonotonic,
+        crate::contracts::Requirement::FailsafeWithinMs(
+            crate::safety::OFFBOARD_HEARTBEAT_MAX_AGE_MS,
+        ),
+        crate::contracts::Requirement::EpochBumped,
+        crate::contracts::Requirement::CommandAgeMs {
+            max_ms: crate::safety::COMMAND_MAX_AGE_MS,
+        },
+        crate::contracts::Requirement::EstimatorTimestampsMonotonic,
+    ];
+}
+
 /// Pass the aerial OffboardControl command idents to a callback macro.
 ///
 /// Must stringify to [`crate::safety::AERIAL_OFFBOARD_COMMANDS`]. A new ident
@@ -312,8 +333,9 @@ macro_rules! impl_aerial_offboard_now {
             /// Leftover Offboard after a revoke: every generated command is
             /// `StaleAuthority` and the handle is still typed Offboard.
             /// World `run_revoke_table`, PX4 `run_px4_revoke_table` /
-            /// `run_px4_gps_loss`, HITL `run_hitl_revoke_table`, and ROS 2
-            /// `run_ros2_revoke_table` share this.
+            /// `run_px4_gps_loss`, ArduPilot `run_ardupilot_gps_loss`, HITL
+            /// `run_hitl_gps_loss`, ROS 2 `run_ros2_gps_loss`, HITL
+            /// `run_hitl_revoke_table`, and ROS 2 `run_ros2_revoke_table` share this.
             pub fn leftover_commands_stale(&mut self) -> Result<(), ErrorKind> {
                 let expected = $crate::contracts::AerialOffboard::COMMANDS;
                 let mut i = 0usize;
@@ -505,6 +527,17 @@ mod tests {
         );
         assert!(AerialOffboard::MONITORS.contains(&Requirement::EstimatorTimestampsMonotonic));
         assert!(AerialOffboard::MONITORS.contains(&Requirement::OffboardAdmitted));
+        assert!(AerialOffboard::GPS_LOSS_REQUIRE.contains(&Requirement::EpochBumped));
+        assert!(
+            AerialOffboard::GPS_LOSS_REQUIRE.contains(&Requirement::FailsafeWithinMs(
+                OFFBOARD_HEARTBEAT_MAX_AGE_MS
+            ))
+        );
+        assert!(
+            AerialOffboard::GPS_LOSS_REQUIRE.contains(&Requirement::CommandAgeMs {
+                max_ms: COMMAND_MAX_AGE_MS
+            })
+        );
         let generated = include_str!("../../../../docs/generated/aerial-offboard.mmd");
         fn tokens(s: &str) -> Vec<&str> {
             s.split_whitespace().collect()

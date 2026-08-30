@@ -708,7 +708,7 @@ pub fn run_px4_revoke_table() -> Result<usize, String> {
 }
 
 /// Companion GPS-loss: leftover Offboard after `EstimatorInvalid` cannot run
-/// `COMMANDS`, and the before/after trace satisfies [`flight_sim::Scenario::GPS_LOSS`].
+/// `COMMANDS`, and the before/after trace satisfies [`AerialOffboard::GPS_LOSS_REQUIRE`].
 /// Does not require a live UDP link. Live SIH is `tests/sitl_live.rs`.
 pub fn run_px4_gps_loss() -> Result<Px4GpsLossReport, String> {
     let mut backend = Px4Backend::new(Px4Config::default());
@@ -749,7 +749,7 @@ pub fn run_px4_gps_loss() -> Result<Px4GpsLossReport, String> {
         return Err("EstimatorInvalid must latch failsafe".into());
     }
     let samples = vec![before, after];
-    evaluate_trace(&samples, flight_sim::Scenario::GPS_LOSS.require)
+    evaluate_trace(&samples, AerialOffboard::GPS_LOSS_REQUIRE)
         .map_err(|e| format!("GPS_LOSS {} at {}", e.requirement, e.index))?;
     AerialOffboard::evaluate(&samples)
         .map_err(|e| format!("capability {} at {}", e.requirement, e.index))?;
