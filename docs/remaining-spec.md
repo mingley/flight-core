@@ -304,7 +304,7 @@ Items in §2 (P1–P14) are constraints on every step, not a phase.
 - Marine DP / NED pose hold beyond `StationKeep` (NEXT B2) — landed.
 - Wiring an estimator so a bad IMU clears `estimator_valid` (NEXT B3) — landed. Full PX4 EKF/RTK/mission planner stays a non-goal.
 - Physical FCH1 recorded run (NEXT B7); protocol miss-zero is already landed.
-- Scenario DSL (NEXT C3) — landed. Hydro/body scale with property-preserving tests (NEXT C4). Not a coastline-scale ocean product by default.
+- Scenario DSL (NEXT C3) and hydro/body scale with property-preserving tests (NEXT C4) — landed. Not a coastline-scale ocean product by default.
 
 **Still non-goals** unless a later instruction adds them:
 

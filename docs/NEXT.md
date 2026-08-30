@@ -237,6 +237,15 @@ skiff or rover. Wind overlays **replace** after the catalog seed is applied.
 
 ### C4. Scale without dropping properties
 
+**Status: landed.** `HydroField::from_env_grid` plus `Scene::hydro(nx, ny, dx)`
+rebuild the same origin patch at half (20×16, dx=4) or double (80×64, dx=1)
+resolution. Coastal steps keep `hydro_height_nonnegative`,
+`hydro_volume_conserved`, and `hydro_land_stays_dry`. A custom extra ground
+body (`scout` on `pad_trio`) keeps contact properties; idle research is still
+one `WorldSession::step` per tick (P12). GPU remains an optional performance
+path (no CPU/GPU bit-identity). Empty or oversized grids are
+`SceneError::InvalidHydro`. Catalogs stay 40×32 unless the overlay is set.
+
 **Acceptance:**
 
 1. Any hydro resolution change keeps `hydro_height_nonnegative`, `hydro_volume_conserved`, `hydro_land_stays_dry`.
@@ -450,10 +459,9 @@ FC-CAP-AerialOffboard, FC-INV-001..003. `human_readable_spec()`.
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B5 landed. E1 landed. F1–F10 landed. C1–C3 landed.** Next: **C4** (scale) and live Gazebo if someone needs a world renderer.
-2. **C4** (hydro/body scale) can overlap B6.
-3. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
-4. **D\*** morphologies last.
+1. **A1–A6 landed. B1–B5 landed. E1 landed. F1–F10 landed. C1–C4 landed.** Next: live Gazebo if someone needs a world renderer, then **B6 / B7 / B8**.
+2. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
+3. **D\*** morphologies last.
 
 When official MHS is open-sourced, translate `flight-mhs` onto that schema. Do not collapse P1–P14 to make a driver “easier.”
 
