@@ -153,6 +153,8 @@ Goal: every domain can **hold and move** under the same typestate story; compani
 
 ### B5. Multi-vehicle coordination certificates
 
+**Status: landed.** Lab certificate `fleet_hold_simultaneous` (stable id, not a try_step property): drone `hold_ned` is set, and a present skiff is StationKeep. Inland omits the hull; open_water omits the rover (P11). `TypedFleetHold` issues it on every catalog. Plant vector stays 22. Each research tick is still one `WorldSession::step` (P12).
+
 **Acceptance:**
 
 1. At least one named property or research certificate beyond pairwise sphere contact: e.g. minimum spacing, or “fleet hold simultaneously” already in `TypedFleetHold` promoted to a plant or lab assertion with a stable id.
@@ -236,11 +238,10 @@ Only after A is usable and B1–B2 have a written status (landed or explicitly d
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B4 landed.** Next: **B5** (coordination certificates).
-2. **B5** (coordination).
-3. **C1–C3** (proofs, traces, scenarios) can overlap A3.
-4. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
-5. **D\*** morphologies last.
+1. **A1–A6 landed. B1–B5 landed.** Next: **C1–C3** (proofs, traces, scenarios).
+2. **C1–C3** (proofs, traces, scenarios) can overlap A3.
+3. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
+4. **D\*** morphologies last.
 
 Items in remaining-spec §2 are constraints on **every** step, not a phase.
 

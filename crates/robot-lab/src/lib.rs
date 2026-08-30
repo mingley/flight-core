@@ -21,7 +21,8 @@
 //! [`Observation::broken`] names the property ids from a refused `try_step`
 //! without an extra plant step. [`Lab::update_nav`] feeds the complementary
 //! filter; unusable IMU clears kernel `estimator_valid` without writing the
-//! plant quaternion.
+//! plant quaternion. [`Lab::fleet_hold_simultaneous`] is the B5 lab
+//! certificate (not a try_step property).
 //!
 //! Observe / act / research share the same [`WorldSession`] plant as the
 //! typestate fleet APIs. [`Lab::world`] is a snapshot; [`Lab::session`] is live.
@@ -74,14 +75,14 @@ pub use observe::{
 pub use probe::ProbeReport;
 pub use reject::RejectTrace;
 pub use research::{
-    CoastalFleet, CollisionSweep, PadLanding, ResearchAgent, ResearchRun, RoverProbe,
-    ScriptedCoastal, TypedAerialAirborne, TypedAerialDisarm, TypedAerialFailsafe, TypedAttachFleet,
-    TypedCollisionSweep, TypedFailsafeTouchdown, TypedFleet, TypedFleetHold, TypedFleetReturn,
-    TypedGroundEstop, TypedGroundHalt, TypedGroundHold, TypedHold, TypedHullDock,
+    fleet_hold_simultaneous, CoastalFleet, CollisionSweep, PadLanding, ResearchAgent, ResearchRun,
+    RoverProbe, ScriptedCoastal, TypedAerialAirborne, TypedAerialDisarm, TypedAerialFailsafe,
+    TypedAttachFleet, TypedCollisionSweep, TypedFailsafeTouchdown, TypedFleet, TypedFleetHold,
+    TypedFleetReturn, TypedGroundEstop, TypedGroundHalt, TypedGroundHold, TypedHold, TypedHullDock,
     TypedHullFailsafe, TypedMarineHold, TypedPadDisarm, TypedPadFailsafe, TypedPadLanding,
     TypedPathFollow, TypedPositionHold, TypedStationDock, TypedStationFailsafe, TypedStationResume,
     TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
-    TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
+    TypedSurveyorStationFailsafe, TypedSurveyorStationResume, FLEET_HOLD_SIMULTANEOUS,
 };
 pub use runner::{git_head, named_agent, Experiment, ExperimentSummary, RunError, RunRecord};
 pub use schema::{validate_instance, AGENT_ACTION_SCHEMA, OBSERVATION_SCHEMA, TIMED_ACTION_SCHEMA};

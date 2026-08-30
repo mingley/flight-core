@@ -96,7 +96,7 @@ The agent is always a **client of the machines**. `Lab::act` / `act_through_atta
 | Domain-complete hold | Ground GPS/pose hold and marine dynamic positioning are typed, plant-backed, and Kani-checked — not JSON-only. Compile-fail from Parked / EStop / Docked / Failsafe as specified in NEXT. Preserve P3. |
 | Estimation in the loop | A navigation filter can clear kernel `estimator_valid` from bad IMU/GNSS **without** replacing plant quaternion physics-truth (`unit_attitude`). |
 | Planning as typestate | Waypoints / paths are data. Executing them still requires Offboard / Moving / Underway (or the documented marine station machine). No “planner override” that skips attach. |
-| Coordination | Multi-body certificates (spacing, no-penetration already on the vector, later: formation, right-of-way) are plant properties or research certificates, not comments in an agent prompt. |
+| Coordination | Pairwise sphere contact plus lab `fleet_hold_simultaneous`. Formation / right-of-way remain later certificates, not comments in an agent prompt. |
 | Metal | At least one recorded physical FCH1 (or faithful rack mock) pass, and companion paths for additional autopilots, still in Rust. |
 | Deploy | Discrete kernel machines remain `no_std`-capable. Vehicles stay `std` until an explicit typestate-on-embedded decision (P14 / remaining-spec §6.1). |
 

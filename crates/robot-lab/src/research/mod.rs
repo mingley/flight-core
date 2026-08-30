@@ -24,7 +24,8 @@ pub use typed_marine::{
 };
 
 use crate::{AgentAction, Lab, Observation, RejectTrace, TimedAction};
-use robot_world::{Property, SphereHit};
+use flight_core::marine::MarinePhase;
+use robot_world::{Property, SphereHit, World};
 use serde::Serialize;
 
 /// A closed-loop policy over [`Observation`]. Illegal JSON `act` results are
@@ -57,6 +58,9 @@ pub struct ResearchRun {
     pub properties: Vec<Property>,
     /// Pairwise sphere contacts on the last committed step.
     pub sphere_hits: Vec<SphereHit>,
+    /// Lab assertions with stable ids (NEXT B5). Not try_step / not in
+    /// the 22-property plant vector. Missing catalog bodies are omitted (P11).
+    pub certificates: Vec<Property>,
     /// Structured bounce for each `act_through_attach` that rejected (NEXT A4).
     pub rejects: Vec<RejectTrace>,
 }
@@ -68,6 +72,7 @@ impl ResearchRun {
 
     pub fn holds(&self, id: &str) -> bool {
         self.properties.iter().any(|p| p.id == id && p.holds)
+            || self.certificates.iter().any(|p| p.id == id && p.holds)
     }
 
     pub fn hit_between(&self, a: &str, b: &str) -> bool {
@@ -95,7 +100,38 @@ impl std::fmt::Display for ResearchRun {
     }
 }
 
+/// Stable lab certificate id: drone NED hold, and StationKeep when a skiff
+/// is in the scene. Not a `try_step` property. Inland has no hull (P11).
+pub const FLEET_HOLD_SIMULTANEOUS: &str = "fleet_hold_simultaneous";
+
+/// Drone `hold_ned` is set, and a present skiff is StationKeep. Missing
+/// catalog bodies are omitted, not invented.
+pub fn fleet_hold_simultaneous(world: &World) -> Property {
+    let drone_ok = world
+        .body("drone")
+        .map(|b| b.hold_ned.is_some())
+        .unwrap_or(true);
+    let skiff_ok = world
+        .body("skiff")
+        .map(|b| {
+            b.marine
+                .is_some_and(|m| m.phase == MarinePhase::StationKeep)
+        })
+        .unwrap_or(true);
+    Property {
+        id: FLEET_HOLD_SIMULTANEOUS,
+        holds: drone_ok && skiff_ok,
+        detail: "drone hold_ned is set; a present skiff is StationKeep (P11 omits missing hulls)"
+            .into(),
+    }
+}
+
 impl Lab {
+    /// [`fleet_hold_simultaneous`] on the live plant snapshot.
+    pub fn fleet_hold_simultaneous(&self) -> Property {
+        fleet_hold_simultaneous(&self.world())
+    }
+
     /// Run `agent` for `steps` ticks. Each tick: observe, apply the agent's
     /// command vector through [`Self::act_through_attach`], then **one**
     /// verified step (P12). Illegal JSON probes still bounce. Typed agents
@@ -170,6 +206,7 @@ impl Lab {
             broken,
             properties: world.last_properties.clone(),
             sphere_hits: world.last_sphere_hits.clone(),
+            certificates: vec![fleet_hold_simultaneous(&world)],
             rejects,
         }
     }

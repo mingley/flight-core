@@ -1781,6 +1781,45 @@ fn typed_fleet_hold_open_water_has_no_rover() {
 }
 
 #[test]
+fn idle_lab_does_not_claim_fleet_hold_simultaneous() {
+    for name in Lab::scenarios() {
+        let lab = Lab::open(name, 3).unwrap();
+        let cert = lab.fleet_hold_simultaneous();
+        assert_eq!(cert.id, FLEET_HOLD_SIMULTANEOUS);
+        assert!(!cert.holds, "{name} idle catalog must not claim fleet hold");
+        assert_eq!(lab.observe().properties.len(), 22);
+    }
+}
+
+#[test]
+fn typed_fleet_hold_issues_fleet_hold_simultaneous() {
+    for name in Lab::scenarios() {
+        let mut lab = Lab::open(name, 3).unwrap();
+        let mut agent = TypedFleetHold::default();
+        let run = lab.research(&mut agent, 0.02, 40);
+        assert!(run.ok(), "{name} {run} broken={:?}", run.broken);
+        assert!(
+            run.holds(FLEET_HOLD_SIMULTANEOUS),
+            "{name} certificates={:?}",
+            run.certificates
+        );
+        assert!(agent.done, "{name}");
+        assert_eq!(run.properties.len(), 22, "{name} plant vector stays 22");
+        assert!(robot(&lab.observe(), "drone").is_some());
+        assert_eq!(
+            robot(&lab.observe(), "skiff").is_some(),
+            *name != "inland",
+            "{name} P11"
+        );
+        assert_eq!(
+            robot(&lab.observe(), "rover").is_some(),
+            *name != "open_water",
+            "{name} P11"
+        );
+    }
+}
+
+#[test]
 fn typed_station_failsafe_recovers_docked_from_station_keep() {
     for name in ["coastal", "harbor", "open_water"] {
         let mut lab = Lab::open(name, 3).unwrap();
