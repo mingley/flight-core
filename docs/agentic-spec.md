@@ -187,7 +187,7 @@ New catalogs must declare bodies explicitly and get a typed agent skip list (see
                     │  robot-lab  Lab  (JSON + attach walks)               │
                     └──────────────────┬──────────────────────┘
                                        │
-     flight-px4 / flight-ros2 / flight-hitl / Vehicle<S,B>
+     flight-px4 / flight-ardupilot / flight-ros2 / flight-hitl / Vehicle<S,B>
                                        │
                     ┌──────────────────▼──────────────────────┐
                     │  WorldSession attach walks              │

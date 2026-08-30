@@ -21,6 +21,11 @@ CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`
 (world leftover Offboard + JSONL + ULog). PX4 companion leftover table:
 `cargo run -p flight-px4 --bin flight-test-px4` (`Px4Backend::inject_revoke`
 for every `REVOKE_ON` event; `flight-sim` does not depend on `flight-px4`).
+ArduPilot GUIDED leftover table:
+`cargo run -p flight-ardupilot --bin flight-test-ardupilot`
+(`ArduPilotBackend::inject_revoke` for every `REVOKE_ON` event;
+`flight-sim` does not depend on `flight-ardupilot`; live Copter is
+loopback-only, no CI sitl job).
 HITL leftover after a rack deadline/`Rate` miss, and leftover after every
 `REVOKE_ON` through `WorldRack::inject_revoke`:
 `cargo run -p flight-hitl --bin flight-test-hitl`

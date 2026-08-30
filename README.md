@@ -242,8 +242,9 @@ Rust does not automatically “verify” a robot. It lets you move physical-syst
 | `robot-world` | Multi-domain world: terrain, wind, current, conserved shallow-water field (CPU or Vulkan compute), sphere contact, battery, rigid spin. Verified `step` |
 | `robot-lab` | Scenarios, property vector, agent observe/act JSON over the same `WorldSession` plant as the typestate fleet, timed-action replay, Foxglove MCAP bags |
 | `flight-mhs` | MHS-shaped driver (discover / compiled reference / read / write / chain / stdio MCP). Not official MHS. Writes are `Lab::act_through_attach`. |
-| `flight-mavlink` | MAVLink messages for heartbeat, arm, offboard, NED velocity |
+| `flight-mavlink` | MAVLink messages for heartbeat, arm, PX4 offboard / ArduCopter GUIDED, NED velocity / position |
 | `flight-px4` | PX4 offboard backend (`udpin:0.0.0.0:14540`) and `WorldPlant` — same MAVLink setpoints, verified world step; `hold` writes the current NED pose |
+| `flight-ardupilot` | ArduPilot GUIDED companion (`udpin:0.0.0.0:14550`); leftover Offboard `COMMANDS` after every `REVOKE_ON` via `flight-test-ardupilot`; live Copter `#[ignore]` loopback-only |
 | `flight-ros2` | PX4 external modes: ROS 2 CDR `px4_msgs` setpoints (NED), NED→ENU Twist onto aerial / ground / marine `WorldSession` bodies (`FleetPlant` on coastal, harbor, inland, open water; `hold` writes the current NED pose; leftover OffboardControl after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` via `flight-test-ros2`), optional production `rclrs` 0.7 node |
 | `flight-hitl` | Deadline-aware HITL rack over every catalog: coastal / harbor (four bodies), inland (no hull), open water (no rover). Verified world as plant, `FCH1` UDP samples, miss ⇒ attach failsafe (or idempotent re-trip) + zero command; OffboardControl `Rate` lockstep with `DeadlineSpec`; leftover OffboardControl `COMMANDS` stale after a miss and after every `REVOKE_ON` (`flight-test-hitl`); on-time frames write NED only while attach is Offboard-control / Moving / Underway / StationKeep; `airborne` / `station_all` / `resume_all` / `dock_all` / `park_all` / `hold` walk climb-complete, hull station, hull dock, rover halt, and NED position hold |
 | `flight-verify` | Kani proofs: actuators, drive, thrust, contact, drag, buoyancy, hydro mass, HITL miss, position-hold restore |
@@ -277,6 +278,7 @@ cargo run -p flight-sim --bin flight-test -- --scenario motor-efficiency --backe
 cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
 cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
 cargo run -p flight-px4 --bin flight-test-px4
+cargo run -p flight-ardupilot --bin flight-test-ardupilot
 cargo run -p flight-hitl --bin flight-test-hitl
 cargo run -p flight-ros2 --bin flight-test-ros2
 cargo run -p flight-hitl --example contract_miss
@@ -349,6 +351,10 @@ cargo run -p flight-px4 --example sitl_hover
 cargo test -p flight-px4 --test sitl_live -- --ignored
 # or, from a PX4 tree: make px4_sitl gz_x500
 cargo run -p flight-px4 --example world_plant   # verified plant, no PX4 binary
+# ArduCopter SITL is optional; default tests are loopback (no CI sitl job):
+# sim_vehicle.py -v ArduCopter -f gazebo-iris --no-rebuild -w
+# cargo test -p flight-ardupilot --test sitl_live -- --ignored
+cargo run -p flight-ardupilot --bin flight-test-ardupilot
 ```
 
 Kani. CI job `kani` runs `cargo kani -p flight-verify` (**45** harnesses, `kani-verifier` 0.67.0). The `kani-verifier` crate currently needs rustc ≥ 1.88 to *install* (`home` 0.5). This repo's MSRV stays 1.85; Kani then uses its own bundled nightly:
@@ -469,7 +475,7 @@ Marine:  Docked ──undock──► Underway ──station──► StationKee
 
 PX4 has moved companion-computer control toward ROS 2 external modes. The official [PX4 ROS 2 Interface Library](https://github.com/Auterion/px4-ros2-interface-lib) is C++, with incomplete Python bindings. There is no first-class Rust API.
 
-`flight-px4` is that API over MAVLink to SITL, with the same `Vehicle<S, B>` type as the simulator. Companion `land_now` / `hold_now` send `NAV_LAND` / a position `SET_POSITION_TARGET_LOCAL_NED` at the last estimated pose. `takeoff_now` / `reached_altitude_now` stay in PX4 offboard so `Vehicle::takeoff` can climb on velocity setpoints (`MAV_CMD_DO_SET_MODE` param2 is unpacked `PX4_MAIN_MODE_OFFBOARD`; WorldPlant still maps `NAV_TAKEOFF` / `NAV_LOITER_UNLIM`). Disconnected send is `BackendError::Disconnected`. Offboard streams velocity or position `SET_POSITION_TARGET_LOCAL_NED`. `flight-ros2` is the ROS 2 companion path: CDR `px4_msgs` setpoints without a C++ library, those setpoints applied to the verified `WorldSession` plant (`FleetPlant` grants through `attach_takeoff` / `attach_drive` / `attach_undock` on every catalog — inland skips hulls, open water skips the rover — then takes one step; `FleetPlant::return_all` walks land+touchdown / park / dock back to Ready / Parked / Docked; `FleetPlant::airborne` / `station_all` / `resume_all` / `dock_all` / `park_all` walk climb-complete, hull station/resume, hull dock, and rover halt; `FleetPlant::hold` writes the drone's current NED pose), and `--features rclrs` for production `rclrs` 0.7 nodes that publish or subscribe `geometry_msgs/Twist` in ENU (`PlantNode` is the drone, `FleetPlantNode` is air + ground + surface + underwater).
+`flight-px4` is that API over MAVLink to SITL, with the same `Vehicle<S, B>` type as the simulator. Companion `land_now` / `hold_now` send `NAV_LAND` / a position `SET_POSITION_TARGET_LOCAL_NED` at the last estimated pose. `takeoff_now` / `reached_altitude_now` stay in PX4 offboard so `Vehicle::takeoff` can climb on velocity setpoints (`MAV_CMD_DO_SET_MODE` param2 is unpacked `PX4_MAIN_MODE_OFFBOARD`; WorldPlant still maps `NAV_TAKEOFF` / `NAV_LOITER_UNLIM`). Disconnected send is `BackendError::Disconnected`. Offboard streams velocity or position `SET_POSITION_TARGET_LOCAL_NED`. `flight-ardupilot` is the Copter GUIDED sibling on the same `flight-mavlink` helpers (`MAV_CMD_DO_SET_MODE` param2 = GUIDED, not PX4 packed custom_mode; leftover `COMMANDS` via `flight-test-ardupilot`; live Copter is `#[ignore]` loopback-only). `flight-ros2` is the ROS 2 companion path: CDR `px4_msgs` setpoints without a C++ library, those setpoints applied to the verified `WorldSession` plant (`FleetPlant` grants through `attach_takeoff` / `attach_drive` / `attach_undock` on every catalog — inland skips hulls, open water skips the rover — then takes one step; `FleetPlant::return_all` walks land+touchdown / park / dock back to Ready / Parked / Docked; `FleetPlant::airborne` / `station_all` / `resume_all` / `dock_all` / `park_all` walk climb-complete, hull station/resume, hull dock, and rover halt; `FleetPlant::hold` writes the drone's current NED pose), and `--features rclrs` for production `rclrs` 0.7 nodes that publish or subscribe `geometry_msgs/Twist` in ENU (`PlantNode` is the drone, `FleetPlantNode` is air + ground + surface + underwater).
 
 ## Still ahead
 
@@ -482,7 +488,7 @@ physical autonomy (agentic experiment / control / understand still applies):
 - [`docs/safety-contract.md`](docs/safety-contract.md) — generated-from-tables traceability
 - [`docs/generated/traceability.md`](docs/generated/traceability.md) — ID matrix
 - [`docs/copper.md`](docs/copper.md) — complement Copper; do not compete on runtime
-- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed; C1–C4 and B8 landed)
+- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed; C1–C4, B6, and B8 landed)
 
 A live PX4 SITL binary is optional locally (`cargo run -p flight-px4 --example sitl_hover`). Default `cargo test` skips `sitl_live` (`#[ignore]`). GitHub CI runs fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, a lavapipe GPU hydro job, `cargo kani -p flight-verify` (45 harnesses, kani-verifier 0.67.0), `cargo test -p flight-ros2 --features rclrs` (ROS 2 Jazzy), `cargo creusot prove -p flight-core` (Creusot 0.5.0, 81 libraries), and job `sitl` (PX4 SIH `px4io/px4-sitl:v1.18.0-beta2` + the ignored companion test). `docs/generated/proof-summary.txt` is the agent digest those counts lockstep; `Experiment` copies it into `run.json`.
 

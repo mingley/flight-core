@@ -163,6 +163,21 @@ Goal: every domain can **hold and move** under the same typestate story; compani
 
 ### B6. Additional autopilot backend
 
+**Status: landed.** [`flight-ardupilot`](../crates/flight-ardupilot) implements
+the same `VehicleBackend` as PX4 over the existing `flight-mavlink` helpers
+(not a second MAVLink stack). Companion `takeoff_now` /
+`reached_altitude_now` re-assert Copter GUIDED (`MAV_CMD_DO_SET_MODE`
+param2 = 4). They do **not** send `NAV_TAKEOFF` (AUTO). `land_now` is
+`NAV_LAND`; `hold_now` is a position setpoint at the last estimate.
+Disconnected send is `BackendError::Disconnected`. RTL / CRITICAL HEARTBEAT
+revokes leftover Offboard once; LAND does not latch failsafe.
+`ArduPilotBackend::inject_revoke` / `run_ardupilot_revoke_table` /
+`flight-test-ardupilot` are leftover `COMMANDS` after every `REVOKE_ON`.
+Live Copter is `#[ignore]` (`tests/sitl_live.rs`); default CI is **loopback
+only** (leftover table + UDP ingest of Copter HEARTBEAT /
+`LOCAL_POSITION_NED`). No CI sitl job. `flight-sim` does not depend on
+`flight-ardupilot`.
+
 **Acceptance:**
 
 1. One more companion (e.g. ArduPilot MAVLink) implementing the same `VehicleBackend` (and domain backends if applicable).
@@ -373,7 +388,9 @@ Named scenario faults (`GpsDropout` / `HeartbeatStale` / `Failsafe`) go
 through the same `inject`. `differential_revoke_table` round-trips the
 leftover samples on JSONL and ULog. `Px4Backend::inject_revoke` /
 `run_px4_revoke_table` / `flight-test-px4` run the same leftover check at
-the companion boundary (`flight-sim` does not depend on `flight-px4`).
+the PX4 companion boundary (`flight-sim` does not depend on `flight-px4`).
+`run_ardupilot_revoke_table` / `flight-test-ardupilot` are the Copter GUIDED
+sibling (`flight-sim` does not depend on `flight-ardupilot`).
 
 ### F5. PX4 production-quality backend
 
@@ -397,6 +414,8 @@ maps each `REVOKE_ON` event onto the companion (failsafe command, unexpected
 disarm HEARTBEAT, link drop, aged HEARTBEAT, stale `LOCAL_POSITION_NED`,
 IMU dropout). `run_px4_revoke_table` / `flight-test-px4` prove a leftover
 `Vehicle<Offboard>` cannot run `COMMANDS` after every inject.
+`run_ardupilot_revoke_table` / `flight-test-ardupilot` are the same leftover
+table at the Copter GUIDED companion.
 
 ### F6. Torture laboratory / differential conformance
 
@@ -425,14 +444,17 @@ cannot run `set_velocity` / `set_position` / `hold`. Named scenario
 `Fault` kernel events are `AerialOffboard::inject`. `differential_revoke_table`
 round-trips those leftover samples on JSONL and ULog. The PX4 companion
 runs the same leftover table via `cargo run -p flight-px4 --bin flight-test-px4`
-(`inject_revoke`); `flight-sim` does not depend on `flight-px4`. HITL leftover
+(`inject_revoke`); `flight-sim` does not depend on `flight-px4`. The ArduPilot
+GUIDED companion is `cargo run -p flight-ardupilot --bin flight-test-ardupilot`
+(`inject_revoke`); `flight-sim` does not depend on `flight-ardupilot`; live
+Copter is loopback-only (no CI sitl job). HITL leftover
 after a rack deadline miss is `WorldRack::leftover_after_deadline_miss`;
 every `REVOKE_ON` leftover is `WorldRack::run_hitl_revoke_table` /
 `flight-test-hitl` (`flight-sim` does not depend on `flight-hitl`). ROS 2
 leftover after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` is
 `plant::leftover_after_failsafe` / `leftover_after_disarm` / `run_ros2_revoke_table` /
 `flight-test-ros2` (`flight-sim` does not depend on `flight-ros2`; no rclrs).
-World / PX4 leftover tables observe leftover epoch with `Sequence`.
+World / PX4 / ArduPilot leftover tables observe leftover epoch with `Sequence`.
 
 ### F7. Typed geometry
 
@@ -473,8 +495,8 @@ FC-CAP-AerialOffboard, FC-INV-001..003. `human_readable_spec()`.
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B5 landed. B8 landed. E1 landed. F1–F10 landed. C1–C4 landed.** Next: live Gazebo if someone needs a world renderer, then **B6 / B7**.
-2. **B6 / B7** (more companions, metal HITL) when the API is stable.
+1. **A1–A6 landed. B1–B6 landed. B8 landed. E1 landed. F1–F10 landed. C1–C4 landed.** Next: live Gazebo if someone needs a world renderer, then **B7**.
+2. **B7** (metal HITL / faithful UDP mock) when the API is stable.
 3. **D\*** morphologies last.
 
 When official MHS is open-sourced, translate `flight-mhs` onto that schema. Do not collapse P1–P14 to make a driver “easier.”
