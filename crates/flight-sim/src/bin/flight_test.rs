@@ -7,17 +7,22 @@
 //! cargo run -p flight-sim --bin flight-test -- --backend replay --replay trace.jsonl
 //! cargo run -p flight-sim --bin flight-test -- --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
 //! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
+//! cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
+//! cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
 //! ```
 //!
 //! `--backend px4-sitl` evaluates a converted HEARTBEAT/ulog JSONL or `.ulg`
 //! (`--replay`). Live SIH is `cargo test -p flight-px4 --test sitl_live -- --ignored`.
 
 use flight_core::contracts::{evaluate_trace, parse_trace_jsonl, Requirement};
-use flight_sim::{is_ulog, parse_ulog, replay_jsonl, run_world, write_ulog, Scenario};
+use flight_sim::{
+    is_ulog, parse_ulog, replay_jsonl, run_hitl_miss, run_revoke_table, run_world, write_ulog,
+    Scenario,
+};
 
 fn usage() -> ! {
     eprintln!(
-        "flight-test --scenario gps-loss|heartbeat-stale [--backend world|replay|px4-sitl|ulog] [--replay FILE] [--write-ulog FILE]"
+        "flight-test --scenario gps-loss|heartbeat-stale|hitl-miss|revoke-table [--backend world|replay|px4-sitl|ulog|hitl] [--replay FILE] [--write-ulog FILE]"
     );
     std::process::exit(2);
 }
@@ -85,6 +90,24 @@ fn main() {
         }
     }
 
+    if scenario_name == "revoke-table" {
+        let report = run_revoke_table().expect("revoke table");
+        evaluate_samples(
+            &report.samples,
+            &[
+                Requirement::NeverActuateWhileDisarmed,
+                Requirement::ActuatorsImplyArmed,
+                Requirement::NoNanCommands,
+            ],
+        );
+        println!(
+            "PASS scenario=revoke-table backend=world samples={} events={}",
+            report.samples.len(),
+            report.samples.len()
+        );
+        return;
+    }
+
     let scenario = scenario_from_args(scenario_name);
 
     match backend {
@@ -150,6 +173,19 @@ fn main() {
                 "PASS scenario={} backend=px4-sitl format={kind} file={path} samples={}",
                 scenario.name,
                 samples.len()
+            );
+        }
+        "hitl" => {
+            let report = run_hitl_miss().expect("hitl miss");
+            report
+                .evaluate(Scenario::HITL_MISS.require)
+                .expect("contract");
+            println!(
+                "PASS scenario={} backend=hitl samples={} failsafe={} epoch_final={}",
+                report.name,
+                report.samples.len(),
+                report.samples.iter().any(|s| s.failsafe),
+                report.samples.last().map(|s| s.epoch).unwrap_or(0)
             );
         }
         other => {

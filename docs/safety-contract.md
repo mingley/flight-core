@@ -27,7 +27,10 @@ Generates (one expansion in the kernel, aliased by the capability type):
 - Kani harness `dsl_revokes_match_kernel` (table membership + bounds)
 - Kani harness `permit_epoch_mismatch_is_stale`
 - mermaid (`AerialOffboard::MERMAID`, [`docs/generated/aerial-offboard.mmd`](generated/aerial-offboard.mmd))
-- Graphviz (`AerialOffboard::GRAPHVIZ`)
+- Graphviz (`AerialOffboard::GRAPHVIZ`, [`docs/generated/aerial-offboard.dot`](generated/aerial-offboard.dot))
+- transition table (`AerialOffboard::TRANSITIONS`, [`docs/generated/aerial-offboard.transitions.md`](generated/aerial-offboard.transitions.md))
+- fault-injection list (`REVOKE_ON` / `run_revoke_table`, [`docs/generated/aerial-offboard.faults.md`](generated/aerial-offboard.faults.md))
+- compile-fail names (`AerialOffboard::UI_FORBIDDEN`)
 - this specification
 - [`docs/generated/traceability.md`](generated/traceability.md)
 

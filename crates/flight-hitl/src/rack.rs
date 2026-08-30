@@ -31,6 +31,7 @@
 use std::net::UdpSocket;
 use std::time::Instant;
 
+use flight_core::contracts::TraceSample;
 use flight_core::hitl::{
     command_after_deadline, deadline_outcome, hitl_apply_allowed, DeadlineOutcome, DeadlineSpec,
 };
@@ -580,6 +581,43 @@ fn write_rover(
         rover.set_velocity_now(Velocity::ned(v[0], v[1], v[2]))?;
     }
     Ok(())
+}
+
+fn drone_trace(world: &World) -> Result<TraceSample, BackendError> {
+    let body = world.body("drone").ok_or(BackendError::Protocol)?;
+    let aerial = body.aerial.ok_or(BackendError::Protocol)?;
+    Ok(TraceSample {
+        t_secs: world.t,
+        armed: aerial.armed,
+        actuators_enabled: aerial.actuators_enabled,
+        failsafe: aerial.failsafe,
+        epoch: body.authority_epoch,
+        heartbeat_age_ms: 0,
+        command: body.command,
+        altitude_m: body.altitude_agl(),
+        command_age_ms: 0,
+        estimator_ts_ms: (world.t * 1000.0) as u64,
+    })
+}
+
+impl WorldRack {
+    /// On-time frame then a deadline miss. Same contract evaluator as
+    /// `flight-test --backend hitl` (`Scenario::HITL_MISS`).
+    ///
+    /// Returns the sample before the miss and after, so
+    /// [`flight_core::contracts::Requirement::EpochBumped`] can compare
+    /// against the live epoch.
+    pub fn contract_deadline_miss(seed: u64) -> Result<Vec<TraceSample>, BackendError> {
+        let mut rack = Self::inland(seed)?;
+        let cmd = RackCommand {
+            aerial: [0.0, 0.0, -1.2],
+            ..RackCommand::default()
+        };
+        rack.frame_with_compute(0.02, cmd, 1_000_000)?;
+        let before = drone_trace(&rack.world())?;
+        rack.frame_with_compute(0.02, cmd, 50_000_000)?;
+        Ok(vec![before, drone_trace(&rack.world())?])
+    }
 }
 
 /// Decode a companion command datagram (hardware rack → this process).
@@ -1250,5 +1288,15 @@ mod tests {
         let s = protocol::decode_sample(&buf[..n]).expect("sample");
         assert_eq!(s.slot, 0);
         assert!(s.position_ned.iter().all(|c| c.is_finite()));
+    }
+
+    #[test]
+    fn contract_deadline_miss_satisfies_hitl_miss_require() {
+        let samples = WorldRack::contract_deadline_miss(1).expect("miss");
+        assert!(samples.len() >= 2);
+        assert!(samples.last().is_some_and(|s| s.failsafe));
+        assert!(samples.last().is_some_and(|s| s.epoch > samples[0].epoch));
+        flight_core::contracts::evaluate_trace(&samples, flight_sim::Scenario::HITL_MISS.require)
+            .expect("HITL rack miss satisfies the same contract as flight-test --backend hitl");
     }
 }

@@ -14,3 +14,6 @@ robot-world = { workspace = true }
 
 [[example]]
 name = "rack"
+
+[[example]]
+name = "contract_miss"

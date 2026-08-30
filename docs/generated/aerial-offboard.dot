@@ -1,0 +1,7 @@
+digraph AerialOffboard {
+  rankdir=LR;
+  Disarmed -> PreflightReady [label=verify_preflight];
+  PreflightReady -> Armed [label=arm];
+  Armed -> Offboard [label=acquire_offboard_control];
+  Offboard -> Failsafe [label="TriggerFailsafe | Disarm | Disconnect | HeartbeatStale | EstimatorInvalid | ImuUnhealthy"];
+}

@@ -30,6 +30,22 @@ macro_rules! vehicle_contract {
                 $crate::safety::event_revokes_authority(event)
             }
 
+            pub const TRANSITIONS: &'static [$crate::safety::ContractEdge] =
+                $crate::safety::AERIAL_OFFBOARD_TRANSITIONS;
+            pub const GATE: &'static str = "OffboardControl";
+            pub const COMMANDS: &'static [&'static str] = &["set_velocity", "set_position", "hold"];
+            /// Compile-fail UI tests that must exist for this capability gate.
+            pub const UI_FORBIDDEN: &'static [&'static str] = &[
+                "ready_velocity.rs",
+                "armed_velocity.rs",
+                "disarmed_velocity.rs",
+                "disconnected_velocity.rs",
+                "failsafe_offboard.rs",
+                "recovery_velocity.rs",
+                "ready_position.rs",
+                "ready_hold.rs",
+            ];
+
             pub const MONITORS: &'static [$crate::contracts::Requirement] = &[
                 $crate::contracts::Requirement::NeverActuateWhileDisarmed,
                 $crate::contracts::Requirement::ActuatorsImplyArmed,
@@ -201,5 +217,54 @@ mod tests {
         assert!(human_readable_spec().contains("FC-INV-004"));
         assert!(human_readable_spec().contains("command.age < 100"));
         assert!(AerialOffboard::SPEC.contains("command.age < 100"));
+        assert_eq!(AerialOffboard::GATE, "OffboardControl");
+        assert!(AerialOffboard::COMMANDS.contains(&"set_velocity"));
+        let revoke_vias: Vec<&str> = AerialOffboard::TRANSITIONS
+            .iter()
+            .filter(|e| e.to == "Failsafe")
+            .map(|e| e.via)
+            .collect();
+        for e in AerialOffboard::REVOKE_ON {
+            assert!(
+                revoke_vias.contains(&e.name()),
+                "transition table missing Failsafe via {}",
+                e.name()
+            );
+            assert!(AerialOffboard::MERMAID.contains(e.name()));
+        }
+        let generated_dot = include_str!("../../../../docs/generated/aerial-offboard.dot");
+        assert_eq!(
+            tokens(AerialOffboard::GRAPHVIZ),
+            tokens(generated_dot),
+            "docs/generated/aerial-offboard.dot must match AerialOffboard::GRAPHVIZ"
+        );
+        assert_eq!(
+            AerialOffboard::TRANSITIONS.len(),
+            3 + AerialOffboard::REVOKE_ON.len()
+        );
+        let transitions_md =
+            include_str!("../../../../docs/generated/aerial-offboard.transitions.md");
+        for e in AerialOffboard::TRANSITIONS {
+            let row = format!("| {} | {} | {} |", e.from, e.via, e.to);
+            assert!(
+                transitions_md.contains(&row),
+                "docs/generated/aerial-offboard.transitions.md missing {row}"
+            );
+        }
+        let faults_md = include_str!("../../../../docs/generated/aerial-offboard.faults.md");
+        for e in AerialOffboard::REVOKE_ON {
+            assert!(
+                faults_md.contains(e.name()),
+                "docs/generated/aerial-offboard.faults.md missing {}",
+                e.name()
+            );
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for f in AerialOffboard::UI_FORBIDDEN {
+            assert!(
+                root.join("tests/ui").join(f).is_file(),
+                "capability UI {f} must exist"
+            );
+        }
     }
 }

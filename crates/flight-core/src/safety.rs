@@ -256,6 +256,45 @@ impl Event {
             _ => None,
         }
     }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Event::Connect => "Connect",
+            Event::Disconnect => "Disconnect",
+            Event::InitComplete => "InitComplete",
+            Event::Initialized => "Initialized",
+            Event::PreflightPassed => "PreflightPassed",
+            Event::PreflightFailed => "PreflightFailed",
+            Event::ImuHealthy => "ImuHealthy",
+            Event::ImuUnhealthy => "ImuUnhealthy",
+            Event::EstimatorValid => "EstimatorValid",
+            Event::EstimatorInvalid => "EstimatorInvalid",
+            Event::Arm => "Arm",
+            Event::Disarm => "Disarm",
+            Event::EnterOffboard => "EnterOffboard",
+            Event::HeartbeatFresh => "HeartbeatFresh",
+            Event::HeartbeatStale => "HeartbeatStale",
+            Event::EnableActuators => "EnableActuators",
+            Event::DisableActuators => "DisableActuators",
+            Event::Takeoff => "Takeoff",
+            Event::ReachedAltitude => "ReachedAltitude",
+            Event::Land => "Land",
+            Event::Touchdown => "Touchdown",
+            Event::MissionCommand => "MissionCommand",
+            Event::TriggerFailsafe => "TriggerFailsafe",
+            Event::Recover => "Recover",
+        }
+    }
+}
+
+/// One edge of the aerial offboard capability diagram. Generated from the
+/// same `define_aerial_authority!` table as [`event_revokes_authority`].
+#[cfg(not(creusot))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContractEdge {
+    pub from: &'static str,
+    pub via: &'static str,
+    pub to: &'static str,
 }
 
 /// Single source for aerial offboard authority: heartbeat bound, command-age
@@ -276,6 +315,30 @@ macro_rules! define_aerial_authority {
         /// these (or a failsafe latch they cause) must increment the backend safety epoch.
         #[cfg(not(creusot))]
         pub const AUTHORITY_REVOKE_EVENTS: &[Event] = &[$(Event::$ev),+];
+
+        #[cfg(not(creusot))]
+        pub const AERIAL_OFFBOARD_TRANSITIONS: &[ContractEdge] = &[
+            ContractEdge {
+                from: "Disarmed",
+                via: "verify_preflight",
+                to: "PreflightReady",
+            },
+            ContractEdge {
+                from: "PreflightReady",
+                via: "arm",
+                to: "Armed",
+            },
+            ContractEdge {
+                from: "Armed",
+                via: "acquire_offboard_control",
+                to: "Offboard",
+            },
+            $(ContractEdge {
+                from: "Offboard",
+                via: Event::$ev.name(),
+                to: "Failsafe",
+            },)+
+        ];
 
         #[cfg(not(creusot))]
         pub const AERIAL_OFFBOARD_MERMAID: &'static str = concat!(

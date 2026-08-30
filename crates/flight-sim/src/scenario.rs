@@ -105,7 +105,25 @@ impl Scenario {
         ],
     };
 
-    pub const ALL: &'static [Self] = &[Self::GPS_LOSS, Self::HEARTBEAT_LOSS];
+    /// Deadline miss / attach failsafe: same epoch revoke as the HITL rack.
+    pub const HITL_MISS: Self = Self {
+        name: "hitl-miss",
+        catalog: "inland",
+        seed: 1,
+        dt: 0.02,
+        duration_secs: 0.4,
+        inject: &[Fault::Failsafe { at_secs: 0.1 }],
+        require: &[
+            Requirement::NeverActuateWhileDisarmed,
+            Requirement::ActuatorsImplyArmed,
+            Requirement::NoNanCommands,
+            Requirement::PermitEpochMonotonic,
+            Requirement::FailsafeWithinMs(250),
+            Requirement::EpochBumped,
+        ],
+    };
+
+    pub const ALL: &'static [Self] = &[Self::GPS_LOSS, Self::HEARTBEAT_LOSS, Self::HITL_MISS];
 
     pub fn by_name(name: &str) -> Option<&'static Self> {
         Self::ALL.iter().find(|s| s.name == name)
@@ -188,6 +206,53 @@ pub fn run_world(scenario: &Scenario) -> Result<ScenarioReport, String> {
     }
     Ok(ScenarioReport {
         name: scenario.name,
+        backend: "world",
+        samples,
+    })
+}
+
+/// HITL-shaped miss: grant, then attach failsafe (the rack miss path).
+pub fn run_hitl_miss() -> Result<ScenarioReport, String> {
+    let session =
+        WorldSession::named("inland", 1).ok_or_else(|| "unknown catalog inland".to_string())?;
+    session
+        .attach_takeoff("drone")
+        .map_err(|e| format!("grant: {e}"))?;
+    let mut samples = vec![sample_drone(&session.world())];
+    session
+        .attach_failsafe("drone")
+        .map_err(|e| format!("miss: {e}"))?;
+    samples.push(sample_drone(&session.world()));
+    Ok(ScenarioReport {
+        name: "hitl-miss",
+        backend: "hitl",
+        samples,
+    })
+}
+
+/// Inject every DSL revoke event from offboard. Fault-injection generated
+/// from [`flight_core::contracts::AerialOffboard::REVOKE_ON`].
+pub fn run_revoke_table() -> Result<ScenarioReport, String> {
+    use flight_core::contracts::AerialOffboard;
+    let mut samples = Vec::new();
+    for (i, e) in AerialOffboard::REVOKE_ON.iter().enumerate() {
+        let session =
+            WorldSession::named("inland", 1).ok_or_else(|| "unknown catalog inland".to_string())?;
+        session
+            .attach_offboard("drone")
+            .map_err(|err| format!("grant: {e:?}: {err}"))?;
+        aerial_event(session.aerial("drone").session(), "drone", *e)
+            .map_err(|err| format!("inject {e:?}: {err}"))?;
+        session.step(0.02).map_err(|err| format!("step: {err}"))?;
+        let mut s = sample_drone(&session.world());
+        s.t_secs = (i as f32) * 0.02;
+        if s.epoch == 0 {
+            return Err(format!("event {e:?} did not bump epoch"));
+        }
+        samples.push(s);
+    }
+    Ok(ScenarioReport {
+        name: "revoke-table",
         backend: "world",
         samples,
     })
@@ -314,6 +379,38 @@ mod tests {
         report
             .evaluate(Scenario::HEARTBEAT_LOSS.require)
             .expect("contract");
+    }
+
+    #[test]
+    fn hitl_miss_world_and_attach_share_contract() {
+        let world = run_world(&Scenario::HITL_MISS).expect("world");
+        world
+            .evaluate(Scenario::HITL_MISS.require)
+            .expect("world contract");
+        differential_world(&Scenario::HITL_MISS).expect("differential");
+        let hitl = run_hitl_miss().expect("hitl");
+        assert!(hitl.samples.iter().any(|s| s.failsafe));
+        assert!(hitl.samples.iter().any(|s| s.epoch > 0));
+        hitl.evaluate(Scenario::HITL_MISS.require)
+            .expect("hitl contract");
+    }
+
+    #[test]
+    fn revoke_table_faults_are_the_dsl_events() {
+        let report = run_revoke_table().expect("revoke table");
+        assert_eq!(
+            report.samples.len(),
+            flight_core::contracts::AerialOffboard::REVOKE_ON.len()
+        );
+        evaluate_trace(
+            &report.samples,
+            &[
+                Requirement::NeverActuateWhileDisarmed,
+                Requirement::ActuatorsImplyArmed,
+                Requirement::NoNanCommands,
+            ],
+        )
+        .expect("contract");
     }
 
     #[test]

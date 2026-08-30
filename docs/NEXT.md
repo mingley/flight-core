@@ -270,10 +270,12 @@ controller and not a Copper competitor. See [`docs/copper.md`](copper.md) and
 
 **Status: landed.** `ActuationPermit` is non-`Clone`, bound to `VehicleId` +
 `SafetyEpoch` + optional lease. `VehicleBackend::authority_epoch` is the live
-plant/PX4 counter. `set_velocity_now` / drive / thrust check the permit
-**before** the local typestate `MissionCommand`. World failsafe on a sibling
-handle increments `Body.authority_epoch`; the old `Vehicle<Offboard>` is still
-typed Offboard and is `StaleAuthority`.
+plant/PX4 counter. Setpoints **and** physical-authority mode changes
+(`enter_offboard_now`, `start_takeoff_now`, land) check the permit **before**
+the backend. World failsafe on a sibling handle increments `Body.authority_epoch`;
+the old `Vehicle<Offboard>` is still typed Offboard and is `StaleAuthority`.
+An async PX4 disarm HEARTBEAT bumps the epoch; leftover `Vehicle<Armed>` cannot
+`enter_offboard_now`. Failsafe / disarm / recover stay ungated (safety actions).
 
 **Acceptance:** NullBackend revoke test; world two-handle failsafe test;
 trybuild `permit_is_not_clone`; Kani `permit_epoch_mismatch_is_stale`.
@@ -297,16 +299,20 @@ share bounds with the DSL. `Vehicle::apply_velocity_command_now` rejects
 
 ### F4. Single-source contract DSL
 
-**Status: landed.** `define_aerial_authority!` in `safety.rs` is the table:
-heartbeat/command bounds, `event_revokes_authority` (Creusot `ensures` on
-the same event list), diagram/SPEC strings, `AUTHORITY_REVOKE_EVENTS`.
+**Status: landed (tables + artifacts; not a second typestate crate).**
+`define_aerial_authority!` in `safety.rs` is the table: heartbeat/command bounds,
+`event_revokes_authority` (Creusot `ensures` on the same event list), diagram/SPEC
+strings, `AUTHORITY_REVOKE_EVENTS`, `AERIAL_OFFBOARD_TRANSITIONS`.
 `vehicle_contract! { from_kernel }` aliases that table (`AerialOffboard::revokes`
-**is** the kernel function). Kani `dsl_revokes_match_kernel` proves table
+**is** the kernel function; `TRANSITIONS` / `GATE` / `COMMANDS` / `UI_FORBIDDEN`
+are the capability surface). Kani `dsl_revokes_match_kernel` proves table
 membership plus the two age predicates and estimator monotonicity. Checked-in
-[`docs/generated/aerial-offboard.mmd`](generated/aerial-offboard.mmd) must
-match `AerialOffboard::MERMAID`. The macro does not emit a second typestate
-API or a second Creusot file; Creusot still discharges `step` plus the
-revoke `ensures`.
+[`docs/generated/aerial-offboard.mmd`](generated/aerial-offboard.mmd),
+[`.dot`](generated/aerial-offboard.dot),
+[`transitions.md`](generated/aerial-offboard.transitions.md), and
+[`faults.md`](generated/aerial-offboard.faults.md) must match the table.
+The macro does not emit typestate **methods** or a second Creusot file; Creusot
+still discharges `step` plus the revoke `ensures`.
 
 ### F5. PX4 production-quality backend
 
@@ -321,21 +327,25 @@ permit check.
 ### F6. Torture laboratory / differential conformance
 
 **Status: landed.** `flight_sim::scenario` (`Scenario::GPS_LOSS`,
-`HEARTBEAT_LOSS`, `scenario!`) injects estimator / heartbeat / wind / battery
-faults on the verified world, evaluates `Requirement`s, writes JSONL, and
-differential-runs two world traces. Native ULog subset (`write_ulog` /
-`parse_ulog`) round-trips `fc_trace` and can ingest `vehicle_status`.
-`cargo run -p flight-sim --bin flight-test` runs
-`--backend world|replay|ulog|px4-sitl`. Live Gazebo is still out of scope;
-`--backend px4-sitl` evaluates a converted JSONL or `.ulg` (checked-in
-`crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl`). Every DSL revoke event has
-a world test that the plant epoch increments.
+`HEARTBEAT_LOSS`, `HITL_MISS`, `scenario!`) injects estimator / heartbeat /
+failsafe / wind / battery faults on the verified world, evaluates `Requirement`s,
+writes JSONL, and differential-runs two world traces. Native ULog subset
+(`write_ulog` / `parse_ulog`) round-trips `fc_trace` and can ingest
+`vehicle_status`. `cargo run -p flight-sim --bin flight-test` runs
+`--backend world|replay|ulog|px4-sitl|hitl` and `--scenario revoke-table`.
+Live Gazebo is still out of scope; `--backend px4-sitl` evaluates a converted
+JSONL or `.ulg` (checked-in `crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl`).
+`--backend hitl` is the attach-failsafe miss path (same contract as
+`WorldRack::contract_deadline_miss`). Every DSL revoke event has a world test
+that the plant epoch increments.
 
 ### F7. Typed geometry
 
 **Status: landed.** `Transform<A,B> * Transform<B,C>` only; `Displacement`,
-`Point3`, `apply_point` / `apply_displacement`, `Rotation`, `Covariance<T>`.
-trybuild `transform_wrong_frames`. Copper `cu_transform` is interop, not a
+`Point3`, `Orientation<F>` (not `AngularVelocity`), `Force` / `Torque`,
+`apply_point` / `apply_displacement`, `Rotation`, `Covariance<T>`.
+trybuild `transform_wrong_frames`, `orientation_is_not_angular_velocity`,
+`force_is_not_torque`. Copper `cu_transform` is interop, not a
 copy (`docs/copper.md`).
 
 ### F8. Copper integration
@@ -348,7 +358,9 @@ dependency. Do not add a scheduler/pubsub/physics engine.
 **Status: landed.** Deadline miss already trips attach failsafe; the plant
 epoch now increments. `injected_miss_zeros_command_and_trips_failsafe`
 asserts `authority_epoch > 0` and evaluates `Requirement::ActuatorsImplyArmed`
-on the miss sample.
+on the miss sample. `WorldRack::contract_deadline_miss` and
+`flight-test --backend hitl` evaluate `Scenario::HITL_MISS.require`
+(including `EpochBumped`). `cargo run -p flight-hitl --example contract_miss`.
 
 ### F10. Certification-oriented traceability
 
