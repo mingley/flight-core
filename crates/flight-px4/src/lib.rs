@@ -156,12 +156,14 @@ impl Px4Backend {
         }
     }
 
-    /// New offboard setpoints after failsafe **or** a stale local-position
-    /// Estimate are refused at this backend.
+    /// New offboard setpoints after failsafe, a stale local-position
+    /// Estimate, or a revoking disarm/disconnect (`!armed` with a bumped
+    /// epoch) are refused at this backend.
     /// `pump_setpoint` stays ungated so the PX4 ~1 s pre-offboard stream still
     /// runs; Vehicle-layer `set_velocity_ned` / `set_position_ned` stop.
+    /// `hold_now` before arm stays allowed at epoch 0.
     fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
-        if self.failsafe_latched {
+        if self.failsafe_latched || (!self.armed && self.authority_epoch > 0) {
             return Err(BackendError::Rejected("actuation authority revoked"));
         }
         Ok(())
@@ -294,6 +296,7 @@ impl Px4Backend {
             Event::Disconnect => {
                 self.link = None;
                 self.offboard = false;
+                self.armed = false;
                 self.failsafe_latched = false;
                 self.revoke_authority();
             }
@@ -910,6 +913,37 @@ mod tests {
             err.error
         );
         assert!(err.vehicle.safety().armed);
+    }
+
+    #[test]
+    fn unexpected_disarm_refuses_setpoint_at_the_backend() {
+        let mut b = Px4Backend::new(Px4Config::default());
+        b.armed = true;
+        b.offboard = true;
+        let MavMessage::HEARTBEAT(h) = px4_vehicle_heartbeat(false, 0) else {
+            panic!("heartbeat");
+        };
+        b.ingest_heartbeat(h);
+        assert!(b.authority_epoch() >= 1);
+        assert!(!b.telemetry_now().unwrap().failsafe);
+        let err = b.set_velocity_ned_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, -1.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.hold_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+    }
+
+    #[test]
+    fn hold_now_before_arm_is_not_a_revoked_setpoint() {
+        let mut b = Px4Backend::new(Px4Config::default());
+        assert_eq!(b.authority_epoch(), 0);
+        assert!(!b.telemetry_now().unwrap().armed);
+        assert!(matches!(b.hold_now(), Err(BackendError::Disconnected)));
+        assert!(matches!(
+            b.set_velocity_ned_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2)),
+            Err(BackendError::Disconnected)
+        ));
     }
 
     #[test]

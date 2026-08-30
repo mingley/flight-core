@@ -343,7 +343,10 @@ heartbeat. Ingested HEARTBEAT with `MAV_STATE_CRITICAL` / `EMERGENCY` /
 (NAV_LAND) does not latch failsafe. `authority_heartbeat_age_ms` feeds the
 permit check. After failsafe is latched, `set_velocity_ned` /
 `set_position_ned` return `BackendError::Rejected` at this backend (the
-pre-offboard `pump_setpoint` stream is not gated). After a local-position
+pre-offboard `pump_setpoint` stream is not gated). After an unexpected
+disarm HEARTBEAT (`!armed` with a bumped epoch) those same Vehicle-layer
+setpoints are also `Rejected` — `hold_now` before arm at epoch 0 is not.
+After a local-position
 sample older than 250 ms, `Estimate::revoke_event` latches failsafe and
 refuses new setpoints (never-seen pose is not a dropout). `inject_revoke`
 maps each `REVOKE_ON` event onto the companion (failsafe command, unexpected
