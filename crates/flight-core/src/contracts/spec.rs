@@ -394,6 +394,14 @@ mod tests {
         assert!(human_readable_spec().contains("command.age < 100"));
         assert!(human_readable_spec().contains("commands [set_velocity"));
         assert!(human_readable_spec().contains("admit_offboard"));
+        let spec_tokens = tokens(AerialOffboard::SPEC);
+        let human_tokens = tokens(human_readable_spec());
+        assert!(
+            human_tokens
+                .windows(spec_tokens.len())
+                .any(|w| w == spec_tokens.as_slice()),
+            "human_readable_spec must embed AerialOffboard::SPEC"
+        );
         assert!(AerialOffboard::SPEC.contains("commands [set_velocity"));
         assert_eq!(AerialOffboard::GATE, "OffboardControl");
         assert!(AerialOffboard::COMMANDS.contains(&"set_velocity"));

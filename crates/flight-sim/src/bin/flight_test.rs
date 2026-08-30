@@ -6,6 +6,7 @@
 //! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend replay
 //! cargo run -p flight-sim --bin flight-test -- --backend replay --replay trace.jsonl
 //! cargo run -p flight-sim --bin flight-test -- --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
+//! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl
 //! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
 //! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend all
 //! cargo run -p flight-sim --bin flight-test -- --scenario heartbeat-stale --backend all
@@ -17,7 +18,7 @@
 //! `--backend px4-sitl` evaluates a converted HEARTBEAT/ulog JSONL or `.ulg`
 //! (`--replay`). Live SIH is `cargo test -p flight-px4 --test sitl_live -- --ignored`.
 
-use flight_core::contracts::{evaluate_trace, parse_trace_jsonl, Requirement};
+use flight_core::contracts::{evaluate_trace, parse_trace_jsonl, AerialOffboard, Requirement};
 use flight_sim::{
     differential_contract, is_ulog, parse_ulog, replay_jsonl, run_hitl_miss, run_revoke_table,
     run_world, write_ulog, Scenario,
@@ -49,9 +50,19 @@ fn load_trace(path: &str) -> (Vec<flight_core::contracts::TraceSample>, &'static
     }
 }
 
+fn corpus_file(name: &str) -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("corpus")
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn evaluate_samples(samples: &[flight_core::contracts::TraceSample], reqs: &[Requirement]) {
     evaluate_trace(samples, reqs)
         .unwrap_or_else(|e| panic!("contract {} at sample {}", e.requirement, e.index));
+    AerialOffboard::evaluate(samples)
+        .unwrap_or_else(|e| panic!("capability {} at sample {}", e.requirement, e.index));
 }
 
 fn main() {
@@ -162,14 +173,20 @@ fn main() {
             }
         }
         "px4-sitl" => {
-            let Some(path) = replay else {
-                eprintln!(
-                    "px4-sitl backend needs --replay FILE.jsonl or FILE.ulg \
-                     (ulog/HEARTBEAT converted to TraceSample).\n\
-                     Checked-in converter corpus: crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl\n\
-                     Live SIH: cargo test -p flight-px4 --test sitl_live -- --ignored"
-                );
-                std::process::exit(2);
+            let path = match replay {
+                Some(path) => path,
+                None if scenario.name == Scenario::GPS_LOSS.name => {
+                    corpus_file("px4_sitl_gps_loss.jsonl")
+                }
+                None => {
+                    eprintln!(
+                        "px4-sitl backend needs --replay FILE.jsonl or FILE.ulg \
+                         (ulog/HEARTBEAT converted to TraceSample).\n\
+                         gps-loss defaults to the checked-in converter corpus.\n\
+                         Live SIH: cargo test -p flight-px4 --test sitl_live -- --ignored"
+                    );
+                    std::process::exit(2);
+                }
             };
             let (samples, kind) = load_trace(&path);
             evaluate_samples(&samples, scenario.require);

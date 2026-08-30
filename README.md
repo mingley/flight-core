@@ -36,7 +36,7 @@ increments the epoch. The old permit is still memory. It has no authority.
 6. flight-test --backend all     PASS (same contract: world, replay, ulog;
                                       gps-loss also converted PX4 SITL)
 7. PX4 SITL companion              PASS (same Vehicle API; HEARTBEAT CRITICAL/RTL revokes epoch)
-   flight-test --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
+   flight-test --scenario gps-loss --backend px4-sitl
 8. flight-test --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
                    PASS — same contract on recorded ULog
 ```
