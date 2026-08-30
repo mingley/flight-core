@@ -327,22 +327,24 @@ epoch bump predicates. Everything else is untrusted relative to `step`.
 
 ### F3. Temporal contracts
 
-**Status: landed.** `Fresh` / `HeartbeatFresh` / `CommandFresh` / `Sequence` /
-`Estimate` / `Observation` / `Rate` / `Deadline` / `Lease` / `Command` /
-`Timestamp`. `Fresh::check_age` is the typed bound; it is the same predicate as
-`heartbeat_age_ok` / `command_age_ok`. `require_live_permit` uses
+**Status: landed.** `Fresh` / `HeartbeatFresh` / `CommandFresh` / `EstimateFresh` /
+`Sequence` / `Estimate` / `Observation` / `Rate` / `Deadline` / `Lease` /
+`Command` / `Timestamp`. `Fresh::check_age` is the typed bound; it is the same
+predicate as `heartbeat_age_ok` / `command_age_ok` / `age < ESTIMATE_MAX_AGE_MS`. `require_live_permit` uses
 `HeartbeatFresh::check_age` **and** `AerialOffboard::admit`.
 `Vehicle::apply_velocity_command_now` rejects `StaleCommand` when command age
 ≥ 100 ms (`Command::deadline` / `Command::check_age`). An invalid `Estimate` yields
-`Event::EstimatorInvalid` (`Estimate::revoke_event`); a stale heartbeat age
-yields `Event::HeartbeatStale` (`heartbeat_revoke_event`). GPS-loss and
-heartbeat-loss inject those events. PX4 setpoints fail `StaleHeartbeat` when the
-last HEARTBEAT is older than 250 ms. HITL `WorldRack::finish` fail-closes if
+`Event::EstimatorInvalid` (`Estimate::revoke_event`); a stale estimate age
+(`EstimateFresh` / `ESTIMATE_MAX_AGE_MS` / `estimate_revoke_event`) is the same
+kernel event. A stale heartbeat age yields `Event::HeartbeatStale`
+(`heartbeat_revoke_event`). GPS-loss, IMU-delay, and heartbeat-loss inject those
+events. PX4 setpoints fail after a local-position sample older than
+`ESTIMATE_MAX_AGE_MS` (`EstimateFresh`, not `HeartbeatFresh`). HITL `WorldRack::finish` fail-closes if
 `Rate` period disagrees with `DeadlineSpec` or compute exceeds `Rate::admits`.
 Monitors: `CommandAgeMs`,
 `EstimatorTimestampsMonotonic`, `EpochBumped` — heartbeat/command/estimator
-checks use `HeartbeatFresh` / `CommandFresh` / `Timestamp` and fail closed
-if those disagree with the kernel predicates.
+checks use `HeartbeatFresh` / `CommandFresh` / `EstimateFresh` / `Timestamp`
+and fail closed if those disagree with the kernel predicates.
 
 ### F4. Single-source contract DSL
 
@@ -387,8 +389,9 @@ pre-offboard `pump_setpoint` stream is not gated). After an unexpected
 disarm HEARTBEAT, `actuation_revoked` refuses those same setpoints — `hold_now`
 before arm, and after a first `connect` that never armed, is not revoked.
 `begin_session` / `connect` bump the epoch so leftover `Vehicle` permits are
-stale. After a local-position
-sample older than 250 ms, `Estimate::revoke_event` latches failsafe and
+stale. After a local-position sample older than
+[`ESTIMATE_MAX_AGE_MS`](../crates/flight-core/src/temporal.rs),
+`EstimateFresh` / `Estimate::revoke_event` latches failsafe and
 refuses new setpoints (never-seen pose is not a dropout). `inject_revoke`
 maps each `REVOKE_ON` event onto the companion (failsafe command, unexpected
 disarm HEARTBEAT, link drop, aged HEARTBEAT, stale `LOCAL_POSITION_NED`,
@@ -398,8 +401,9 @@ IMU dropout). `run_px4_revoke_table` / `flight-test-px4` prove a leftover
 ### F6. Torture laboratory / differential conformance
 
 **Status: landed.** `flight_sim::scenario` (`Scenario::GPS_LOSS`,
-`HEARTBEAT_LOSS`, `HITL_MISS`, `scenario!`) injects estimator / heartbeat /
-failsafe / wind / battery faults on the verified world, evaluates `Requirement`s,
+`HEARTBEAT_LOSS`, `HITL_MISS`, `IMU_LOSS`, `IMU_DELAY`, `MOTOR_EFFICIENCY`,
+`scenario!`) injects estimator / heartbeat / failsafe / IMU / wind / battery /
+motor-efficiency faults on the verified world, evaluates `Requirement`s,
 writes JSONL, and differential-runs two world traces. Native ULog subset
 (`write_ulog` / `parse_ulog`) round-trips `fc_trace` and can ingest
 `vehicle_status`. `cargo run -p flight-sim --bin flight-test` runs
@@ -411,7 +415,11 @@ JSONL or `.ulg` (checked-in `crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl`).
 [`differential_contract`](../crates/flight-sim/src/scenario.rs) for every named
 scenario (world + JSONL replay + ULog round-trip; gps-loss also the checked-in
 ULog and converted PX4 SITL JSONL). GPS-loss posts `Estimate::revoke_event` and
-a bound `Vehicle<Offboard>` cannot `set_position_now`. Every DSL revoke event has a world
+a bound `Vehicle<Offboard>` cannot `set_position_now`. IMU-delay ≥
+`ESTIMATE_MAX_AGE_MS` posts `estimate_revoke_event` (same leftover Offboard).
+`IMU_LOSS` injects `Event::ImuUnhealthy`. `MOTOR_EFFICIENCY` is plant-only
+(`thrust_scale`; no epoch bump). Plant IMU stamps lag `imu_delay_ms` and never
+jump backward. Every DSL revoke event has a world
 test that the plant epoch increments and that a leftover Offboard handle
 cannot run `set_velocity` / `set_position` / `hold`. Named scenario
 `Fault` kernel events are `AerialOffboard::inject`. `differential_revoke_table`

@@ -9,7 +9,10 @@ use flight_core::contracts::{
 };
 use flight_core::frames::Ned;
 use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
-use flight_core::temporal::{heartbeat_revoke_event, Estimate, Observation, Sequence};
+use flight_core::temporal::{
+    estimate_revoke_event, heartbeat_revoke_event, Estimate, Observation, Sequence,
+    ESTIMATE_MAX_AGE_MS,
+};
 use flight_core::time::MonotonicInstant;
 use flight_core::vector::Velocity;
 use flight_core::vehicle::{Offboard, Vehicle, VehicleBackend, VehicleHandle};
@@ -25,6 +28,9 @@ pub enum Fault {
     Failsafe { at_secs: f32 },
     BatterySag { at_secs: f32, percent: u8 },
     WindGust { at_secs: f32, north: f32, east: f32 },
+    ImuUnhealthy { at_secs: f32 },
+    ImuDelay { at_secs: f32, delay_ms: u32 },
+    MotorEfficiency { at_secs: f32, percent: u8 },
 }
 
 impl Fault {
@@ -34,7 +40,10 @@ impl Fault {
             | Self::HeartbeatStale { at_secs }
             | Self::Failsafe { at_secs }
             | Self::BatterySag { at_secs, .. }
-            | Self::WindGust { at_secs, .. } => at_secs,
+            | Self::WindGust { at_secs, .. }
+            | Self::ImuUnhealthy { at_secs }
+            | Self::ImuDelay { at_secs, .. }
+            | Self::MotorEfficiency { at_secs, .. } => at_secs,
         }
     }
 
@@ -43,7 +52,11 @@ impl Fault {
             Self::GpsDropout { .. } => Event::EstimatorInvalid,
             Self::HeartbeatStale { .. } => Event::HeartbeatStale,
             Self::Failsafe { .. } => Event::TriggerFailsafe,
-            Self::BatterySag { .. } | Self::WindGust { .. } => return None,
+            Self::ImuUnhealthy { .. } => Event::ImuUnhealthy,
+            Self::ImuDelay { delay_ms, .. } => estimate_revoke_event(delay_ms)?,
+            Self::BatterySag { .. } | Self::WindGust { .. } | Self::MotorEfficiency { .. } => {
+                return None
+            }
         };
         AerialOffboard::inject(candidate)
     }
@@ -128,7 +141,77 @@ impl Scenario {
         ],
     };
 
-    pub const ALL: &'static [Self] = &[Self::GPS_LOSS, Self::HEARTBEAT_LOSS, Self::HITL_MISS];
+    /// IMU health bit clear: same leftover Offboard story as heartbeat loss.
+    pub const IMU_LOSS: Self = Self {
+        name: "imu-loss",
+        catalog: "inland",
+        seed: 1,
+        dt: 0.02,
+        duration_secs: 0.6,
+        inject: &[Fault::ImuUnhealthy { at_secs: 0.1 }],
+        require: &[
+            Requirement::NeverActuateWhileDisarmed,
+            Requirement::ActuatorsImplyArmed,
+            Requirement::NoNanCommands,
+            Requirement::PermitEpochMonotonic,
+            Requirement::FailsafeWithinMs(250),
+            Requirement::EpochBumped,
+        ],
+    };
+
+    /// IMU transport delay ≥ [`ESTIMATE_MAX_AGE_MS`] is a stale Estimate.
+    pub const IMU_DELAY: Self = Self {
+        name: "imu-delay",
+        catalog: "inland",
+        seed: 1,
+        dt: 0.02,
+        duration_secs: 1.0,
+        inject: &[Fault::ImuDelay {
+            at_secs: 0.2,
+            delay_ms: ESTIMATE_MAX_AGE_MS.saturating_add(50),
+        }],
+        require: &[
+            Requirement::NeverActuateWhileDisarmed,
+            Requirement::ActuatorsImplyArmed,
+            Requirement::NoNanCommands,
+            Requirement::AltitudeBelow { meters: 120.0 },
+            Requirement::PermitEpochMonotonic,
+            Requirement::FailsafeWithinMs(250),
+            Requirement::EpochBumped,
+            Requirement::CommandAgeMs {
+                max_ms: COMMAND_MAX_AGE_MS,
+            },
+            Requirement::EstimatorTimestampsMonotonic,
+        ],
+    };
+
+    /// Motor efficiency is plant-only. It does not bump the safety epoch.
+    pub const MOTOR_EFFICIENCY: Self = Self {
+        name: "motor-efficiency",
+        catalog: "inland",
+        seed: 1,
+        dt: 0.02,
+        duration_secs: 0.6,
+        inject: &[Fault::MotorEfficiency {
+            at_secs: 0.1,
+            percent: 0,
+        }],
+        require: &[
+            Requirement::NeverActuateWhileDisarmed,
+            Requirement::ActuatorsImplyArmed,
+            Requirement::NoNanCommands,
+            Requirement::AltitudeBelow { meters: 120.0 },
+        ],
+    };
+
+    pub const ALL: &'static [Self] = &[
+        Self::GPS_LOSS,
+        Self::HEARTBEAT_LOSS,
+        Self::HITL_MISS,
+        Self::IMU_LOSS,
+        Self::IMU_DELAY,
+        Self::MOTOR_EFFICIENCY,
+    ];
 
     pub fn by_name(name: &str) -> Option<&'static Self> {
         Self::ALL.iter().find(|s| s.name == name)
@@ -452,6 +535,31 @@ fn apply_fault(session: &WorldSession, fault: Fault) -> Result<(), String> {
                 w.env.wind_ned[1] += east;
             });
         }
+        Fault::ImuUnhealthy { .. } => {
+            inject_revoke(
+                session,
+                fault
+                    .kernel_event()
+                    .expect("imu unhealthy is a kernel revoke event"),
+            )?;
+        }
+        Fault::ImuDelay { delay_ms, .. } => {
+            session.with_world_mut(|w| {
+                if let Some(b) = w.body_mut("drone") {
+                    b.imu_delay_ms = delay_ms;
+                }
+            });
+            if let Some(e) = estimate_revoke_event(delay_ms) {
+                inject_revoke(session, e)?;
+            }
+        }
+        Fault::MotorEfficiency { percent, .. } => {
+            session.with_world_mut(|w| {
+                if let Some(b) = w.body_mut("drone") {
+                    b.thrust_scale = (f32::from(percent) / 100.0).clamp(0.0, 1.0);
+                }
+            });
+        }
     }
     Ok(())
 }
@@ -473,11 +581,7 @@ fn sample_drone(world: &World) -> TraceSample {
         command: body.command,
         altitude_m: body.altitude_agl(),
         command_age_ms: 0,
-        estimator_ts_ms: if world.t <= 0.0 {
-            0
-        } else {
-            (world.t * 1000.0) as u64
-        },
+        estimator_ts_ms: body.last_estimator_ts_ms,
     }
 }
 
@@ -555,6 +659,37 @@ mod tests {
         }
         .kernel_event()
         .is_none());
+        assert!(Fault::MotorEfficiency {
+            at_secs: 0.0,
+            percent: 0
+        }
+        .kernel_event()
+        .is_none());
+        assert!(Fault::WindGust {
+            at_secs: 0.0,
+            north: 1.0,
+            east: 0.0
+        }
+        .kernel_event()
+        .is_none());
+        assert_eq!(
+            Fault::ImuUnhealthy { at_secs: 0.0 }.kernel_event(),
+            AerialOffboard::inject(Event::ImuUnhealthy)
+        );
+        assert_eq!(
+            Fault::ImuDelay {
+                at_secs: 0.0,
+                delay_ms: ESTIMATE_MAX_AGE_MS
+            }
+            .kernel_event(),
+            AerialOffboard::inject(Event::EstimatorInvalid)
+        );
+        assert!(Fault::ImuDelay {
+            at_secs: 0.0,
+            delay_ms: ESTIMATE_MAX_AGE_MS.saturating_sub(1)
+        }
+        .kernel_event()
+        .is_none());
         assert!(heartbeat_revoke_event(0).is_none());
     }
 
@@ -574,6 +709,48 @@ mod tests {
         assert!(session.world().body("drone").unwrap().authority_epoch > 0);
         leftover_offboard_refuses_commands(&mut v, Event::EstimatorInvalid)
             .expect("leftover Offboard after gps-loss");
+    }
+
+    #[test]
+    fn imu_delay_revokes_position_control_authority() {
+        use flight_core::vector::Position;
+        use flight_core::vehicle::VehicleHandle;
+
+        let session = WorldSession::inland(1);
+        session.attach_offboard("drone").expect("grant");
+        let VehicleHandle::Offboard(mut v) = session.aerial("drone").attach().unwrap() else {
+            panic!("attach_offboard must bind Offboard");
+        };
+        v.set_position_now(Position::<Ned>::ned(0.0, 0.0, -2.0))
+            .unwrap();
+        apply_fault(
+            &session,
+            Fault::ImuDelay {
+                at_secs: 0.0,
+                delay_ms: ESTIMATE_MAX_AGE_MS,
+            },
+        )
+        .expect("imu delay");
+        assert!(session.world().body("drone").unwrap().authority_epoch > 0);
+        leftover_offboard_refuses_commands(&mut v, Event::EstimatorInvalid)
+            .expect("leftover Offboard after imu-delay");
+    }
+
+    #[test]
+    fn imu_unhealthy_revokes_leftover_offboard() {
+        use flight_core::vehicle::VehicleHandle;
+
+        let session = WorldSession::inland(1);
+        session.attach_offboard("drone").expect("grant");
+        let VehicleHandle::Offboard(mut v) = session.aerial("drone").attach().unwrap() else {
+            panic!("attach_offboard must bind Offboard");
+        };
+        v.set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+            .unwrap();
+        apply_fault(&session, Fault::ImuUnhealthy { at_secs: 0.0 }).expect("imu unhealthy");
+        leftover_offboard_refuses_commands(&mut v, Event::ImuUnhealthy)
+            .expect("leftover Offboard after imu-loss");
+        assert!(session.world().body("drone").unwrap().authority_epoch > 0);
     }
 
     #[test]
@@ -617,6 +794,66 @@ mod tests {
         hitl.evaluate(Scenario::HITL_MISS.require)
             .expect("hitl contract");
         hitl.evaluate_capability().expect("hitl capability");
+    }
+
+    #[test]
+    fn imu_loss_world_satisfies_contract() {
+        let report = run_world(&Scenario::IMU_LOSS).expect("run");
+        assert!(report.samples.iter().any(|s| s.failsafe));
+        assert!(report.samples.iter().any(|s| s.epoch > 0));
+        report
+            .evaluate(Scenario::IMU_LOSS.require)
+            .expect("contract");
+        report.evaluate_capability().expect("capability monitors");
+    }
+
+    #[test]
+    fn imu_delay_world_stamps_lag_and_satisfy_contract() {
+        let report = run_world(&Scenario::IMU_DELAY).expect("run");
+        assert!(report.samples.iter().any(|s| s.failsafe));
+        assert!(report.samples.iter().any(|s| s.epoch > 0));
+        report
+            .evaluate(Scenario::IMU_DELAY.require)
+            .expect("contract");
+        report.evaluate_capability().expect("capability monitors");
+        let late = report
+            .samples
+            .iter()
+            .filter(|s| s.t_secs + 1e-6 >= 0.5)
+            .count();
+        assert!(late > 0);
+        for s in report.samples.iter().filter(|s| s.t_secs + 1e-6 >= 0.5) {
+            let raw = (s.t_secs * 1000.0) as u64;
+            assert!(
+                s.estimator_ts_ms + u64::from(ESTIMATE_MAX_AGE_MS) <= raw + 1,
+                "t={} stamp={} raw={}",
+                s.t_secs,
+                s.estimator_ts_ms,
+                raw
+            );
+        }
+    }
+
+    #[test]
+    fn motor_efficiency_does_not_bump_epoch() {
+        let report = run_world(&Scenario::MOTOR_EFFICIENCY).expect("run");
+        assert!(report.samples.iter().all(|s| s.epoch == 0));
+        assert!(report.samples.iter().all(|s| !s.failsafe));
+        report
+            .evaluate(Scenario::MOTOR_EFFICIENCY.require)
+            .expect("contract");
+        report.evaluate_capability().expect("capability monitors");
+    }
+
+    #[test]
+    fn named_scenarios_cover_imu_and_motor_faults() {
+        assert_eq!(Scenario::ALL.len(), 6);
+        assert_eq!(Scenario::by_name("imu-loss").unwrap().name, "imu-loss");
+        assert_eq!(Scenario::by_name("imu-delay").unwrap().name, "imu-delay");
+        assert_eq!(
+            Scenario::by_name("motor-efficiency").unwrap().name,
+            "motor-efficiency"
+        );
     }
 
     #[test]

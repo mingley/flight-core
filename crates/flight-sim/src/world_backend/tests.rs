@@ -1550,6 +1550,26 @@ fn fuzzed_world_imu_hold_keeps_properties() {
     assert!(session.world().all_hold());
 }
 
+#[test]
+fn world_imu_timestamp_lags_by_plant_delay() {
+    use flight_core::sensors::Imu;
+    use flight_core::time::Clock;
+
+    let session = WorldSession::inland(1);
+    for _ in 0..25 {
+        session.step(0.02).unwrap();
+    }
+    session.with_world_mut(|w| {
+        w.body_mut("drone").unwrap().imu_delay_ms = ESTIMATE_MAX_AGE_MS;
+    });
+    let now = session.lock().clock.now();
+    let mut imu = session.imu("drone");
+    let sample = imu.sample().unwrap();
+    let expected = now.saturating_sub(Duration::from_millis(u64::from(ESTIMATE_MAX_AGE_MS)));
+    assert_eq!(sample.timestamp, expected);
+    assert!(now.as_nanos() > expected.as_nanos());
+}
+
 fn dead_imu_sample() -> ImuSample<BodyFrame> {
     use flight_core::sensors::{ImuSample, SensorHealth};
     use flight_core::time::MonotonicInstant;

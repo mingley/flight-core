@@ -14,8 +14,8 @@ Offboard. The same events appear as Offboard → Failsafe edges in
 | Disarm | `event_revokes_authority` | revoke-table leftover Offboard |
 | Disconnect | `event_revokes_authority` | revoke-table leftover Offboard |
 | HeartbeatStale | `event_revokes_authority` | `Scenario::HEARTBEAT_LOSS` via `heartbeat_revoke_event` |
-| EstimatorInvalid | `event_revokes_authority` | `Scenario::GPS_LOSS` via `Estimate::revoke_event` |
-| ImuUnhealthy | `event_revokes_authority` | revoke-table leftover Offboard |
+| EstimatorInvalid | `event_revokes_authority` | `Scenario::GPS_LOSS` via `Estimate::revoke_event`; `Scenario::IMU_DELAY` via `estimate_revoke_event` |
+| ImuUnhealthy | `event_revokes_authority` | `Scenario::IMU_LOSS` / revoke-table leftover Offboard |
 
 CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`
 (world leftover Offboard + JSONL + ULog). PX4 companion leftover table:

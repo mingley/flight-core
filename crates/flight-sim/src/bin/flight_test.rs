@@ -12,6 +12,9 @@
 //! cargo run -p flight-sim --bin flight-test -- --scenario heartbeat-stale --backend all
 //! cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend all
 //! cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
+//! cargo run -p flight-sim --bin flight-test -- --scenario imu-loss --backend all
+//! cargo run -p flight-sim --bin flight-test -- --scenario imu-delay --backend all
+//! cargo run -p flight-sim --bin flight-test -- --scenario motor-efficiency --backend all
 //! cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
 //! cargo run -p flight-px4 --bin flight-test-px4
 //! cargo run -p flight-hitl --bin flight-test-hitl
@@ -29,7 +32,7 @@ use flight_sim::{
 
 fn usage() -> ! {
     eprintln!(
-        "flight-test --scenario gps-loss|heartbeat-stale|hitl-miss|revoke-table [--backend world|replay|px4-sitl|ulog|hitl|all] [--replay FILE] [--write-ulog FILE]"
+        "flight-test --scenario gps-loss|heartbeat-stale|hitl-miss|imu-loss|imu-delay|motor-efficiency|revoke-table [--backend world|replay|px4-sitl|ulog|hitl|all] [--replay FILE] [--write-ulog FILE]"
     );
     std::process::exit(2);
 }

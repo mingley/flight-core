@@ -271,6 +271,9 @@ cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend repla
 cargo run -p flight-sim --bin flight-test -- --backend ulog --replay crates/flight-sim/corpus/gps_loss.ulg
 cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
 cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend all
+cargo run -p flight-sim --bin flight-test -- --scenario imu-loss --backend world
+cargo run -p flight-sim --bin flight-test -- --scenario imu-delay --backend world
+cargo run -p flight-sim --bin flight-test -- --scenario motor-efficiency --backend world
 cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
 cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
 cargo run -p flight-px4 --bin flight-test-px4

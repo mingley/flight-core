@@ -465,6 +465,10 @@ impl Imu for WorldImu {
             .world
             .body(self.body_id)
             .ok_or(SensorError::Hardware)?;
-        Ok(body_imu(body, plant.clock.now(), seq))
+        let delayed = plant
+            .clock
+            .now()
+            .saturating_sub(Duration::from_millis(u64::from(body.imu_delay_ms)));
+        Ok(body_imu(body, delayed, seq))
     }
 }
