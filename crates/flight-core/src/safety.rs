@@ -761,6 +761,18 @@ mod tests {
     }
 
     #[test]
+    fn estimator_loss_while_armed_enters_failsafe() {
+        let s = happy_path();
+        let s = step(s, Event::EstimatorInvalid).unwrap();
+        assert!(s.failsafe);
+        assert_eq!(s.phase, Phase::Failsafe);
+        assert!(!s.estimator_valid);
+        assert!(check_invariants(&s));
+        assert!(s.armed);
+        assert_eq!(step(s, Event::MissionCommand), Err(Reject::InFailsafe));
+    }
+
+    #[test]
     fn disarm_in_failsafe_clears_actuators() {
         let s = happy_path();
         let s = step(s, Event::TriggerFailsafe).unwrap();

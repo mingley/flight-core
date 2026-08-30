@@ -6,8 +6,12 @@
 //! Not wired into `robot-world::World::try_step`. The plant quaternion is
 //! physics truth (`mech::quat_integrate` / `unit_attitude`). Kernel
 //! `estimator_valid` is a safety bit, not [`ComplementaryAttitude::is_valid`].
+//! A companion navigation loop may post [`crate::safety::Event::EstimatorInvalid`]
+//! when [`imu_trips_estimator`] is true. Warm-up (fewer than 8 good samples)
+//! is not a trip.
 
 use crate::frames::Body;
+use crate::sensors::ImuSample;
 use crate::units::RadianPerSecond;
 use crate::vector::{Acceleration, AngularVelocity};
 
@@ -48,9 +52,21 @@ impl ComplementaryAttitude {
         self.samples
     }
 
+    /// Clear the validity bit without writing a quaternion.
+    ///
+    /// Used when the IMU sample is unusable (`SensorHealth::Invalid`, NaN)
+    /// so callers can trip kernel `estimator_valid` without touching plant pose.
+    pub fn invalidate(&mut self) {
+        self.valid = false;
+    }
+
     /// Integrate gyro and tilt-correct with accelerometer specific force.
     ///
-    /// Returns `false` if the sample is unusable (non-finite). Never panics.
+    /// Returns `false` if the sample is unusable (non-finite or bad `dt`).
+    /// Unusable samples also clear [`Self::is_valid`]. Never panics.
+    ///
+    /// A usable sample that has not yet reached eight ticks also returns
+    /// `false`. That warm-up is **not** [`imu_trips_estimator`].
     pub fn update(
         &mut self,
         gyro: AngularVelocity<RadianPerSecond, Body>,
@@ -58,9 +74,11 @@ impl ComplementaryAttitude {
         dt: f32,
     ) -> bool {
         if !(dt.is_finite() && dt > 0.0 && dt < 1.0) {
+            self.valid = false;
             return false;
         }
         if !gyro.is_finite() || !accel.is_finite() {
+            self.valid = false;
             return false;
         }
 
@@ -168,6 +186,16 @@ pub fn covariance_diag_ok(diag: &[f32]) -> bool {
     diag.iter().all(|v| v.is_finite() && *v >= 0.0)
 }
 
+/// Whether this IMU sample must clear kernel `estimator_valid`.
+///
+/// Distinct from [`ComplementaryAttitude::is_valid`]: the filter needs eight
+/// good samples before it reports valid, and that warm-up must not latch
+/// failsafe. A trip is a non-finite sample, invalid sensor health, or a
+/// non-physical `dt`.
+pub fn imu_trips_estimator(sample: &ImuSample<Body>, dt: f32) -> bool {
+    !(dt.is_finite() && dt > 0.0 && dt < 1.0 && sample.is_usable())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +222,54 @@ mod tests {
         let accel = Vector3::new(0.0, 0.0, 9.81);
         assert!(!att.update(gyro, accel, 0.01));
         assert!(!att.is_valid());
+    }
+
+    #[test]
+    fn unusable_sample_clears_a_valid_filter() {
+        let mut att = ComplementaryAttitude::new();
+        let gyro = AngularVelocity::body_rad(0.0, 0.0, 0.0);
+        let accel = Vector3::new(0.0, 0.0, 9.81);
+        for _ in 0..50 {
+            att.update(gyro, accel, 0.01);
+        }
+        assert!(att.is_valid());
+        let q = att.quaternion();
+        assert!(!att.update(AngularVelocity::body_rad(f32::NAN, 0.0, 0.0), accel, 0.01));
+        assert!(!att.is_valid());
+        assert_eq!(
+            att.quaternion(),
+            q,
+            "invalidate must not write a new attitude"
+        );
+    }
+
+    #[test]
+    fn imu_trips_estimator_ignores_warmup() {
+        use crate::sensors::{ImuSample, SensorHealth};
+        use crate::time::MonotonicInstant;
+
+        let mut att = ComplementaryAttitude::new();
+        let sample = ImuSample {
+            timestamp: MonotonicInstant::from_millis(0),
+            accel: Vector3::new(0.0, 0.0, 9.81),
+            gyro: AngularVelocity::body_rad(0.0, 0.0, 0.0),
+            covariance: None,
+            temperature: None,
+            status: SensorHealth::Ok,
+            sequence: 0,
+        };
+        assert!(sample.is_usable());
+        assert!(!imu_trips_estimator(&sample, 0.01));
+        assert!(!att.update(sample.gyro, sample.accel, 0.01));
+        assert!(!att.is_valid());
+
+        let mut dead = sample;
+        dead.status = SensorHealth::Invalid;
+        assert!(imu_trips_estimator(&dead, 0.01));
+        let mut nan = sample;
+        nan.gyro = AngularVelocity::body_rad(f32::NAN, 0.0, 0.0);
+        assert!(imu_trips_estimator(&nan, 0.01));
+        assert!(imu_trips_estimator(&sample, f32::NAN));
     }
 
     #[test]
