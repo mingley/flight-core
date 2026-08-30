@@ -417,6 +417,12 @@ impl VehicleBackend for SimBackend {
         self.authority_epoch = self.authority_epoch.saturating_add(1);
     }
 
+    fn set_yaw_rate(&mut self, yaw_rate: f32) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
+        let _ = yaw_rate;
+        Ok(())
+    }
+
     fn recover_now(&mut self) -> Result<(), BackendError> {
         self.restore_actuation();
         Ok(())
@@ -509,6 +515,8 @@ mod tests {
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = sim.hold_now();
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = sim.set_yaw_rate(0.2);
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         sim.arm_now().unwrap();
         sim.enable_actuators_now().unwrap();
         sim.set_velocity_ned_now(Velocity::<Ned>::ned(0.2, 0.0, 0.0))
@@ -529,5 +537,7 @@ mod tests {
         let err = sim.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, 0.0));
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         assert!(!sim.telemetry_now().unwrap().offboard);
+        let err = sim.set_yaw_rate(0.2);
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
     }
 }

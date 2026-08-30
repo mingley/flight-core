@@ -591,6 +591,7 @@ impl VehicleBackend for NullBackend {
     }
 
     fn set_yaw_rate(&mut self, yaw_rate: f32) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.yaw_rate = yaw_rate;
         Ok(())
     }
@@ -638,6 +639,10 @@ mod tests {
             matches!(b.hold_now(), Err(BackendError::Rejected(_))),
             "hold_now uses set_position"
         );
+        assert!(
+            matches!(b.set_yaw_rate(0.2), Err(BackendError::Rejected(_))),
+            "set_yaw_rate"
+        );
         assert!(b.land_now().is_ok(), "land stays an ungated safety action");
         assert!(b.velocity.is_none(), "refused velocity must not be stored");
     }
@@ -653,6 +658,7 @@ mod tests {
         b.hold_now().unwrap();
         b.set_velocity_ned_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
             .unwrap();
+        b.set_yaw_rate(0.1).unwrap();
     }
 
     #[test]
