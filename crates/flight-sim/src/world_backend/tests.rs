@@ -6,8 +6,8 @@ use flight_core::prelude::*;
 use flight_core::safety::Phase;
 use flight_core::units::Qty;
 use flight_core::vehicle::{
-    BackendError, GroundHandle, GroundVehicle, MarineHandle, MarineVehicle, VehicleBackend,
-    VehicleHandle,
+    BackendError, GroundHandle, GroundVehicle, MarineHandle, MarineVehicle, MotorThrust,
+    VehicleBackend, VehicleHandle,
 };
 
 #[test]
@@ -974,6 +974,21 @@ fn attach_failsafe_now_trips_the_plant() {
     let VehicleHandle::Failsafe(_) = session.aerial("drone").attach().unwrap() else {
         panic!("failsafe maps to Failsafe");
     };
+}
+
+#[test]
+fn world_motor_thrust_passes_the_kernel_and_failsafe_refuses() {
+    let mut drone = WorldBackend::inland(1);
+    drone.grant_offboard().unwrap();
+    drone
+        .set_motor_thrust_now(MotorThrust::hover(4, 0.4))
+        .expect("granted Takeoff can admit MissionCommand");
+    drone.failsafe_now().unwrap();
+    let err = drone.set_motor_thrust_now(MotorThrust::hover(4, 0.4));
+    assert!(
+        matches!(err, Err(BackendError::Rejected(_))),
+        "failsafe leftover motor thrust must go through kernel: {err:?}"
+    );
 }
 
 #[test]

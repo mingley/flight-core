@@ -314,6 +314,8 @@ impl VehicleBackend for WorldBackend {
 
     async fn set_motor_thrust(&mut self, thrust: MotorThrust) -> Result<(), BackendError> {
         let _ = thrust;
+        self.drone_event(Event::HeartbeatFresh)?;
+        self.drone_event(Event::MissionCommand)?;
         self.last_command = "motor_thrust";
         Ok(())
     }
