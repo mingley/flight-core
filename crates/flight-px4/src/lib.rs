@@ -152,6 +152,16 @@ impl Px4Backend {
         }
     }
 
+    /// New offboard setpoints after failsafe are refused at this backend.
+    /// `pump_setpoint` stays ungated so the PX4 ~1 s pre-offboard stream still
+    /// runs; Vehicle-layer `set_velocity_ned` / `set_position_ned` stop.
+    fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
+        if self.failsafe_latched {
+            return Err(BackendError::Rejected("actuation authority revoked"));
+        }
+        Ok(())
+    }
+
     fn pump_setpoint(&mut self) -> Result<(), BackendError> {
         self.boot_ms = self.boot_ms.wrapping_add(20);
         let msg = if self.stream_position {
@@ -303,12 +313,14 @@ impl VehicleBackend for Px4Backend {
     }
 
     async fn set_velocity_ned(&mut self, velocity: Velocity<Ned>) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.last_velocity = velocity;
         self.stream_position = false;
         self.pump_setpoint()
     }
 
     async fn set_position_ned(&mut self, position: Position<Ned>) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.last_position = position;
         self.stream_position = true;
         self.pump_setpoint()
@@ -510,6 +522,18 @@ mod tests {
         assert_eq!(b.authority_epoch(), 1);
         assert!(b.telemetry_now().unwrap().failsafe);
         assert!(!b.telemetry_now().unwrap().estimator_valid);
+    }
+
+    #[test]
+    fn failsafe_refuses_setpoint_at_the_backend() {
+        let mut b = Px4Backend::new(Px4Config::default());
+        b.armed = true;
+        let err = b.trigger_failsafe_now();
+        assert!(matches!(err, Err(BackendError::Disconnected)));
+        let err = b.set_velocity_ned_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, -1.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
     }
 
     #[tokio::test]
