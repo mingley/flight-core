@@ -224,8 +224,9 @@ impl AerialOffboard {
     };
 
     /// Distinct leftover `(inject, require)` pairs at the companion boundary.
-    /// World IMU-delay is a delayed Estimate; companion leftover is the same
-    /// `EstimatorInvalid` leftover as gps-loss, so it is not a second row.
+    /// Names and injects **are** [`crate::safety::AERIAL_OFFBOARD_LEFTOVER`].
+    /// World IMU-delay leftover is the same `EstimatorInvalid` leftover as
+    /// gps-loss, so it is not a second kernel leftover row.
     pub const LEFTOVER_CONTRACTS: &'static [LeftoverContract] = &[
         Self::GPS_LOSS_CONTRACT,
         Self::HEARTBEAT_LOSS_CONTRACT,
@@ -601,14 +602,40 @@ mod tests {
             AerialOffboard::EPOCH_REVOKE_REQUIRE
         ));
         assert_eq!(AerialOffboard::LEFTOVER_CONTRACTS.len(), 4);
+        assert_eq!(
+            AerialOffboard::LEFTOVER_CONTRACTS.len(),
+            crate::safety::AERIAL_OFFBOARD_LEFTOVER.len()
+        );
+        for (c, &(name, inject)) in AerialOffboard::LEFTOVER_CONTRACTS
+            .iter()
+            .zip(crate::safety::AERIAL_OFFBOARD_LEFTOVER)
+        {
+            assert_eq!(c.name, name, "leftover name drifted from kernel leftover");
+            assert_eq!(
+                c.inject, inject,
+                "leftover inject drifted from kernel leftover"
+            );
+            assert!(AerialOffboard::revokes(c.inject));
+            assert!(!c.name.is_empty());
+        }
+        for &e in AerialOffboard::REVOKE_ON {
+            let in_leftover = AerialOffboard::LEFTOVER_CONTRACTS
+                .iter()
+                .any(|c| c.inject == e);
+            if matches!(e, Event::Disarm | Event::Disconnect) {
+                assert!(
+                    !in_leftover,
+                    "{e:?} is revoke-table leftover COMMANDS, not a leftover contract"
+                );
+            } else {
+                assert!(
+                    in_leftover,
+                    "failsafe-latching revoke {e:?} must have a leftover contract"
+                );
+            }
+        }
         let mut seen_inject = [false; 4];
         for (i, c) in AerialOffboard::LEFTOVER_CONTRACTS.iter().enumerate() {
-            assert!(
-                AerialOffboard::revokes(c.inject),
-                "leftover contract {} inject is not a revoke",
-                c.name
-            );
-            assert!(!c.name.is_empty());
             for (j, other) in AerialOffboard::LEFTOVER_CONTRACTS.iter().enumerate() {
                 if i != j {
                     assert_ne!(c.name, other.name);

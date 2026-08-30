@@ -306,6 +306,7 @@ macro_rules! define_aerial_authority {
         heartbeat_age_ms: $hb:expr,
         command_age_ms: $cmd:expr,
         revokes_on: [$($ev:ident),+ $(,)?],
+        leftover: [$(($lev:ident, $lname:literal)),+ $(,)?],
         commands: [$($cmd_name:ident),+ $(,)?]
     ) => {
         /// Offboard heartbeat bound. Shared by the contract DSL, `Fresh`, and monitors.
@@ -317,6 +318,14 @@ macro_rules! define_aerial_authority {
         /// these (or a failsafe latch they cause) must increment the backend safety epoch.
         #[cfg(not(creusot))]
         pub const AUTHORITY_REVOKE_EVENTS: &[Event] = &[$(Event::$ev),+];
+
+        /// Failsafe-latching leftover `(name, inject)` pairs. Disarm / Disconnect
+        /// stay on `AUTHORITY_REVOKE_EVENTS` only (revoke-table leftover
+        /// `COMMANDS`, not a named leftover contract). `AerialOffboard::LEFTOVER_CONTRACTS`
+        /// locksteps this table.
+        #[cfg(not(creusot))]
+        pub const AERIAL_OFFBOARD_LEFTOVER: &[(&'static str, Event)] =
+            &[$(($lname, Event::$lev)),+];
 
         #[cfg(not(creusot))]
         pub const AERIAL_OFFBOARD_TRANSITIONS: &[ContractEdge] = &[
@@ -461,6 +470,12 @@ define_aerial_authority! {
         HeartbeatStale,
         EstimatorInvalid,
         ImuUnhealthy
+    ],
+    leftover: [
+        (EstimatorInvalid, "gps-loss"),
+        (HeartbeatStale, "heartbeat-stale"),
+        (TriggerFailsafe, "hitl-miss"),
+        (ImuUnhealthy, "imu-loss")
     ],
     commands: [set_velocity, set_position, hold]
 }
