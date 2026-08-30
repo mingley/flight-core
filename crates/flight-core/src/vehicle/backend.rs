@@ -411,9 +411,12 @@ pub trait VehicleBackend: Send {
     }
 
     /// Body-frame yaw-rate command (rad/s). Ground and surface plants use this.
+    /// Aerial companions that ignore yaw still refuse after failsafe / a
+    /// revoking disarm so leftover handles cannot succeed a physical-authority
+    /// command. Land / disarm / failsafe stay ungated.
     fn set_yaw_rate(&mut self, yaw_rate: f32) -> Result<(), BackendError> {
         let _ = yaw_rate;
-        Ok(())
+        self.refuse_revoked_setpoint()
     }
 }
 

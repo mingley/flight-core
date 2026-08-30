@@ -1060,6 +1060,14 @@ fn world_failsafe_refuses_backend_direct_physical_authority() {
         matches!(err, Err(BackendError::Rejected(_))),
         "hold_now uses set_position: {err:?}"
     );
+    let err = drone.set_yaw_rate(0.2);
+    assert!(
+        matches!(
+            err,
+            Err(BackendError::Rejected("actuation authority revoked"))
+        ),
+        "set_yaw_rate: {err:?}"
+    );
 }
 
 fn assert_actuation_revoked(err: Result<(), BackendError>, what: &str) {

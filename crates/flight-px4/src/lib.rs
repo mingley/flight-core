@@ -162,20 +162,6 @@ impl Px4Backend {
         }
     }
 
-    /// Physical-authority commands after failsafe, a stale local-position
-    /// Estimate, or a revoking disarm/disconnect are refused at this backend:
-    /// setpoints, `enter_offboard`, climb, `enable_actuators`, and motor thrust.
-    /// `pump_setpoint` stays ungated so the PX4 ~1 s pre-offboard stream still
-    /// runs. Land / disarm / failsafe stay ungated (safety actions). `hold_now`
-    /// after a first `connect` (never armed) is not revoked; leftover `Vehicle`
-    /// handles die because [`Self::begin_session`] bumps the epoch.
-    fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
-        if self.failsafe_latched || self.actuation_revoked {
-            return Err(BackendError::Rejected("actuation authority revoked"));
-        }
-        Ok(())
-    }
-
     /// (Re)connect starts a new control session. Outstanding permits are stale.
     /// Does not latch failsafe or mark actuation revoked — a new companion may
     /// stream setpoints; leftover `Vehicle` handles must not.
@@ -544,6 +530,15 @@ impl VehicleBackend for Px4Backend {
         self.actuation_revoked
     }
 
+    /// Failsafe latch or a revoking disarm/disconnect. Trait default methods
+    /// (`set_yaw_rate`) must see the same gate as `set_velocity_ned`.
+    fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
+        if self.failsafe_latched || self.actuation_revoked {
+            return Err(BackendError::Rejected("actuation authority revoked"));
+        }
+        Ok(())
+    }
+
     fn restore_actuation(&mut self) {
         self.actuation_revoked = false;
     }
@@ -877,6 +872,8 @@ mod tests {
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.hold_now();
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.set_yaw_rate(0.2);
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
     }
 
     #[test]
@@ -1096,6 +1093,8 @@ mod tests {
         let err = b.enable_actuators_now();
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.set_motor_thrust_now(MotorThrust::hover(4, 0.4));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.set_yaw_rate(0.2);
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.land_now();
         assert!(

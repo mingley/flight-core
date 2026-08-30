@@ -149,16 +149,6 @@ impl ArduPilotBackend {
         }
     }
 
-    /// Physical-authority commands after failsafe or a revoking
-    /// disarm/disconnect: setpoints, GUIDED entry, climb, actuators, thrust.
-    /// Land / disarm / failsafe stay ungated. `pump_setpoint` stays ungated.
-    fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
-        if self.failsafe_latched || self.actuation_revoked {
-            return Err(BackendError::Rejected("actuation authority revoked"));
-        }
-        Ok(())
-    }
-
     pub fn begin_session(&mut self) {
         self.revoke_authority();
     }
@@ -504,6 +494,15 @@ impl VehicleBackend for ArduPilotBackend {
         self.actuation_revoked
     }
 
+    /// Failsafe latch or a revoking disarm/disconnect. Trait default methods
+    /// (`set_yaw_rate`) must see the same gate as `set_velocity_ned`.
+    fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
+        if self.failsafe_latched || self.actuation_revoked {
+            return Err(BackendError::Rejected("actuation authority revoked"));
+        }
+        Ok(())
+    }
+
     fn restore_actuation(&mut self) {
         self.actuation_revoked = false;
     }
@@ -822,6 +821,8 @@ mod tests {
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.enable_actuators_now();
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.set_yaw_rate(0.2);
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
     }
 
     #[test]
@@ -903,6 +904,8 @@ mod tests {
         let err = b.enable_actuators_now();
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.set_motor_thrust_now(MotorThrust::hover(4, 0.4));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.set_yaw_rate(0.2);
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.land_now();
         assert!(
