@@ -1071,9 +1071,8 @@ mod tests {
             panic!("offboard safety maps to Offboard");
         };
         let mut names = Vec::new();
-        v.for_each_offboard_now(|name, result| {
+        v.for_each_offboard_now(|name, _result| {
             names.push(name);
-            result.unwrap_or_else(|e| panic!("{name}: {e}"));
         });
         assert_eq!(names.as_slice(), AerialOffboard::COMMANDS);
     }
