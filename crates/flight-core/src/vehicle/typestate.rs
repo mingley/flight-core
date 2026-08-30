@@ -584,6 +584,8 @@ impl<S: CanBeginLand, B: VehicleBackend> Vehicle<S, B> {
     }
 }
 
+crate::impl_aerial_offboard_now!();
+
 impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
     pub async fn set_velocity(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
         self.set_velocity_now(velocity)?;
@@ -593,27 +595,6 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
             .await
             .map_err(ErrorKind::Backend)?;
         Ok(())
-    }
-
-    /// AerialOffboard command gate: live permit, then kernel `HeartbeatFresh`
-    /// and `MissionCommand`. `set_velocity_now` / `set_position_now` /
-    /// `hold_now` are the capability methods listed in
-    /// [`crate::contracts::AerialOffboard::COMMANDS`].
-    pub fn admit_offboard_now(&mut self) -> Result<(), ErrorKind> {
-        self.require_live_permit()?;
-        self.apply_event(Event::HeartbeatFresh)?;
-        self.apply_event(Event::MissionCommand)?;
-        Ok(())
-    }
-
-    /// Same grant as [`Self::set_velocity`] without stepping the plant.
-    /// Pair with a backend flush and one shared world step.
-    pub fn set_velocity_now(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
-        self.admit_offboard_now()?;
-        self.inner
-            .backend
-            .set_velocity_ned_now(velocity)
-            .map_err(ErrorKind::Backend)
     }
 
     /// Apply a stamped planner command. The permit must still be live **and**
@@ -634,22 +615,6 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
             .await
             .map_err(ErrorKind::Backend)?;
         Ok(())
-    }
-
-    /// Same grant as [`Self::set_position`] without stepping the plant.
-    /// Pair with a backend flush and one shared world step.
-    pub fn set_position_now(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
-        self.admit_offboard_now()?;
-        self.inner
-            .backend
-            .set_position_ned_now(position)
-            .map_err(ErrorKind::Backend)
-    }
-
-    /// Hold at the current NED pose. Same grant as [`Self::set_position_now`].
-    pub fn hold_now(&mut self) -> Result<(), ErrorKind> {
-        self.admit_offboard_now()?;
-        self.inner.backend.hold_now().map_err(ErrorKind::Backend)
     }
 
     pub async fn hold(&mut self) -> Result<(), ErrorKind> {
@@ -1123,8 +1088,15 @@ fn wrap<S: State, B: VehicleBackend>(backend: B, safety: SafetyState) -> Vehicle
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::AerialOffboard;
     use crate::safety::Reject;
     use crate::units::Qty;
+
+    #[test]
+    fn generated_now_commands_match_the_dsl_table() {
+        assert_eq!(OFFBOARD_NOW_COMMANDS, AerialOffboard::COMMANDS);
+        assert_eq!(AerialOffboard::GATE, "OffboardControl");
+    }
 
     #[tokio::test]
     async fn happy_mission_with_null_backend() {

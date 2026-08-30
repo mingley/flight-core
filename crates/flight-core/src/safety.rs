@@ -298,13 +298,15 @@ pub struct ContractEdge {
 }
 
 /// Single source for aerial offboard authority: heartbeat bound, command-age
-/// bound, and the revoke event list. Expands the kernel predicates, Creusot
-/// `ensures`, capability diagram strings, and the slice the contract DSL aliases.
+/// bound, revoke events, and the named offboard command surface. Expands the
+/// kernel predicates, Creusot `ensures`, capability diagram strings, and the
+/// slice the contract DSL aliases.
 macro_rules! define_aerial_authority {
     (
         heartbeat_age_ms: $hb:expr,
         command_age_ms: $cmd:expr,
-        revokes_on: [$($ev:ident),+ $(,)?]
+        revokes_on: [$($ev:ident),+ $(,)?],
+        commands: [$($cmd_name:ident),+ $(,)?]
     ) => {
         /// Offboard heartbeat bound. Shared by the contract DSL, `Fresh`, and monitors.
         pub const OFFBOARD_HEARTBEAT_MAX_AGE_MS: u32 = $hb;
@@ -365,6 +367,11 @@ macro_rules! define_aerial_authority {
             "}\n"
         );
 
+        /// Public capability command names. Typestate `*_now` methods are
+        /// generated from this list (`impl_aerial_offboard_now`).
+        #[cfg(not(creusot))]
+        pub const AERIAL_OFFBOARD_COMMANDS: &[&str] = &[$(stringify!($cmd_name)),+];
+
         #[cfg(not(creusot))]
         pub const AERIAL_OFFBOARD_SPEC: &'static str = concat!(
             "capability AerialOffboard {\n",
@@ -376,6 +383,9 @@ macro_rules! define_aerial_authority {
             ".ms();\n",
             "  revokes_on [",
             stringify!($($ev),+),
+            "]\n",
+            "  commands [",
+            stringify!($($cmd_name),+),
             "]\n",
             "}\n"
         );
@@ -422,7 +432,8 @@ define_aerial_authority! {
         HeartbeatStale,
         EstimatorInvalid,
         ImuUnhealthy
-    ]
+    ],
+    commands: [set_velocity, set_position, hold]
 }
 
 #[derive(Copy)]

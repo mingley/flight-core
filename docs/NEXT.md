@@ -301,24 +301,21 @@ last HEARTBEAT is older than 250 ms. Monitors: `CommandAgeMs`,
 
 ### F4. Single-source contract DSL
 
-**Status: landed (tables + generated admission + Kani harness; not a second typestate crate).**
+**Status: landed (tables + generated now-methods + admission + Kani harness; not a second typestate crate).**
 `define_aerial_authority!` in `safety.rs` is the table: heartbeat/command bounds,
 `event_revokes_authority` (Creusot `ensures` on the same event list),
-`admit_offboard_command`, diagram/SPEC strings, `AUTHORITY_REVOKE_EVENTS`,
-`AERIAL_OFFBOARD_TRANSITIONS`. `vehicle_contract! { from_kernel }` aliases that
-table (`AerialOffboard::revokes` **is** the kernel function; `admit` **is**
-`admit_offboard_command`; `TRANSITIONS` / `GATE` / `COMMANDS` / `UI_FORBIDDEN`
-are the capability surface). OffboardControl `set_velocity_now` /
-`set_position_now` / `hold_now` share `admit_offboard_now`.
-`prove_aerial_authority!` expands to Kani `dsl_revokes_match_kernel` (table
-membership, age predicates, `admit == heartbeat ∧ command_age`, estimator
-monotonicity). Checked-in
-[`docs/generated/aerial-offboard.mmd`](generated/aerial-offboard.mmd),
-[`.dot`](generated/aerial-offboard.dot),
-[`transitions.md`](generated/aerial-offboard.transitions.md), and
-[`faults.md`](generated/aerial-offboard.faults.md) must match the table.
-The macro does not emit a second Creusot file; Creusot still discharges `step`
-plus the revoke `ensures`.
+`admit_offboard_command`, `AERIAL_OFFBOARD_COMMANDS`, diagram/SPEC strings,
+`AUTHORITY_REVOKE_EVENTS`, `AERIAL_OFFBOARD_TRANSITIONS`.
+`vehicle_contract! { from_kernel }` aliases that table (`AerialOffboard::revokes`
+**is** the kernel function; `admit` **is** `admit_offboard_command`;
+`COMMANDS` **is** `AERIAL_OFFBOARD_COMMANDS`; `TRANSITIONS` / `GATE` /
+`UI_FORBIDDEN` are the capability surface). `impl_aerial_offboard_now!`
+generates `admit_offboard_now` / `set_velocity_now` / `set_position_now` /
+`hold_now`. `AerialOffboard::evaluate` runs `MONITORS` (including
+`OffboardAdmitted`, which is kernel `admit_offboard_command`).
+`prove_aerial_authority!` expands to Kani `dsl_revokes_match_kernel`.
+Checked-in generated artifacts under [`docs/generated/`](generated/) must
+match the table. The macro does not emit a second Creusot file.
 
 ### F5. PX4 production-quality backend
 

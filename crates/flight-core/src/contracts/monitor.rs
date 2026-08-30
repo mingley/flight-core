@@ -4,7 +4,9 @@
 //! evaluate a recorded or live trace against the same invariants the kernel
 //! and [`super::spec`] describe.
 
-use crate::safety::{command_age_ok, estimator_ts_monotonic, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
+use crate::safety::{
+    admit_offboard_command, command_age_ok, estimator_ts_monotonic, OFFBOARD_HEARTBEAT_MAX_AGE_MS,
+};
 
 /// One sample of physical/control state for contract evaluation.
 #[derive(Clone, Copy, Debug)]
@@ -74,6 +76,8 @@ pub enum Requirement {
     },
     /// Estimator timestamps never jump backward.
     EstimatorTimestampsMonotonic,
+    /// Armed, not in failsafe, and actuating ⇒ kernel `admit_offboard_command`.
+    OffboardAdmitted,
 }
 
 /// Why a trace failed a requirement.
@@ -217,6 +221,22 @@ pub fn evaluate_trace(samples: &[TraceSample], reqs: &[Requirement]) -> Result<(
                         });
                     }
                     prev = s.estimator_ts_ms;
+                }
+            }
+            Requirement::OffboardAdmitted => {
+                for (i, s) in samples.iter().enumerate() {
+                    if s.failsafe || !s.armed {
+                        continue;
+                    }
+                    if s.command.is_none() && !s.actuators_enabled {
+                        continue;
+                    }
+                    if !admit_offboard_command(s.heartbeat_age_ms, s.command_age_ms) {
+                        return Err(MonitorFail {
+                            requirement: "offboard_admitted",
+                            index: i,
+                        });
+                    }
                 }
             }
         }
@@ -400,6 +420,28 @@ mod tests {
             ..a
         };
         assert!(evaluate_trace(&[stale], &[Requirement::CommandAgeMs { max_ms: 100 }]).is_err());
+    }
+
+    #[test]
+    fn offboard_admitted_uses_kernel_admit() {
+        let ok = TraceSample {
+            command: Some([0.0, 0.0, -1.0]),
+            heartbeat_age_ms: 0,
+            command_age_ms: 0,
+            ..sample(true, true)
+        };
+        assert!(evaluate_trace(&[ok], &[Requirement::OffboardAdmitted]).is_ok());
+        let stale = TraceSample {
+            heartbeat_age_ms: 250,
+            ..ok
+        };
+        assert!(evaluate_trace(&[stale], &[Requirement::OffboardAdmitted]).is_err());
+        let failsafe = TraceSample {
+            failsafe: true,
+            heartbeat_age_ms: 250,
+            ..ok
+        };
+        assert!(evaluate_trace(&[failsafe], &[Requirement::OffboardAdmitted]).is_ok());
     }
 
     #[test]

@@ -38,7 +38,7 @@ macro_rules! vehicle_contract {
             pub const TRANSITIONS: &'static [$crate::safety::ContractEdge] =
                 $crate::safety::AERIAL_OFFBOARD_TRANSITIONS;
             pub const GATE: &'static str = "OffboardControl";
-            pub const COMMANDS: &'static [&'static str] = &["set_velocity", "set_position", "hold"];
+            pub const COMMANDS: &'static [&'static str] = $crate::safety::AERIAL_OFFBOARD_COMMANDS;
             /// Compile-fail UI tests that must exist for this capability gate.
             pub const UI_FORBIDDEN: &'static [&'static str] = &[
                 "ready_velocity.rs",
@@ -62,9 +62,17 @@ macro_rules! vehicle_contract {
                     max_ms: $crate::safety::COMMAND_MAX_AGE_MS,
                 },
                 $crate::contracts::Requirement::EstimatorTimestampsMonotonic,
+                $crate::contracts::Requirement::OffboardAdmitted,
             ];
 
             pub const KANI_HARNESS: &'static str = "dsl_revokes_match_kernel";
+
+            /// Runtime monitors generated from this capability table.
+            pub fn evaluate(
+                samples: &[$crate::contracts::TraceSample],
+            ) -> Result<(), $crate::contracts::MonitorFail> {
+                $crate::contracts::evaluate_trace(samples, Self::MONITORS)
+            }
         }
     };
     (
@@ -128,6 +136,54 @@ vehicle_contract! {
     capability AerialOffboard {
         from_kernel
     }
+}
+
+/// Generate OffboardControl `*_now` methods from the aerial command table.
+///
+/// Expand in `vehicle/typestate.rs` (same module as [`Vehicle`] private fields).
+/// Public names must match [`crate::safety::AERIAL_OFFBOARD_COMMANDS`].
+#[macro_export]
+macro_rules! impl_aerial_offboard_now {
+    () => {
+        /// Public command names generated with the `*_now` methods.
+        pub const OFFBOARD_NOW_COMMANDS: &'static [&'static str] =
+            &["set_velocity", "set_position", "hold"];
+
+        impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
+            /// AerialOffboard command gate: live permit, then kernel
+            /// `HeartbeatFresh` and `MissionCommand`.
+            pub fn admit_offboard_now(&mut self) -> Result<(), ErrorKind> {
+                self.require_live_permit()?;
+                self.apply_event(Event::HeartbeatFresh)?;
+                self.apply_event(Event::MissionCommand)?;
+                Ok(())
+            }
+
+            /// Same grant as [`Self::set_velocity`] without stepping the plant.
+            pub fn set_velocity_now(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
+                self.admit_offboard_now()?;
+                self.inner
+                    .backend
+                    .set_velocity_ned_now(velocity)
+                    .map_err(ErrorKind::Backend)
+            }
+
+            /// Same grant as [`Self::set_position`] without stepping the plant.
+            pub fn set_position_now(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
+                self.admit_offboard_now()?;
+                self.inner
+                    .backend
+                    .set_position_ned_now(position)
+                    .map_err(ErrorKind::Backend)
+            }
+
+            /// Hold at the current NED pose. Same grant as [`Self::set_position_now`].
+            pub fn hold_now(&mut self) -> Result<(), ErrorKind> {
+                self.admit_offboard_now()?;
+                self.inner.backend.hold_now().map_err(ErrorKind::Backend)
+            }
+        }
+    };
 }
 
 /// Kani harness generated from the aerial authority table.
@@ -201,6 +257,7 @@ pub fn human_readable_spec() -> &'static str {
         "  requires heartbeat.age < 250.ms();\n",
         "  requires command.age < 100.ms();\n",
         "  revokes_on [TriggerFailsafe, Disarm, Disconnect, HeartbeatStale, EstimatorInvalid, ImuUnhealthy]\n",
+        "  commands [set_velocity, set_position, hold]\n",
         "}\n",
         "invariant {\n  actuators.enabled -> armed  [FC-INV-001]\n",
         "  ActuationPermit.epoch == backend.epoch  [FC-INV-002]\n",
@@ -227,6 +284,14 @@ mod tests {
             AerialOffboard::REVOKE_ON,
             AUTHORITY_REVOKE_EVENTS
         ));
+        assert!(core::ptr::eq(
+            AerialOffboard::COMMANDS,
+            crate::safety::AERIAL_OFFBOARD_COMMANDS
+        ));
+        assert_eq!(
+            AerialOffboard::COMMANDS,
+            &["set_velocity", "set_position", "hold"]
+        );
         for e in Event::ALL {
             assert_eq!(
                 AerialOffboard::revokes(e),
@@ -270,6 +335,7 @@ mod tests {
             })
         );
         assert!(AerialOffboard::MONITORS.contains(&Requirement::EstimatorTimestampsMonotonic));
+        assert!(AerialOffboard::MONITORS.contains(&Requirement::OffboardAdmitted));
         let generated = include_str!("../../../../docs/generated/aerial-offboard.mmd");
         fn tokens(s: &str) -> Vec<&str> {
             s.split_whitespace().collect()
@@ -282,8 +348,9 @@ mod tests {
         assert!(human_readable_spec().contains("FC-INV-001"));
         assert!(human_readable_spec().contains("FC-INV-004"));
         assert!(human_readable_spec().contains("command.age < 100"));
+        assert!(human_readable_spec().contains("commands [set_velocity"));
         assert!(human_readable_spec().contains("admit_offboard"));
-        assert!(AerialOffboard::SPEC.contains("command.age < 100"));
+        assert!(AerialOffboard::SPEC.contains("commands [set_velocity"));
         assert_eq!(AerialOffboard::GATE, "OffboardControl");
         assert!(AerialOffboard::COMMANDS.contains(&"set_velocity"));
         let revoke_vias: Vec<&str> = AerialOffboard::TRANSITIONS
@@ -339,5 +406,17 @@ mod tests {
                 "capability UI {f} must exist"
             );
         }
+        let live = crate::contracts::TraceSample {
+            armed: true,
+            actuators_enabled: true,
+            command: Some([0.0, 0.0, -1.0]),
+            ..crate::contracts::TraceSample::default()
+        };
+        assert!(AerialOffboard::evaluate(&[live]).is_ok());
+        let stale_hb = crate::contracts::TraceSample {
+            heartbeat_age_ms: 250,
+            ..live
+        };
+        assert!(AerialOffboard::evaluate(&[stale_hb]).is_err());
     }
 }

@@ -5,7 +5,7 @@
 //! a Gazebo replacement — it is differential conformance to the contract.
 
 use flight_core::contracts::{
-    evaluate_trace, parse_trace_jsonl, MonitorFail, Requirement, TraceSample,
+    evaluate_trace, parse_trace_jsonl, AerialOffboard, MonitorFail, Requirement, TraceSample,
 };
 use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use robot_world::World;
@@ -164,6 +164,11 @@ impl ScenarioReport {
         evaluate_trace(&self.samples, reqs)
     }
 
+    /// Same capability monitors as [`flight_core::contracts::AerialOffboard::MONITORS`].
+    pub fn evaluate_capability(&self) -> Result<(), MonitorFail> {
+        AerialOffboard::evaluate(&self.samples)
+    }
+
     pub fn to_jsonl(&self) -> String {
         let mut out = String::new();
         for s in &self.samples {
@@ -289,12 +294,21 @@ pub fn differential_gps_loss() -> Result<(), String> {
     world
         .evaluate(reqs)
         .map_err(|e| format!("world: {} at {}", e.requirement, e.index))?;
+    world
+        .evaluate_capability()
+        .map_err(|e| format!("world capability: {} at {}", e.requirement, e.index))?;
     differential_world(&Scenario::GPS_LOSS)?;
     let ulog = crate::parse_ulog(include_bytes!("../corpus/gps_loss.ulg"))
         .map_err(|e| format!("ulog: {e}"))?;
     evaluate_trace(&ulog, reqs).map_err(|e| format!("ulog: {} at {}", e.requirement, e.index))?;
-    replay_jsonl(include_str!("../corpus/px4_sitl_gps_loss.jsonl"), reqs)
+    AerialOffboard::evaluate(&ulog)
+        .map_err(|e| format!("ulog capability: {} at {}", e.requirement, e.index))?;
+    let sitl = parse_trace_jsonl(include_str!("../corpus/px4_sitl_gps_loss.jsonl"))
+        .map_err(|_| "px4-sitl: parse_jsonl".to_string())?;
+    evaluate_trace(&sitl, reqs)
         .map_err(|e| format!("px4-sitl: {} at {}", e.requirement, e.index))?;
+    AerialOffboard::evaluate(&sitl)
+        .map_err(|e| format!("px4-sitl capability: {} at {}", e.requirement, e.index))?;
     Ok(())
 }
 
@@ -371,6 +385,7 @@ mod tests {
         report
             .evaluate(Scenario::GPS_LOSS.require)
             .expect("contract");
+        report.evaluate_capability().expect("capability monitors");
         differential_world(&Scenario::GPS_LOSS).expect("differential");
         let jsonl = report.to_jsonl();
         assert!(jsonl.contains("failsafe"));
@@ -401,6 +416,7 @@ mod tests {
         report
             .evaluate(Scenario::HEARTBEAT_LOSS.require)
             .expect("contract");
+        report.evaluate_capability().expect("capability monitors");
     }
 
     #[test]
@@ -409,12 +425,14 @@ mod tests {
         world
             .evaluate(Scenario::HITL_MISS.require)
             .expect("world contract");
+        world.evaluate_capability().expect("world capability");
         differential_world(&Scenario::HITL_MISS).expect("differential");
         let hitl = run_hitl_miss().expect("hitl");
         assert!(hitl.samples.iter().any(|s| s.failsafe));
         assert!(hitl.samples.iter().any(|s| s.epoch > 0));
         hitl.evaluate(Scenario::HITL_MISS.require)
             .expect("hitl contract");
+        hitl.evaluate_capability().expect("hitl capability");
     }
 
     #[test]
