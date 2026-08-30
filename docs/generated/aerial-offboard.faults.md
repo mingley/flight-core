@@ -20,7 +20,8 @@ Offboard. The same events appear as Offboard → Failsafe edges in
 CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`
 (world leftover Offboard + JSONL + ULog). PX4 companion leftover table
 and leftover contracts (`AerialOffboard::LEFTOVER_CONTRACTS`:
-gps-loss, heartbeat-stale, hitl-miss, imu-loss):
+gps-loss, heartbeat-stale, hitl-miss, imu-loss — names/injects from kernel
+`AERIAL_OFFBOARD_LEFTOVER`):
 `cargo run -p flight-px4 --bin flight-test-px4` (`run_px4_revoke_table` /
 `run_px4_leftover_contracts`; `flight-sim` does not depend on `flight-px4`).
 Live SIH leftover GPS-loss is `sitl_gps_loss_revokes_leftover_offboard`

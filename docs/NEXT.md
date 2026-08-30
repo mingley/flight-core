@@ -396,7 +396,10 @@ fails `cargo check`. `AerialOffboard::evaluate` runs `MONITORS` (including
 `prove_aerial_authority!` expands to Kani `dsl_revokes_match_kernel`.
 Checked-in generated artifacts under [`docs/generated/`](generated/) must
 match the table (`SPEC`, mermaid, Graphviz, `CREUSOT`, `FAULTS`). The macro
-does not emit a second Creusot proof file. `run_revoke_table` uses
+does not emit a second Creusot proof file. Kernel `leftover:` is
+[`AERIAL_OFFBOARD_LEFTOVER`](../crates/flight-core/src/safety.rs); `AerialOffboard::LEFTOVER_CONTRACTS`
+locksteps names and injects (Disarm / Disconnect stay revoke-table leftover
+`COMMANDS` only). `run_revoke_table` uses
 `WorldSession::inject_revoke` so a leftover `Vehicle<Offboard>` refuses every `COMMANDS` method.
 Named scenario faults (`GpsDropout` / `HeartbeatStale` / `Failsafe`) go
 through the same `inject`. `differential_revoke_table` round-trips the
@@ -454,12 +457,14 @@ writes JSONL, and differential-runs two world traces. Native ULog subset
 `vehicle_status`. `cargo run -p flight-sim --bin flight-test` runs
 `--backend world|replay|ulog|px4-sitl|hitl` and `--scenario revoke-table`.
 Live Gazebo is still out of scope; `--backend px4-sitl` evaluates a converted
-JSONL or `.ulg` (checked-in `crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl`).
+JSONL or `.ulg`. Named leftover leftover-contracts default to checked-in
+`crates/flight-sim/corpus/px4_sitl_<name>.jsonl` (`gps-loss`,
+`heartbeat-stale`, `hitl-miss`, `imu-loss`). Live SIH is `sitl_live`.
 `--backend hitl` is the attach-failsafe miss path (same contract as
 `WorldRack::contract_deadline_miss`). `--backend all` runs
 [`differential_contract`](../crates/flight-sim/src/scenario.rs) for every named
-scenario (world + JSONL replay + ULog round-trip; gps-loss also the checked-in
-ULog and converted PX4 SITL JSONL). GPS-loss posts `Estimate::revoke_event` and
+scenario (world + JSONL replay + ULog round-trip; leftover leftover-contracts
+also the converted PX4 SITL JSONL; gps-loss also the checked-in ULog). GPS-loss posts `Estimate::revoke_event` and
 a bound `Vehicle<Offboard>` cannot `set_position_now`. IMU-delay ≥
 `ESTIMATE_MAX_AGE_MS` posts `estimate_revoke_event` (same leftover Offboard).
 `IMU_LOSS` injects `Event::ImuUnhealthy`. `MOTOR_EFFICIENCY` is plant-only

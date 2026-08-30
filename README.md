@@ -34,10 +34,11 @@ increments the epoch. The old permit is still memory. It has no authority.
                    TESTED — invalid Estimate revokes position-control
                    authority on a bound Offboard handle (StaleAuthority).
 6. flight-test --backend all     PASS (same contract: world, replay, ulog;
-                                      gps-loss also converted PX4 SITL)
+                                      leftover leftover-contracts also converted PX4 SITL)
 7. PX4 SITL companion              PASS (same Vehicle API; HEARTBEAT CRITICAL/RTL revokes epoch)
-   flight-test-px4 gps-loss leftover; sitl_live leftover Offboard after EstimatorInvalid
-   flight-test --scenario gps-loss --backend px4-sitl  (converted corpus; live SIH is sitl_live)
+   flight-test-px4 leftover leftover-contracts; sitl_live leftover Offboard after EstimatorInvalid
+   flight-test --scenario gps-loss|heartbeat-stale|hitl-miss|imu-loss --backend px4-sitl
+                   (converted corpus; live SIH is sitl_live)
 8. flight-test --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
                    PASS — same contract on recorded ULog
 ```
@@ -50,11 +51,11 @@ including `permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel` (kernel
 table = `AUTHORITY_REVOKE_EVENTS`, heartbeat/command bounds, estimator
 monotonicity), and actuators-require-arm. (5) is GPS-loss: an invalid
 `Estimate` revokes `set_position_now` on a bound `Vehicle<Offboard>`.
-(6) is `differential_contract` (world, JSONL, ULog; gps-loss also converted
-SITL). (7) is the existing SIH companion path plus failsafe/RTL epoch
-revocation, leftover GPS-loss on the companion (`flight-test-px4` /
+(6) is `differential_contract` (world, JSONL, ULog; leftover leftover-contracts
+also converted PX4 SITL corpora). (7) is the existing SIH companion path plus failsafe/RTL epoch
+revocation, leftover leftover-contracts on the companion (`flight-test-px4` /
 `sitl_live` leftover Offboard after `EstimatorInvalid`), and the same
-monitors on a converted SITL-shaped JSONL. (8) is
+monitors on converted SITL-shaped JSONL for every leftover name. (8) is
 native ULog `fc_trace` replay. The same contract also runs as
 `flight-test --scenario hitl-miss --backend hitl` and
 `--scenario revoke-table` (every DSL revoke event from Offboard; leftover
