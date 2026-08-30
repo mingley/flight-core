@@ -992,6 +992,57 @@ fn world_motor_thrust_passes_the_kernel_and_failsafe_refuses() {
 }
 
 #[test]
+fn world_failsafe_refuses_backend_direct_physical_authority() {
+    let mut drone = WorldBackend::inland(1);
+    drone.grant_offboard().unwrap();
+    assert!(
+        !drone.actuation_revoked(),
+        "granted Takeoff is not a revoked session"
+    );
+    drone
+        .set_velocity_now(Velocity::<Ned>::ned(0.2, 0.0, 0.0))
+        .unwrap();
+    drone.failsafe_now().unwrap();
+    assert!(drone.actuation_revoked());
+    let v = Velocity::<Ned>::ned(0.4, 0.0, 0.0);
+    let err = drone.set_velocity_now(v);
+    assert!(
+        matches!(err, Err(BackendError::Rejected(_))),
+        "set_velocity: {err:?}"
+    );
+    let err = drone.set_position_now(Position::<Ned>::ned(0.0, 0.0, 0.0));
+    assert!(
+        matches!(err, Err(BackendError::Rejected(_))),
+        "set_position: {err:?}"
+    );
+    let err = drone.enter_offboard_now();
+    assert!(
+        matches!(err, Err(BackendError::Rejected(_))),
+        "enter_offboard: {err:?}"
+    );
+    let err = drone.enable_actuators_now();
+    assert!(
+        matches!(err, Err(BackendError::Rejected(_))),
+        "enable_actuators: {err:?}"
+    );
+    let err = drone.takeoff_now();
+    assert!(
+        matches!(err, Err(BackendError::Rejected(_))),
+        "takeoff: {err:?}"
+    );
+    let err = drone.reached_altitude_now();
+    assert!(
+        matches!(err, Err(BackendError::Rejected(_))),
+        "reached_altitude: {err:?}"
+    );
+    let err = drone.hold_now();
+    assert!(
+        matches!(err, Err(BackendError::Rejected(_))),
+        "hold_now uses set_position: {err:?}"
+    );
+}
+
+#[test]
 fn attach_failsafe_from_ready_trips_the_plant() {
     let session = WorldSession::inland(1);
     session.attach_failsafe("drone").unwrap();

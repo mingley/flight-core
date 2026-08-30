@@ -129,6 +129,7 @@ impl WorldBackend {
 
     /// Armed → takeoff. Same grant `Vehicle::start_takeoff_now` writes.
     pub fn takeoff_now(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.drone_event(Event::Takeoff)?;
         self.last_command = "takeoff";
         Ok(())
@@ -136,6 +137,7 @@ impl WorldBackend {
 
     /// Takeoff → airborne. Same grant `Vehicle::declare_airborne_now` writes.
     pub fn reached_altitude_now(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.drone_event(Event::ReachedAltitude)?;
         self.last_command = "airborne";
         Ok(())
@@ -183,11 +185,31 @@ impl WorldBackend {
         aerial_event(&self.session, self.body_id, e)
     }
 
+    fn plant_failsafe(&self) -> bool {
+        self.session
+            .lock()
+            .world
+            .body(self.body_id)
+            .and_then(|b| b.aerial)
+            .map(|s| s.failsafe)
+            .unwrap_or(false)
+    }
+
+    /// Same refuse as PX4 / NullBackend: leftover Offboard dies on epoch;
+    /// this stops backend-direct actuation after plant failsafe.
+    fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
+        if self.plant_failsafe() {
+            return Err(BackendError::Rejected("actuation authority revoked"));
+        }
+        Ok(())
+    }
+
     fn accept_mission(
         &mut self,
         setpoint: Setpoint,
         last: &'static str,
     ) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.drone_event(Event::HeartbeatFresh)?;
         self.drone_event(Event::MissionCommand)?;
         self.setpoint = Some(setpoint);
@@ -291,6 +313,7 @@ impl VehicleBackend for WorldBackend {
     }
 
     async fn enter_offboard(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.drone_event(Event::HeartbeatFresh)?;
         self.drone_event(Event::EnterOffboard)?;
         self.setpoint = Some(Setpoint::Velocity(Velocity::ned(0.0, 0.0, 0.0)));
@@ -313,6 +336,7 @@ impl VehicleBackend for WorldBackend {
     }
 
     async fn set_motor_thrust(&mut self, thrust: MotorThrust) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         let _ = thrust;
         self.drone_event(Event::HeartbeatFresh)?;
         self.drone_event(Event::MissionCommand)?;
@@ -321,6 +345,7 @@ impl VehicleBackend for WorldBackend {
     }
 
     async fn enable_actuators(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.drone_event(Event::EnableActuators)?;
         self.last_command = "enable_actuators";
         Ok(())
@@ -368,6 +393,10 @@ impl VehicleBackend for WorldBackend {
             .body(self.body_id)
             .map(|b| b.authority_epoch)
             .unwrap_or(0)
+    }
+
+    fn actuation_revoked(&self) -> bool {
+        self.plant_failsafe()
     }
 
     fn authority_vehicle_id(&self) -> u8 {
