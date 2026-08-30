@@ -31,13 +31,16 @@
 use std::net::UdpSocket;
 use std::time::Instant;
 
-use flight_core::contracts::TraceSample;
+use flight_core::contracts::{AerialOffboard, TraceSample};
 use flight_core::hitl::{
     command_after_deadline, deadline_outcome, hitl_apply_allowed, DeadlineOutcome, DeadlineSpec,
 };
-use flight_core::temporal::Rate;
+use flight_core::safety::Event;
+use flight_core::temporal::{Rate, Sequence};
 use flight_core::vector::Velocity;
-use flight_core::vehicle::{BackendError, GroundHandle, MarineHandle, VehicleHandle};
+use flight_core::vehicle::{
+    BackendError, GroundHandle, MarineHandle, VehicleBackend, VehicleHandle,
+};
 use flight_sim::{GroundWorldBackend, MarineWorldBackend, WorldBackend, WorldSession};
 use robot_world::World;
 
@@ -681,6 +684,72 @@ impl WorldRack {
     pub fn run_hitl_leftover_deadline_miss() -> Result<usize, String> {
         Self::leftover_after_deadline_miss(1).map_err(|e| format!("hitl leftover: {e}"))?;
         Ok(1)
+    }
+
+    /// Companion-shaped inject of a kernel revoke event onto the rack drone.
+    /// [`WorldSession::inject_revoke`] first; leftover OffboardControl bound
+    /// from this rack's grant must then fail `leftover_commands_stale`.
+    pub fn inject_revoke(&self, event: Event) -> Result<(), BackendError> {
+        self.session.inject_revoke("drone", event)
+    }
+
+    /// Same leftover OffboardControl `COMMANDS` check as world / PX4, for every
+    /// `REVOKE_ON` event, bound from the inland rack Takeoff grant. Epoch
+    /// monotonicity is a first-class [`Sequence`]. Lives here because
+    /// `flight-sim` cannot depend on this crate.
+    pub fn run_hitl_revoke_table() -> Result<usize, String> {
+        let mut n = 0;
+        for e in AerialOffboard::REVOKE_ON {
+            let mut rack = Self::inland(1).map_err(|err| format!("rack before {e:?}: {err}"))?;
+            let VehicleHandle::Takeoff(mut leftover) = rack
+                .session
+                .aerial("drone")
+                .attach()
+                .map_err(|err| format!("bind Takeoff before {e:?}: {err}"))?
+            else {
+                return Err(format!("inland grant must bind Takeoff before {e:?}"));
+            };
+            if leftover.leftover_commands_stale().is_ok() {
+                return Err(format!("leftover already stale before HITL inject {e:?}"));
+            }
+            let mut seq = Sequence::new();
+            seq.observe(leftover.backend().authority_epoch())
+                .map_err(|_| format!("sequence before {e:?}"))?;
+            rack.inject_revoke(*e)
+                .map_err(|err| format!("inject {e:?}: {err}"))?;
+            seq.observe(leftover.backend().authority_epoch())
+                .map_err(|_| format!("epoch jumped backward after {e:?}"))?;
+            if leftover.backend().authority_epoch() == 0 {
+                return Err(format!("event {e:?} did not bump epoch"));
+            }
+            let failsafe = leftover
+                .backend()
+                .world()
+                .body("drone")
+                .and_then(|b| b.aerial)
+                .is_some_and(|s| s.failsafe);
+            match e {
+                Event::Disconnect | Event::Disarm => {
+                    if failsafe {
+                        return Err(format!("{e:?} must not latch failsafe"));
+                    }
+                }
+                Event::TriggerFailsafe
+                | Event::HeartbeatStale
+                | Event::EstimatorInvalid
+                | Event::ImuUnhealthy => {
+                    if !failsafe {
+                        return Err(format!("{e:?} must latch failsafe"));
+                    }
+                }
+                _ => {}
+            }
+            leftover
+                .leftover_commands_stale()
+                .map_err(|err| format!("leftover after {e:?}: {err}"))?;
+            n += 1;
+        }
+        Ok(n)
     }
 }
 
@@ -1381,5 +1450,11 @@ mod tests {
             WorldRack::run_hitl_leftover_deadline_miss().expect("runner"),
             1
         );
+    }
+
+    #[test]
+    fn leftover_commands_stale_after_every_dsl_revoke() {
+        let n = WorldRack::run_hitl_revoke_table().expect("hitl leftover revoke table");
+        assert_eq!(n, AerialOffboard::REVOKE_ON.len());
     }
 }
