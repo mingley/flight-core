@@ -43,10 +43,11 @@ increments the epoch. The old permit is still memory. It has no authority.
                    PASS — same contract on recorded ULog
 ```
 
-Today: (2) is 132 trybuild compile-fails (including `unsafe_mission`,
+Today: (2) is 134 trybuild compile-fails (including `unsafe_mission`,
 `permit_is_not_clone`,
 `orientation_is_not_angular_velocity`, `force_is_not_torque`,
-`velocity_is_not_acceleration`, `point_is_not_displacement`). (4) is Kani
+`velocity_is_not_acceleration`, `point_is_not_displacement`,
+`point_plus_point`, `transform_point_is_not_velocity`). (4) is Kani
 including `permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel` (kernel
 table = `AUTHORITY_REVOKE_EVENTS`, heartbeat/command bounds, estimator
 monotonicity), and actuators-require-arm. (5) is GPS-loss: an invalid

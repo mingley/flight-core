@@ -341,7 +341,8 @@ An async PX4 disarm HEARTBEAT bumps the epoch; leftover `Vehicle<Armed>` cannot
 `enter_offboard_now` **or** `set_motor_thrust_now` (permit is checked **before**
 kernel `EnableActuators`). PX4 / ArduPilot / `NullBackend` / point-mass
 `SimBackend` refuse `enter_offboard`, climb, `enable_actuators`, setpoints, and
-motor thrust at the backend after `actuation_revoked`. The verified-world
+motor thrust at the backend after `actuation_revoked`. Yaw-rate commands
+refuse the same way on `NullBackend` / `SimBackend`. The verified-world
 `WorldBackend` reports `actuation_revoked` from plant failsafe and refuses the
 same physical-authority commands (kernel `step` remains the TCB). Ground
 `GroundWorldBackend` reports it from plant E-stop and refuses drive / pose
@@ -515,13 +516,16 @@ those tables).
 
 ### F7. Typed geometry
 
-**Status: landed.** `Transform<A,B> * Transform<B,C>` only; `Displacement`,
-`Point3`, `Orientation<F>` (not `AngularVelocity`), `Force` / `Torque`,
-`apply_point` / `apply_displacement`, `Rotation`, `Covariance<T>`.
-trybuild `transform_wrong_frames`, `orientation_is_not_angular_velocity`,
-`force_is_not_torque`, `velocity_is_not_acceleration`,
-`point_is_not_displacement`, `unsafe_mission`. Copper `cu_transform` is
-interop, not a copy (`docs/copper.md`).
+**Status: landed.** `Transform<A,B> * Transform<B,C>` only. `Point3` is a
+newtype (not a `Position` alias): `p + d` is a point, `p - q` is a
+displacement, `p + q` does not compile. A transform maps a point as
+`R p + t` and free vectors (`apply_displacement` / `apply_velocity` /
+`apply_acceleration` / `apply_force` / `apply_torque`) by rotation only.
+`Orientation<F>` is not `AngularVelocity`. trybuild `transform_wrong_frames`,
+`orientation_is_not_angular_velocity`, `force_is_not_torque`,
+`velocity_is_not_acceleration`, `point_is_not_displacement`,
+`point_plus_point`, `transform_point_is_not_velocity`, `unsafe_mission`.
+Copper `cu_transform` is interop, not a copy (`docs/copper.md`).
 
 ### F8. Copper integration
 
