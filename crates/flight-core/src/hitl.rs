@@ -33,6 +33,13 @@ impl DeadlineSpec {
     pub const fn valid(self) -> bool {
         self.period_ns > 0 && self.budget_ns > 0 && self.budget_ns <= self.period_ns
     }
+
+    /// Named loop rate for this spec. HITL fail-closes if this disagrees
+    /// with [`crate::temporal::Rate::period_ns`].
+    #[cfg(not(creusot))]
+    pub const fn rate(self) -> crate::temporal::Rate {
+        crate::temporal::Rate::from_period_ns(self.period_ns)
+    }
 }
 
 #[derive(Copy)]
@@ -150,6 +157,17 @@ mod tests {
         assert!(hitl_invariants(false, next, next));
         assert!(!hitl_apply_allowed(true));
         assert!(hitl_apply_allowed(false));
+    }
+
+    #[test]
+    fn hz_50_rate_matches_period() {
+        assert_eq!(DeadlineSpec::HZ_50.rate(), crate::temporal::Rate::HZ_50);
+        assert!(DeadlineSpec::HZ_50
+            .rate()
+            .admits(DeadlineSpec::HZ_50.budget_ns));
+        assert!(!DeadlineSpec::HZ_50
+            .rate()
+            .admits(DeadlineSpec::HZ_50.period_ns + 1));
     }
 
     #[test]

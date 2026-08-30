@@ -20,3 +20,6 @@ CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`
 (world leftover Offboard + JSONL + ULog). PX4 companion leftover table:
 `cargo run -p flight-px4 --bin flight-test-px4` (`Px4Backend::inject_revoke`
 for every `REVOKE_ON` event; `flight-sim` does not depend on `flight-px4`).
+HITL leftover after a rack deadline/`Rate` miss:
+`cargo run -p flight-hitl --bin flight-test-hitl` (`WorldRack::leftover_after_deadline_miss`;
+`flight-sim` does not depend on `flight-hitl`).

@@ -299,7 +299,9 @@ epoch bump predicates. Everything else is untrusted relative to `step`.
 `Event::EstimatorInvalid` (`Estimate::revoke_event`); a stale heartbeat age
 yields `Event::HeartbeatStale` (`heartbeat_revoke_event`). GPS-loss and
 heartbeat-loss inject those events. PX4 setpoints fail `StaleHeartbeat` when the
-last HEARTBEAT is older than 250 ms. Monitors: `CommandAgeMs`,
+last HEARTBEAT is older than 250 ms. HITL `WorldRack::finish` fail-closes if
+`Rate` period disagrees with `DeadlineSpec` or compute exceeds `Rate::admits`.
+Monitors: `CommandAgeMs`,
 `EstimatorTimestampsMonotonic`, `EpochBumped` — heartbeat/command/estimator
 checks use `HeartbeatFresh` / `CommandFresh` / `Timestamp` and fail closed
 if those disagree with the kernel predicates.
@@ -377,7 +379,9 @@ cannot run `set_velocity` / `set_position` / `hold`. Named scenario
 `Fault` kernel events are `AerialOffboard::inject`. `differential_revoke_table`
 round-trips those leftover samples on JSONL and ULog. The PX4 companion
 runs the same leftover table via `cargo run -p flight-px4 --bin flight-test-px4`
-(`inject_revoke`); `flight-sim` does not depend on `flight-px4`.
+(`inject_revoke`); `flight-sim` does not depend on `flight-px4`. HITL leftover
+after a rack deadline miss is `WorldRack::leftover_after_deadline_miss` /
+`flight-test-hitl` (`flight-sim` does not depend on `flight-hitl`).
 
 ### F7. Typed geometry
 
@@ -397,12 +401,15 @@ dependency. Do not add a scheduler/pubsub/physics engine.
 ### F9. HITL on the same contract
 
 **Status: landed.** Deadline miss already trips attach failsafe; the plant
-epoch now increments. `WorldRack::finish` fail-closes if `temporal::Deadline`
-and kernel `deadline_outcome` disagree. `injected_miss_zeros_command_and_trips_failsafe`
+epoch now increments. `WorldRack::finish` fail-closes if `temporal::Deadline`,
+kernel `deadline_outcome`, and `Rate` (period lockstep `DeadlineSpec`) disagree.
+`injected_miss_zeros_command_and_trips_failsafe`
 asserts `authority_epoch > 0` and evaluates `Requirement::ActuatorsImplyArmed`
 on the miss sample. `WorldRack::contract_deadline_miss` and
 `flight-test --backend hitl` evaluate `Scenario::HITL_MISS.require`
-(including `EpochBumped`). `cargo run -p flight-hitl --example contract_miss`.
+(including `EpochBumped`). A leftover OffboardControl handle bound before the
+miss cannot run `COMMANDS` (`leftover_after_deadline_miss` /
+`flight-test-hitl`). `cargo run -p flight-hitl --example contract_miss`.
 
 ### F10. Certification-oriented traceability
 

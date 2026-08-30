@@ -336,11 +336,27 @@ impl Rate {
         Self { hz }
     }
 
+    /// Inverse of [`Self::period_ns`]. Zero period is a zero-Hz rate (never admits).
+    pub const fn from_period_ns(period_ns: u64) -> Self {
+        if period_ns == 0 {
+            return Self { hz: 0 };
+        }
+        Self {
+            hz: (1_000_000_000 / period_ns) as u32,
+        }
+    }
+
     pub const fn period_ns(self) -> u64 {
         if self.hz == 0 {
             return u64::MAX;
         }
         1_000_000_000 / (self.hz as u64)
+    }
+
+    /// OffboardControl ⇒ this loop rate: compute must finish within one period.
+    /// Fail closed with [`crate::hitl::DeadlineSpec`] at the HITL rack.
+    pub const fn admits(self, compute_ns: u64) -> bool {
+        self.hz != 0 && compute_ns <= self.period_ns()
     }
 }
 
@@ -438,6 +454,14 @@ mod tests {
             Rate::HZ_50.period_ns(),
             crate::hitl::DeadlineSpec::HZ_50.period_ns
         );
+        assert_eq!(
+            Rate::from_period_ns(crate::hitl::DeadlineSpec::HZ_50.period_ns),
+            Rate::HZ_50
+        );
         assert!(crate::hitl::DeadlineSpec::HZ_50.budget_ns <= Rate::HZ_50.period_ns());
+        assert!(Rate::HZ_50.admits(crate::hitl::DeadlineSpec::HZ_50.budget_ns));
+        assert!(Rate::HZ_50.admits(Rate::HZ_50.period_ns()));
+        assert!(!Rate::HZ_50.admits(Rate::HZ_50.period_ns() + 1));
+        assert!(!Rate::hz(0).admits(0));
     }
 }

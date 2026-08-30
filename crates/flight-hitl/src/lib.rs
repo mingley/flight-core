@@ -3,7 +3,10 @@
 //! A rack frame has a compute budget. If the plant step overruns it, the miss
 //! is recorded, failsafe is tripped through attach typestate, and the next
 //! actuator command is zero — the same kernel [`flight_core::hitl`] proves.
-//! [`WorldRack::recover_deadline`] / [`WorldRack::grant_all`] walk recover then
+//! Compute must also finish within the OffboardControl [`flight_core::temporal::Rate`]
+//! period (lockstep [`DeadlineSpec`] `period_ns`). A leftover OffboardControl
+//! handle bound before the miss has no `COMMANDS` authority
+//! ([`WorldRack::leftover_after_deadline_miss`]). [`WorldRack::recover_deadline`] / [`WorldRack::grant_all`] walk recover then
 //! re-grant so a later on-time frame can command again. [`WorldRack::return_all`]
 //! walks land+touchdown / park / dock home (skipping bodies the catalog
 //! omitted: inland has no hull, open water has no rover). [`WorldRack::airborne`]

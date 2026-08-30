@@ -2,7 +2,7 @@
 //!
 //! One frame: apply commands **only if the previous frame met its deadline**,
 //! flush every handle, step the plant once, then score wall time against the
-//! budget. A miss trips failsafe through [`WorldSession::attach_failsafe`] /
+//! budget and OffboardControl [`Rate`]. A miss trips failsafe through [`WorldSession::attach_failsafe`] /
 //! [`WorldSession::attach_estop`] / [`WorldSession::attach_marine_failsafe`]
 //! when the live kind allows it, otherwise the idempotent `failsafe_now`
 //! re-trip, and zeros the next applied command.
@@ -35,6 +35,7 @@ use flight_core::contracts::TraceSample;
 use flight_core::hitl::{
     command_after_deadline, deadline_outcome, hitl_apply_allowed, DeadlineOutcome, DeadlineSpec,
 };
+use flight_core::temporal::Rate;
 use flight_core::vector::Velocity;
 use flight_core::vehicle::{BackendError, GroundHandle, MarineHandle, VehicleHandle};
 use flight_sim::{GroundWorldBackend, MarineWorldBackend, WorldBackend, WorldSession};
@@ -100,6 +101,8 @@ pub struct WorldRack {
     skiff: Option<MarineWorldBackend>,
     surveyor: Option<MarineWorldBackend>,
     spec: DeadlineSpec,
+    /// OffboardControl loop rate. Fail-closed with [`DeadlineSpec::period_ns`].
+    rate: Rate,
     last_missed: bool,
     missed: u64,
     frames: u64,
@@ -153,6 +156,7 @@ impl WorldRack {
             skiff,
             surveyor,
             spec: DeadlineSpec::HZ_50,
+            rate: Rate::HZ_50,
             last_missed: false,
             missed: 0,
             frames: 0,
@@ -163,6 +167,7 @@ impl WorldRack {
     pub fn with_spec(mut self, spec: DeadlineSpec) -> Self {
         if spec.valid() {
             self.spec = spec;
+            self.rate = Rate::from_period_ns(spec.period_ns);
         }
         self
     }
@@ -178,6 +183,11 @@ impl WorldRack {
 
     pub fn spec(&self) -> DeadlineSpec {
         self.spec
+    }
+
+    /// Named OffboardControl rate this rack admits against (lockstep `period_ns`).
+    pub fn rate(&self) -> Rate {
+        self.rate
     }
 
     pub fn missed(&self) -> u64 {
@@ -381,8 +391,10 @@ impl WorldRack {
             flight_core::time::MonotonicInstant::from_nanos(self.spec.budget_ns),
         );
         let compute = flight_core::time::MonotonicInstant::from_nanos(ns);
-        // Fail closed: typed Deadline and kernel DeadlineSpec must agree.
-        let missed = outcome.missed() || !due.met(compute);
+        // Fail closed: typed Deadline, kernel DeadlineSpec, and Rate period
+        // must agree. OffboardControl ⇒ this loop rate.
+        let rate_ok = self.rate.period_ns() == self.spec.period_ns && self.rate.admits(ns);
+        let missed = outcome.missed() || !due.met(compute) || !rate_ok;
         if missed {
             self.missed = self.missed.saturating_add(1);
             self.last_missed = true;
@@ -630,6 +642,45 @@ impl WorldRack {
         let before = drone_trace(&rack.world())?;
         rack.frame_with_compute(0.02, cmd, 50_000_000)?;
         Ok(vec![before, drone_trace(&rack.world())?])
+    }
+
+    /// Bind leftover OffboardControl (inland grant is Takeoff) before a rack
+    /// deadline miss. After the miss trips failsafe, every generated
+    /// `COMMANDS` method is `StaleAuthority` while the handle is still typed
+    /// OffboardControl. HITL-shaped leftover — not a clone of world
+    /// `run_revoke_table`.
+    pub fn leftover_after_deadline_miss(seed: u64) -> Result<(), BackendError> {
+        let mut rack = Self::inland(seed)?;
+        if rack.rate().period_ns() != rack.spec().period_ns {
+            return Err(BackendError::Rejected("rate_period_lockstep"));
+        }
+        let VehicleHandle::Takeoff(mut leftover) = rack.session.aerial("drone").attach()? else {
+            return Err(BackendError::Protocol);
+        };
+        if leftover.leftover_commands_stale().is_ok() {
+            return Err(BackendError::Rejected("leftover_already_stale"));
+        }
+        let cmd = RackCommand {
+            aerial: [0.0, 0.0, -1.2],
+            ..RackCommand::default()
+        };
+        rack.frame_with_compute(0.02, cmd, 1_000_000)?;
+        if leftover.leftover_commands_stale().is_ok() {
+            return Err(BackendError::Rejected("leftover_stale_after_on_time_frame"));
+        }
+        rack.frame_with_compute(0.02, cmd, 50_000_000)?;
+        leftover
+            .leftover_commands_stale()
+            .map_err(|_| BackendError::Rejected("leftover_offboard_still_has_authority"))?;
+        Ok(())
+    }
+
+    /// Same leftover OffboardControl `COMMANDS` check as world / PX4, after a
+    /// rack deadline miss. Lives here because `flight-sim` cannot depend on
+    /// this crate (cycle: this crate already uses `flight-sim` for the plant).
+    pub fn run_hitl_leftover_deadline_miss() -> Result<usize, String> {
+        Self::leftover_after_deadline_miss(1).map_err(|e| format!("hitl leftover: {e}"))?;
+        Ok(1)
     }
 }
 
@@ -1311,5 +1362,24 @@ mod tests {
         assert!(samples.last().is_some_and(|s| s.epoch > samples[0].epoch));
         flight_core::contracts::evaluate_trace(&samples, flight_sim::Scenario::HITL_MISS.require)
             .expect("HITL rack miss satisfies the same contract as flight-test --backend hitl");
+    }
+
+    #[test]
+    fn rate_lockstep_with_deadline_spec() {
+        let rack = WorldRack::inland(1).expect("rack");
+        assert_eq!(rack.rate(), Rate::HZ_50);
+        assert_eq!(rack.rate().period_ns(), rack.spec().period_ns);
+        assert_eq!(rack.spec().rate(), Rate::HZ_50);
+        assert!(rack.rate().admits(1_000_000));
+        assert!(!rack.rate().admits(50_000_000));
+    }
+
+    #[test]
+    fn leftover_commands_stale_after_deadline_miss() {
+        WorldRack::leftover_after_deadline_miss(1).expect("leftover after miss");
+        assert_eq!(
+            WorldRack::run_hitl_leftover_deadline_miss().expect("runner"),
+            1
+        );
     }
 }
