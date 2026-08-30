@@ -45,6 +45,13 @@ impl MonotonicInstant {
         }
     }
 
+    /// Subtract a duration without going below zero (delayed IMU / estimate stamps).
+    pub const fn saturating_sub(self, dt: Duration) -> Self {
+        Self {
+            nanos: self.nanos.saturating_sub(dt.nanos),
+        }
+    }
+
     pub fn saturating_duration_since(self, earlier: Self) -> Duration {
         Duration {
             nanos: self.nanos.saturating_sub(earlier.nanos),

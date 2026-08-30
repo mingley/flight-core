@@ -9,6 +9,11 @@ use crate::time::{Duration, MonotonicInstant};
 use core::fmt;
 use core::marker::PhantomData;
 
+/// Local-position / IMU estimate younger than this bound is usable evidence.
+/// Same numeric value as the offboard heartbeat today; a distinct contract so
+/// PX4 stale-pose and IMU-delay faults do not reuse [`HeartbeatFresh`].
+pub const ESTIMATE_MAX_AGE_MS: u32 = 250;
+
 /// Explicit timestamp. Distinct from a raw integer so age and order are typed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Timestamp {
@@ -132,12 +137,25 @@ pub type HeartbeatFresh = Fresh<(), { OFFBOARD_HEARTBEAT_MAX_AGE_MS }>;
 /// Planner command younger than [`COMMAND_MAX_AGE_MS`].
 pub type CommandFresh<T> = Fresh<T, { COMMAND_MAX_AGE_MS }>;
 
+/// Estimator / local-position evidence younger than [`ESTIMATE_MAX_AGE_MS`].
+pub type EstimateFresh = Fresh<(), { ESTIMATE_MAX_AGE_MS }>;
+
 /// Kernel event when heartbeat age is outside the offboard bound.
 pub const fn heartbeat_revoke_event(age_ms: u32) -> Option<crate::safety::Event> {
     if HeartbeatFresh::check_age(age_ms).is_ok() {
         None
     } else {
         Some(crate::safety::Event::HeartbeatStale)
+    }
+}
+
+/// Kernel event when estimate age is outside [`ESTIMATE_MAX_AGE_MS`].
+/// Validity-bit revoke stays [`Estimate::revoke_event`]; this is the age half.
+pub const fn estimate_revoke_event(age_ms: u32) -> Option<crate::safety::Event> {
+    if EstimateFresh::check_age(age_ms).is_ok() {
+        None
+    } else {
+        Some(crate::safety::Event::EstimatorInvalid)
     }
 }
 
@@ -369,6 +387,17 @@ mod tests {
         let h = HeartbeatFresh::new((), MonotonicInstant::ZERO);
         assert!(h.get(MonotonicInstant::from_millis(249)).is_ok());
         assert!(h.get(MonotonicInstant::from_millis(250)).is_err());
+        let e = EstimateFresh::new((), MonotonicInstant::ZERO);
+        assert!(e.get(MonotonicInstant::from_millis(249)).is_ok());
+        assert!(e.get(MonotonicInstant::from_millis(250)).is_err());
+        assert!(estimate_revoke_event(249).is_none());
+        assert_eq!(
+            estimate_revoke_event(ESTIMATE_MAX_AGE_MS),
+            Some(crate::safety::Event::EstimatorInvalid)
+        );
+        let delayed = MonotonicInstant::from_millis(500)
+            .saturating_sub(Duration::from_millis(u64::from(ESTIMATE_MAX_AGE_MS)));
+        assert_eq!(delayed, MonotonicInstant::from_millis(250));
     }
 
     #[test]
@@ -436,6 +465,16 @@ mod tests {
                 heartbeat_revoke_event(age).is_some(),
                 !crate::safety::heartbeat_age_ok(age),
                 "heartbeat revoke age {age}"
+            );
+            assert_eq!(
+                EstimateFresh::check_age(age).is_ok(),
+                age < ESTIMATE_MAX_AGE_MS,
+                "estimate age {age}"
+            );
+            assert_eq!(
+                estimate_revoke_event(age).is_some(),
+                age >= ESTIMATE_MAX_AGE_MS,
+                "estimate revoke age {age}"
             );
             let stamped = Command::new((), MonotonicInstant::ZERO);
             let now = MonotonicInstant::from_millis(u64::from(age));

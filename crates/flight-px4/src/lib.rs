@@ -25,7 +25,7 @@ use flight_core::contracts::AerialOffboard;
 use flight_core::frames::Ned;
 use flight_core::safety::{Event, Phase, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use flight_core::sensors::SensorHealth;
-use flight_core::temporal::Sequence;
+use flight_core::temporal::{EstimateFresh, Sequence, ESTIMATE_MAX_AGE_MS};
 use flight_core::time::MonotonicInstant;
 use flight_core::vector::{Position, Velocity};
 use flight_core::vehicle::{
@@ -194,8 +194,8 @@ impl Px4Backend {
     }
 
     /// GPS / local-position evidence. Never-seen is not a revoke (preflight
-    /// still waits for the first sample). After a sample, age uses the offboard
-    /// heartbeat bound so a dropout is `Estimate::revoke_event`.
+    /// still waits for the first sample). After a sample, age uses
+    /// [`ESTIMATE_MAX_AGE_MS`] so a dropout is `Estimate::revoke_event`.
     fn estimator_estimate(&self) -> flight_core::temporal::Estimate<()> {
         match self.local_position_age_ms() {
             None => flight_core::temporal::Estimate::new(
@@ -205,7 +205,7 @@ impl Px4Backend {
             ),
             Some(age) => flight_core::temporal::Estimate::new(
                 (),
-                flight_core::temporal::HeartbeatFresh::check_age(age).is_ok(),
+                EstimateFresh::check_age(age).is_ok(),
                 flight_core::time::MonotonicInstant::ZERO,
             ),
         }
@@ -325,7 +325,7 @@ impl Px4Backend {
             }
             Event::EstimatorInvalid => {
                 self.seen_local_position = true;
-                self.last_local_position_at = Some(instant_age_ms(OFFBOARD_HEARTBEAT_MAX_AGE_MS));
+                self.last_local_position_at = Some(instant_age_ms(ESTIMATE_MAX_AGE_MS));
                 self.maybe_revoke_stale_estimator();
             }
             Event::ImuUnhealthy => {
@@ -767,7 +767,8 @@ mod tests {
         let mut b = Px4Backend::new(Px4Config::default());
         b.armed = true;
         b.seen_local_position = true;
-        b.last_local_position_at = Some(Instant::now() - Duration::from_millis(250));
+        b.last_local_position_at =
+            Some(Instant::now() - Duration::from_millis(u64::from(ESTIMATE_MAX_AGE_MS)));
         let err = b.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, -1.0));
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         assert!(b.authority_epoch() > 0);
