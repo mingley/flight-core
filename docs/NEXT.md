@@ -424,6 +424,9 @@ maps each `REVOKE_ON` event onto the companion (failsafe command, unexpected
 disarm HEARTBEAT, link drop, aged HEARTBEAT, stale `LOCAL_POSITION_NED`,
 IMU dropout). `run_px4_revoke_table` / `flight-test-px4` prove a leftover
 `Vehicle<Offboard>` cannot run `COMMANDS` after every inject.
+`run_px4_gps_loss` is leftover Offboard after `EstimatorInvalid` evaluated
+against `Scenario::GPS_LOSS.require` (same monitors as world). Live SIH is
+`sitl_gps_loss_revokes_leftover_offboard`.
 `run_ardupilot_revoke_table` / `flight-test-ardupilot` are the same leftover
 table at the Copter GUIDED companion.
 
@@ -465,6 +468,8 @@ leftover after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON` is
 `plant::leftover_after_failsafe` / `leftover_after_disarm` / `run_ros2_revoke_table` /
 `flight-test-ros2` (`flight-sim` does not depend on `flight-ros2`; no rclrs).
 World / PX4 / ArduPilot leftover tables observe leftover epoch with `Sequence`.
+PX4 leftover GPS-loss (`run_px4_gps_loss` / live `sitl_gps_loss_revokes_leftover_offboard`)
+evaluates the same `GPS_LOSS.require` monitors as world.
 
 ### F7. Typed geometry
 

@@ -18,9 +18,12 @@ Offboard. The same events appear as Offboard → Failsafe edges in
 | ImuUnhealthy | `event_revokes_authority` | `Scenario::IMU_LOSS` / revoke-table leftover Offboard |
 
 CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`
-(world leftover Offboard + JSONL + ULog). PX4 companion leftover table:
-`cargo run -p flight-px4 --bin flight-test-px4` (`Px4Backend::inject_revoke`
-for every `REVOKE_ON` event; `flight-sim` does not depend on `flight-px4`).
+(world leftover Offboard + JSONL + ULog). PX4 companion leftover table
+and leftover GPS-loss (`EstimatorInvalid` + `Scenario::GPS_LOSS.require`):
+`cargo run -p flight-px4 --bin flight-test-px4` (`run_px4_revoke_table` /
+`run_px4_gps_loss`; `flight-sim` does not depend on `flight-px4`). Live SIH
+leftover GPS-loss is `sitl_gps_loss_revokes_leftover_offboard` (`#[ignore]`;
+CI job `sitl`).
 ArduPilot GUIDED leftover table:
 `cargo run -p flight-ardupilot --bin flight-test-ardupilot`
 (`ArduPilotBackend::inject_revoke` for every `REVOKE_ON` event;

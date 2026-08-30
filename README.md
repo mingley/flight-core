@@ -36,7 +36,8 @@ increments the epoch. The old permit is still memory. It has no authority.
 6. flight-test --backend all     PASS (same contract: world, replay, ulog;
                                       gps-loss also converted PX4 SITL)
 7. PX4 SITL companion              PASS (same Vehicle API; HEARTBEAT CRITICAL/RTL revokes epoch)
-   flight-test --scenario gps-loss --backend px4-sitl
+   flight-test-px4 gps-loss leftover; sitl_live leftover Offboard after EstimatorInvalid
+   flight-test --scenario gps-loss --backend px4-sitl  (converted corpus; live SIH is sitl_live)
 8. flight-test --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
                    PASS — same contract on recorded ULog
 ```
@@ -51,13 +52,16 @@ monotonicity), and actuators-require-arm. (5) is GPS-loss: an invalid
 `Estimate` revokes `set_position_now` on a bound `Vehicle<Offboard>`.
 (6) is `differential_contract` (world, JSONL, ULog; gps-loss also converted
 SITL). (7) is the existing SIH companion path plus failsafe/RTL epoch
-revocation, and the same monitors on a converted SITL-shaped JSONL. (8) is
+revocation, leftover GPS-loss on the companion (`flight-test-px4` /
+`sitl_live` leftover Offboard after `EstimatorInvalid`), and the same
+monitors on a converted SITL-shaped JSONL. (8) is
 native ULog `fc_trace` replay. The same contract also runs as
 `flight-test --scenario hitl-miss --backend hitl` and
 `--scenario revoke-table` (every DSL revoke event from Offboard; leftover
 Offboard cannot `set_velocity` / `set_position` / `hold`; JSONL and ULog
-round-trip the same samples). `flight-test-px4` is the same leftover table
-at the PX4 companion (`inject_revoke` for every `REVOKE_ON` event).
+round-trip the same samples). `flight-test-px4` is the leftover table
+at the PX4 companion (`inject_revoke` for every `REVOKE_ON` event) plus
+GPS-loss leftover (`run_px4_gps_loss`, same `GPS_LOSS.require` as world).
 `flight-test-hitl` is leftover OffboardControl `COMMANDS` after a rack
 deadline/`Rate` miss **and** after every `REVOKE_ON` (`WorldSession::inject_revoke`).
 `flight-test-ros2` is leftover OffboardControl after `apply_failsafe`,
