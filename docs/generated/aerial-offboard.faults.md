@@ -17,4 +17,6 @@ Offboard. The same events appear as Offboard → Failsafe edges in
 | ImuUnhealthy | `event_revokes_authority` | revoke-table leftover Offboard |
 
 CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`
-(world leftover Offboard + JSONL + ULog).
+(world leftover Offboard + JSONL + ULog). PX4 companion leftover table:
+`cargo run -p flight-px4 --bin flight-test-px4` (`Px4Backend::inject_revoke`
+for every `REVOKE_ON` event; `flight-sim` does not depend on `flight-px4`).

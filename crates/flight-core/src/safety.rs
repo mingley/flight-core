@@ -407,8 +407,8 @@ macro_rules! define_aerial_authority {
         );
 
         /// Fault-injection listing generated from `revokes_on` and `commands`.
-        /// `run_revoke_table` injects each event, then a leftover Offboard handle
-        /// must refuse every named command.
+        /// `run_revoke_table` / `run_px4_revoke_table` inject each event, then a leftover
+        /// Offboard handle must refuse every named command.
         #[cfg(not(creusot))]
         pub const AERIAL_OFFBOARD_FAULTS: &'static str = concat!(
             "inject ",

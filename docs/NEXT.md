@@ -319,7 +319,7 @@ if those disagree with the kernel predicates.
 passes the OffboardControl command idents (lockstepped to the kernel
 `commands` table) to `impl_aerial_offboard_now!`, which
 generates `admit_offboard_now`, each `*_now` / async wrapper, `for_each_offboard_now`,
-and `apply_velocity_command_now`. A command ident without a method arm
+`leftover_commands_stale`, and `apply_velocity_command_now`. A command ident without a method arm
 fails `cargo check`. `AerialOffboard::evaluate` runs `MONITORS` (including
 `OffboardAdmitted`, which is kernel `admit_offboard_command`).
 `prove_aerial_authority!` expands to Kani `dsl_revokes_match_kernel`.
@@ -329,7 +329,9 @@ does not emit a second Creusot proof file. `run_revoke_table` uses
 `inject` so a leftover `Vehicle<Offboard>` refuses every `COMMANDS` method.
 Named scenario faults (`GpsDropout` / `HeartbeatStale` / `Failsafe`) go
 through the same `inject`. `differential_revoke_table` round-trips the
-leftover samples on JSONL and ULog.
+leftover samples on JSONL and ULog. `Px4Backend::inject_revoke` /
+`run_px4_revoke_table` / `flight-test-px4` run the same leftover check at
+the companion boundary (`flight-sim` does not depend on `flight-px4`).
 
 ### F5. PX4 production-quality backend
 
@@ -343,7 +345,11 @@ permit check. After failsafe is latched, `set_velocity_ned` /
 `set_position_ned` return `BackendError::Rejected` at this backend (the
 pre-offboard `pump_setpoint` stream is not gated). After a local-position
 sample older than 250 ms, `Estimate::revoke_event` latches failsafe and
-refuses new setpoints (never-seen pose is not a dropout).
+refuses new setpoints (never-seen pose is not a dropout). `inject_revoke`
+maps each `REVOKE_ON` event onto the companion (failsafe command, unexpected
+disarm HEARTBEAT, link drop, aged HEARTBEAT, stale `LOCAL_POSITION_NED`,
+IMU dropout). `run_px4_revoke_table` / `flight-test-px4` prove a leftover
+`Vehicle<Offboard>` cannot run `COMMANDS` after every inject.
 
 ### F6. Torture laboratory / differential conformance
 
@@ -365,7 +371,9 @@ a bound `Vehicle<Offboard>` cannot `set_position_now`. Every DSL revoke event ha
 test that the plant epoch increments and that a leftover Offboard handle
 cannot run `set_velocity` / `set_position` / `hold`. Named scenario
 `Fault` kernel events are `AerialOffboard::inject`. `differential_revoke_table`
-round-trips those leftover samples on JSONL and ULog.
+round-trips those leftover samples on JSONL and ULog. The PX4 companion
+runs the same leftover table via `cargo run -p flight-px4 --bin flight-test-px4`
+(`inject_revoke`); `flight-sim` does not depend on `flight-px4`.
 
 ### F7. Typed geometry
 

@@ -22,3 +22,7 @@ name = "sitl_hover"
 
 [[example]]
 name = "world_plant"
+
+[[bin]]
+name = "flight-test-px4"
+path = "src/bin/flight_test_px4.rs"

@@ -56,7 +56,8 @@ native ULog `fc_trace` replay. The same contract also runs as
 `flight-test --scenario hitl-miss --backend hitl` and
 `--scenario revoke-table` (every DSL revoke event from Offboard; leftover
 Offboard cannot `set_velocity` / `set_position` / `hold`; JSONL and ULog
-round-trip the same samples). A leftover
+round-trip the same samples). `flight-test-px4` is the same leftover table
+at the PX4 companion (`inject_revoke` for every `REVOKE_ON` event). A leftover
 `Vehicle<Armed>` after an async PX4 disarm HEARTBEAT is still typed Armed and
 has no actuation authority (`enter_offboard_now` is `StaleEpoch`).
 
@@ -266,6 +267,7 @@ cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-s
 cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend all
 cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
 cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
+cargo run -p flight-px4 --bin flight-test-px4
 cargo run -p flight-hitl --example contract_miss
 cargo run -p flight-sim --example fleet   # attach now-APIs, one WorldSession::step
 cargo run -p flight-sim --example fuzzed_world  # FuzzedImu around WorldImu; plant still WorldSession::step

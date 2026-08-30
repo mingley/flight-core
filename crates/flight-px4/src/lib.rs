@@ -21,14 +21,15 @@
 
 pub mod world_plant;
 
+use flight_core::contracts::AerialOffboard;
 use flight_core::frames::Ned;
-use flight_core::safety::Phase;
+use flight_core::safety::{Event, Phase, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
 use flight_core::sensors::SensorHealth;
 use flight_core::time::MonotonicInstant;
 use flight_core::vector::{Position, Velocity};
 use flight_core::vehicle::{
     AutopilotKind, BackendError, ConnectionInfo, MotorThrust, PreflightNotes, PreflightReport,
-    Telemetry, Vehicle, VehicleBackend,
+    Telemetry, Vehicle, VehicleBackend, VehicleHandle,
 };
 use flight_mavlink::{
     arm_disarm, flight_termination, gcs_heartbeat, heartbeat_reports_armed,
@@ -266,6 +267,71 @@ impl Px4Backend {
             self.revoke_authority();
         }
     }
+
+    /// Companion-shaped inject of a kernel revoke event. `AerialOffboard::inject`
+    /// first: non-revoke events (e.g. `MissionCommand`) are rejected. A leftover
+    /// `Vehicle<Offboard>` bound before this call must then fail
+    /// [`flight_core::vehicle::Vehicle::leftover_commands_stale`].
+    ///
+    /// UDP send may be [`BackendError::Disconnected`]; the epoch still bumps.
+    /// Kernel `Disconnect` clears failsafe — this path does not latch it.
+    pub fn inject_revoke(&mut self, event: Event) -> Result<(), BackendError> {
+        let Some(e) = AerialOffboard::inject(event) else {
+            return Err(BackendError::Rejected("not a revoke inject"));
+        };
+        let before = self.authority_epoch;
+        match e {
+            Event::TriggerFailsafe => {
+                let _ = self.trigger_failsafe_now();
+            }
+            Event::Disarm => {
+                self.armed = true;
+                let MavMessage::HEARTBEAT(h) = px4_vehicle_heartbeat(false, 0) else {
+                    return Err(BackendError::Rejected("heartbeat"));
+                };
+                self.ingest_heartbeat(h);
+            }
+            Event::Disconnect => {
+                self.link = None;
+                self.offboard = false;
+                self.failsafe_latched = false;
+                self.revoke_authority();
+            }
+            Event::HeartbeatStale => {
+                self.last_heartbeat = Some(instant_age_ms(OFFBOARD_HEARTBEAT_MAX_AGE_MS));
+                if !self.failsafe_latched {
+                    self.failsafe_latched = true;
+                    self.offboard = false;
+                }
+                self.revoke_authority();
+            }
+            Event::EstimatorInvalid => {
+                self.seen_local_position = true;
+                self.last_local_position_at = Some(instant_age_ms(OFFBOARD_HEARTBEAT_MAX_AGE_MS));
+                self.maybe_revoke_stale_estimator();
+            }
+            Event::ImuUnhealthy => {
+                self.seen_px4 = false;
+                if self.armed && !self.failsafe_latched {
+                    self.failsafe_latched = true;
+                    self.offboard = false;
+                }
+                self.revoke_authority();
+            }
+            _ => return Err(BackendError::Rejected("not a revoke inject")),
+        }
+        if self.authority_epoch == before {
+            self.revoke_authority();
+        }
+        if self.authority_epoch == before {
+            return Err(BackendError::Rejected("revoke inject did not bump epoch"));
+        }
+        Ok(())
+    }
+}
+
+fn instant_age_ms(ms: u32) -> Instant {
+    Instant::now() - Duration::from_millis(u64::from(ms))
 }
 
 impl VehicleBackend for Px4Backend {
@@ -535,6 +601,86 @@ pub fn is_px4_heartbeat(msg: &MavMessage) -> bool {
     )
 }
 
+fn offboard_safety() -> flight_core::safety::SafetyState {
+    flight_core::safety::step_all(
+        flight_core::safety::SafetyState::disconnected(),
+        &[
+            Event::Connect,
+            Event::InitComplete,
+            Event::Initialized,
+            Event::ImuHealthy,
+            Event::EstimatorValid,
+            Event::PreflightPassed,
+            Event::Arm,
+            Event::HeartbeatFresh,
+            Event::EnterOffboard,
+        ],
+    )
+    .expect("kernel walk to Offboard")
+}
+
+/// Same leftover Offboard contract as world `run_revoke_table`, at the PX4
+/// companion boundary. Lives here because `flight-sim` cannot depend on
+/// this crate (cycle: this crate already uses `flight-sim` for `WorldPlant`).
+///
+/// Does not require a live UDP link. A fresh HEARTBEAT is stamped so
+/// leftover commands are not `StaleHeartbeat` before the inject; after
+/// each `REVOKE_ON` event they are `StaleAuthority` and still typed Offboard.
+pub fn run_px4_revoke_table() -> Result<usize, String> {
+    let mut n = 0;
+    for e in AerialOffboard::REVOKE_ON {
+        let inject = AerialOffboard::inject(*e)
+            .ok_or_else(|| format!("{e:?} is in REVOKE_ON but inject returned None"))?;
+        let mut backend = Px4Backend::new(Px4Config::default());
+        backend.armed = true;
+        backend.offboard = true;
+        backend.last_heartbeat = Some(Instant::now());
+        let VehicleHandle::Offboard(mut v) = VehicleHandle::from_state(backend, offboard_safety())
+        else {
+            return Err(format!("offboard safety maps to Offboard before {e:?}"));
+        };
+        if v.leftover_commands_stale().is_ok() {
+            return Err(format!(
+                "leftover Offboard already stale before PX4 inject {e:?}"
+            ));
+        }
+        v.backend_mut()
+            .inject_revoke(inject)
+            .map_err(|err| format!("inject {e:?}: {err}"))?;
+        if v.backend().authority_epoch() == 0 {
+            return Err(format!("event {e:?} did not bump epoch"));
+        }
+        match inject {
+            Event::Disconnect | Event::Disarm => {
+                let tel = v
+                    .backend_mut()
+                    .telemetry_now()
+                    .map_err(|err| format!("telemetry after {e:?}: {err}"))?;
+                if tel.failsafe {
+                    return Err(format!("{e:?} must not latch failsafe"));
+                }
+            }
+            Event::TriggerFailsafe
+            | Event::HeartbeatStale
+            | Event::EstimatorInvalid
+            | Event::ImuUnhealthy => {
+                let tel = v
+                    .backend_mut()
+                    .telemetry_now()
+                    .map_err(|err| format!("telemetry after {e:?}: {err}"))?;
+                if !tel.failsafe {
+                    return Err(format!("{e:?} must latch failsafe"));
+                }
+            }
+            _ => {}
+        }
+        v.leftover_commands_stale()
+            .map_err(|err| format!("leftover after {e:?}: {err}"))?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,40 +913,27 @@ mod tests {
     }
 
     #[test]
-    fn leftover_offboard_refuses_all_commands_after_failsafe() {
-        use flight_core::contracts::AerialOffboard;
-        use flight_core::safety::{step_all, Event, SafetyState};
-        use flight_core::vehicle::{ErrorKind, VehicleHandle};
-        let backend = Px4Backend::new(Px4Config::default());
-        let safety = step_all(
-            SafetyState::disconnected(),
-            &[
-                Event::Connect,
-                Event::InitComplete,
-                Event::Initialized,
-                Event::ImuHealthy,
-                Event::EstimatorValid,
-                Event::PreflightPassed,
-                Event::Arm,
-                Event::HeartbeatFresh,
-                Event::EnterOffboard,
-            ],
-        )
-        .expect("offboard");
-        let VehicleHandle::Offboard(mut v) = VehicleHandle::from_state(backend, safety) else {
-            panic!("offboard safety maps to Offboard");
-        };
-        let _ = v.backend_mut().trigger_failsafe_now();
-        assert!(v.backend().authority_epoch() >= 1);
-        let mut names = Vec::new();
-        v.for_each_offboard_now(|name, result| {
-            names.push(name);
-            assert!(
-                matches!(result, Err(ErrorKind::StaleAuthority(_))),
-                "{name}: {result:?}"
-            );
-        });
-        assert_eq!(names.as_slice(), AerialOffboard::COMMANDS);
-        assert!(v.safety().offboard);
+    fn leftover_offboard_refuses_all_commands_after_every_dsl_revoke() {
+        let n = run_px4_revoke_table().expect("px4 leftover revoke table");
+        assert_eq!(n, AerialOffboard::REVOKE_ON.len());
+    }
+
+    #[test]
+    fn inject_revoke_rejects_non_revoke_events() {
+        let mut b = Px4Backend::new(Px4Config::default());
+        let err = b.inject_revoke(Event::MissionCommand).unwrap_err();
+        assert!(matches!(err, BackendError::Rejected(_)), "{err:?}");
+        assert_eq!(b.authority_epoch(), 0);
+    }
+
+    #[test]
+    fn inject_revoke_disconnect_does_not_latch_failsafe() {
+        let mut b = Px4Backend::new(Px4Config::default());
+        b.armed = true;
+        b.offboard = true;
+        b.inject_revoke(Event::Disconnect).expect("disconnect");
+        assert!(b.authority_epoch() >= 1);
+        assert!(!b.telemetry_now().unwrap().failsafe);
+        assert!(b.link.is_none());
     }
 }
