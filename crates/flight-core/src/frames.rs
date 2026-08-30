@@ -1,6 +1,7 @@
 //! Reference frames as types.
 //!
-//! Adding `Position<Ned>` to `Position<Enu>` does not compile:
+//! Adding `Position<Ned>` to `Position<Enu>` does not compile. Neither does
+//! adding two poses in one frame (`Position` is a point, not a free vector):
 //!
 //! ```compile_fail
 //! use flight_core::prelude::*;

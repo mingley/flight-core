@@ -15,12 +15,14 @@
 
 use crate::frames::Frame;
 use crate::units::Meter;
-use crate::vector::{Acceleration, Force, Position, Torque, Vector3, Velocity};
+use crate::vector::{Acceleration, Force, Torque, Vector3, Velocity};
 use core::marker::PhantomData;
 use core::ops::{Add, Mul, Neg, Sub};
 
-/// Displacement (free vector) in frame `F`. Distinct from [`Point3`] and from
-/// [`crate::vector::Position`] (NED setpoint / pose sample).
+pub use crate::vector::Point3;
+
+/// Displacement (free vector) in frame `F`. Distinct from [`Point3`]
+/// ([`crate::vector::Position`] is the same type: a pose, not a free vector).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Displacement<F> {
     v: Vector3<Meter, F>,
@@ -96,55 +98,13 @@ impl<From: Frame, To: Frame> Rotation<From, To> {
         )
     }
 
+    /// Rotate a point (no translation). Distinct from [`Transform::apply_point`].
+    pub fn apply_point(self, p: Point3<From>) -> Point3<To> {
+        Point3::from_vector(self.apply(p.vector()))
+    }
+
     pub fn then<C: Frame>(self, next: Rotation<To, C>) -> Rotation<From, C> {
         Rotation::from_matrix(matmul(next.m, self.m))
-    }
-}
-
-/// Point in frame `F`. Distinct from a free [`Displacement`].
-///
-/// `p + d` is a point. `p - q` is a displacement. `p + q` does not compile
-/// (`tests/ui/point_plus_point.rs`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Point3<F> {
-    p: Position<F>,
-}
-
-impl<F: Frame> Point3<F> {
-    pub const fn new(x: f32, y: f32, z: f32) -> Self {
-        Self {
-            p: Position::new(x, y, z),
-        }
-    }
-
-    pub const fn origin() -> Self {
-        Self::new(0.0, 0.0, 0.0)
-    }
-
-    pub const fn from_position(p: Position<F>) -> Self {
-        Self { p }
-    }
-
-    pub const fn position(self) -> Position<F> {
-        self.p
-    }
-
-    pub const fn x(self) -> f32 {
-        self.p.x()
-    }
-
-    pub const fn y(self) -> f32 {
-        self.p.y()
-    }
-
-    pub const fn z(self) -> f32 {
-        self.p.z()
-    }
-}
-
-impl Point3<crate::frames::Ned> {
-    pub const fn ned(north: f32, east: f32, down: f32) -> Self {
-        Self::new(north, east, down)
     }
 }
 
@@ -233,7 +193,7 @@ impl<From: Frame, To: Frame> Transform<From, To> {
 
     /// Transform a point: `R p + t`.
     pub fn apply_point(self, p: Point3<From>) -> Point3<To> {
-        let r = self.rotation.apply(p.position());
+        let r = self.rotation.apply(p.vector());
         Point3::new(
             r.x() + self.translation.v.x(),
             r.y() + self.translation.v.y(),
@@ -337,7 +297,9 @@ mod tests {
         let t: Transform<Ned, Body> = Transform::identity();
         let u: Transform<Body, Ned> = Transform::identity();
         let w = t.then(u);
-        let p = w.rotation().apply(Position::<Ned>::ned(1.0, 2.0, 3.0));
+        let p = w
+            .rotation()
+            .apply_point(Position::<Ned>::ned(1.0, 2.0, 3.0));
         assert!((p.x() - 1.0).abs() < 1e-6);
         assert!((p.y() - 2.0).abs() < 1e-6);
         assert!((p.z() - 3.0).abs() < 1e-6);
@@ -351,7 +313,7 @@ mod tests {
 
     #[test]
     fn point_plus_displacement_is_a_point() {
-        let p = Point3::<Ned>::ned(1.0, 2.0, 3.0);
+        let p = Position::<Ned>::ned(1.0, 2.0, 3.0);
         let d = Displacement::<Ned>::new(0.5, 0.0, -1.0);
         let q = p + d;
         assert!((q.x() - 1.5).abs() < 1e-6);

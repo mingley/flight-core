@@ -9,6 +9,13 @@
 //!
 //! ```compile_fail
 //! use flight_core::prelude::*;
+//! fn boom(a: Position<Ned>, b: Position<Ned>) {
+//!     let _ = a + b;
+//! }
+//! ```
+//!
+//! ```compile_fail
+//! use flight_core::prelude::*;
 //! fn boom(a: Position<Ned>, b: Position<Enu>) {
 //!     let _ = a + b;
 //! }

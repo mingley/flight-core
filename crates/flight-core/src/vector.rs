@@ -1,4 +1,15 @@
-//! Frame- and unit-tagged 3-vectors.
+//! Frame- and unit-tagged 3-vectors, and pose points that are not free vectors.
+//!
+//! [`Position`] is a [`Point3`]: two poses cannot be added even in one frame
+//! (`tests/ui/position_plus_position.rs`). Mixed frames still fail
+//! (`tests/ui/mix_frames.rs`).
+//!
+//! ```compile_fail
+//! use flight_core::prelude::*;
+//! fn boom(a: Position<Ned>, b: Position<Ned>) {
+//!     let _ = a + b;
+//! }
+//! ```
 
 use crate::frames::{Body, Enu, Frame, Frd, Ned};
 use crate::units::{
@@ -158,7 +169,87 @@ impl<U, F> Div<f32> for Vector3<U, F> {
     }
 }
 
-pub type Position<F> = Vector3<Meter, F>;
+/// Point in frame `F`. Distinct from a free [`Vector3<Meter, F>`] displacement.
+///
+/// `p + d` is a point ([`crate::geometry::Displacement`]). `p - q` is a
+/// displacement. `p + q` does not compile (`tests/ui/point_plus_point.rs`,
+/// `tests/ui/position_plus_position.rs`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(
+    all(feature = "serde", not(creusot)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[cfg_attr(all(feature = "serde", not(creusot)), serde(transparent))]
+pub struct Point3<F> {
+    v: Vector3<Meter, F>,
+}
+
+impl<F> Point3<F> {
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self {
+            v: Vector3::new(x, y, z),
+        }
+    }
+
+    pub const fn zero() -> Self {
+        Self::new(0.0, 0.0, 0.0)
+    }
+
+    pub const fn origin() -> Self {
+        Self::zero()
+    }
+
+    pub const fn from_vector(v: Vector3<Meter, F>) -> Self {
+        Self { v }
+    }
+
+    pub const fn vector(self) -> Vector3<Meter, F> {
+        self.v
+    }
+
+    pub const fn x(self) -> f32 {
+        self.v.x()
+    }
+
+    pub const fn y(self) -> f32 {
+        self.v.y()
+    }
+
+    pub const fn z(self) -> f32 {
+        self.v.z()
+    }
+
+    pub const fn xyz(self) -> [f32; 3] {
+        self.v.xyz()
+    }
+
+    pub fn from_xyz(v: [f32; 3]) -> Self {
+        Self::from_vector(Vector3::from_xyz(v))
+    }
+
+    pub fn is_finite(self) -> bool {
+        self.v.is_finite()
+    }
+}
+
+#[cfg(not(creusot))]
+impl<F: Frame> fmt::Display for Point3<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "[{:.3}, {:.3}, {:.3}] {} {} (point)",
+            self.x(),
+            self.y(),
+            self.z(),
+            Meter::NAME,
+            F::NAME
+        )
+    }
+}
+
+/// Pose / setpoint / telemetry sample. Same type as [`Point3`] so two poses
+/// cannot be added even in one frame.
+pub type Position<F> = Point3<F>;
 pub type Velocity<F> = Vector3<MeterPerSecond, F>;
 pub type Acceleration<F> = Vector3<MeterPerSecondSquared, F>;
 pub type AngularVelocity<U, F> = Vector3<U, F>;
@@ -266,6 +357,19 @@ mod tests {
         let q = p.to_enu().to_ned();
         assert_eq!(p, q);
         assert!((p.altitude_agl().get() - 3.0).abs() < 1e-6);
+    }
+
+    fn position_is_the_point_type(p: Position<Ned>) -> Point3<Ned> {
+        p
+    }
+
+    #[test]
+    fn position_is_point3() {
+        let p = Position::ned(1.0, 2.0, 3.0);
+        let q = position_is_the_point_type(p);
+        assert_eq!(q.xyz(), [1.0, 2.0, 3.0]);
+        assert!(q.is_finite());
+        assert_eq!(Point3::<Ned>::origin(), Position::zero());
     }
 
     #[test]
