@@ -125,9 +125,7 @@ impl Px4Backend {
                     if h.mavtype == MavType::MAV_TYPE_QUADROTOR
                         || h.mavtype == MavType::MAV_TYPE_GENERIC =>
                 {
-                    self.seen_px4 = true;
-                    self.last_heartbeat = Some(Instant::now());
-                    self.apply_vehicle_heartbeat(&h);
+                    self.ingest_heartbeat(h);
                 }
                 Ok(_) => {}
                 Err(_) => break,
@@ -178,6 +176,14 @@ impl Px4Backend {
             )
         };
         self.send(&msg)
+    }
+
+    /// Apply a decoded PX4 HEARTBEAT (inbox path, tests, and alternative links).
+    /// Unexpected disarm or a failsafe-shaped status revokes actuation authority.
+    pub fn ingest_heartbeat(&mut self, h: mavlink::common::HEARTBEAT_DATA) {
+        self.last_heartbeat = Some(Instant::now());
+        self.seen_px4 = true;
+        self.apply_vehicle_heartbeat(&h);
     }
 
     /// PX4 asynchronously left offboard authority. Idempotent: one epoch bump
@@ -274,6 +280,7 @@ impl VehicleBackend for Px4Backend {
         ))?;
         self.armed = false;
         self.offboard = false;
+        self.revoke_authority();
         Ok(())
     }
 
@@ -618,5 +625,49 @@ mod tests {
 
         stop.store(true, Ordering::Relaxed);
         let _ = fake.join();
+    }
+
+    #[test]
+    fn unexpected_disarm_heartbeat_revokes_stale_armed_vehicle() {
+        use flight_core::contracts::AuthorityReject;
+        use flight_core::safety::{step_all, Event, SafetyState};
+        use flight_core::vehicle::{ErrorKind, VehicleHandle};
+        let mut backend = Px4Backend::new(Px4Config::default());
+        backend.armed = true;
+        let safety = step_all(
+            SafetyState::disconnected(),
+            &[
+                Event::Connect,
+                Event::InitComplete,
+                Event::Initialized,
+                Event::ImuHealthy,
+                Event::EstimatorValid,
+                Event::PreflightPassed,
+                Event::Arm,
+            ],
+        )
+        .expect("armed");
+        let VehicleHandle::Armed(mut armed) = VehicleHandle::from_state(backend, safety) else {
+            panic!("armed safety maps to Armed");
+        };
+        assert_eq!(armed.backend().authority_epoch(), 0);
+        let MavMessage::HEARTBEAT(h) = px4_vehicle_heartbeat(false, 0) else {
+            panic!("heartbeat");
+        };
+        armed.backend_mut().ingest_heartbeat(h);
+        assert!(
+            armed.backend().authority_epoch() >= 1,
+            "async PX4 disarm must bump the epoch"
+        );
+        let err = armed.enter_offboard_now().unwrap_err();
+        assert!(
+            matches!(
+                err.error,
+                ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
+            ),
+            "{:?}",
+            err.error
+        );
+        assert!(err.vehicle.safety().armed);
     }
 }

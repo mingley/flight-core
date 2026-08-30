@@ -387,6 +387,9 @@ impl<B: VehicleBackend> Vehicle<Armed, B> {
     /// Same as [`Self::enter_offboard`] when the backend completes without parking.
     /// Compiles only from Armed (`tests/ui/ready_offboard.rs` and siblings).
     pub fn enter_offboard_now(mut self) -> Result<Vehicle<Offboard, B>, TransitionError<Armed, B>> {
+        if let Err(error) = self.require_live_permit() {
+            return Err(self.fail(error));
+        }
         if let Err(error) = self.apply_event(Event::HeartbeatFresh) {
             return Err(self.fail(error));
         }
@@ -520,6 +523,9 @@ impl<B: VehicleBackend> Vehicle<Offboard, B> {
     pub fn start_takeoff_now(
         mut self,
     ) -> Result<Vehicle<Takeoff, B>, TransitionError<Offboard, B>> {
+        if let Err(error) = self.require_live_permit() {
+            return Err(self.fail(error));
+        }
         if let Err(e) = self.inner.backend.takeoff_now() {
             return Err(self.fail(ErrorKind::Backend(e)));
         }
@@ -812,6 +818,9 @@ fn apply_airborne<S: State, B: VehicleBackend>(
 fn apply_land<S: State, B: VehicleBackend>(
     mut vehicle: Vehicle<S, B>,
 ) -> Result<Vehicle<Landing, B>, TransitionError<S, B>> {
+    if let Err(error) = vehicle.require_live_permit() {
+        return Err(vehicle.fail(error));
+    }
     match vehicle.inner.backend.land_now() {
         Ok(()) => {
             if let Err(error) = vehicle.apply_event(Event::Land) {
@@ -1501,5 +1510,40 @@ mod tests {
             ErrorKind::StaleAuthority(AuthorityReject::StaleCommand)
         ));
         assert!(v.safety().offboard);
+    }
+
+    #[test]
+    fn stale_armed_handle_cannot_enter_offboard() {
+        let VehicleHandle::PreflightReady(drone) =
+            VehicleHandle::from_state(NullBackend::default(), ready_safety())
+        else {
+            panic!("ready maps to PreflightReady");
+        };
+        let mut armed = drone.arm_now().unwrap();
+        assert!(armed.safety().armed);
+        armed.backend_mut().revoke_authority();
+        let err = armed.enter_offboard_now().unwrap_err();
+        assert!(matches!(
+            err.error,
+            ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
+        ));
+        assert!(err.vehicle.safety().armed);
+    }
+
+    #[test]
+    fn stale_offboard_handle_cannot_start_takeoff() {
+        let VehicleHandle::PreflightReady(drone) =
+            VehicleHandle::from_state(NullBackend::default(), ready_safety())
+        else {
+            panic!("ready maps to PreflightReady");
+        };
+        let mut offboard = drone.arm_now().unwrap().enter_offboard_now().unwrap();
+        offboard.backend_mut().revoke_authority();
+        let err = offboard.start_takeoff_now().unwrap_err();
+        assert!(matches!(
+            err.error,
+            ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
+        ));
+        assert!(err.vehicle.safety().offboard);
     }
 }
