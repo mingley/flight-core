@@ -179,6 +179,12 @@ Goal: every domain can **hold and move** under the same typestate story; compani
 
 ### B8. `no_std` kernel deploy (not typestate)
 
+**Status: landed (host tick).** [`host::kernel_host_tick`](../crates/flight-core/src/host.rs)
+walks `safety::step` / `ground_step` / `marine_step` / HITL
+`deadline_outcome` (miss zeros the command). `cargo run -p flight-core
+--example kernel_tick` is the host binary. `--no-default-features` still
+builds the kernel. Vehicles stay `std` (remaining-spec §6.1). No MSRV bump.
+
 **Acceptance:**
 
 1. Discrete aerial/ground/marine/HITL machines remain usable `no_std` (already the `--no-default-features` story).
@@ -459,8 +465,8 @@ FC-CAP-AerialOffboard, FC-INV-001..003. `human_readable_spec()`.
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B5 landed. E1 landed. F1–F10 landed. C1–C4 landed.** Next: live Gazebo if someone needs a world renderer, then **B6 / B7 / B8**.
-2. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
+1. **A1–A6 landed. B1–B5 landed. B8 landed. E1 landed. F1–F10 landed. C1–C4 landed.** Next: live Gazebo if someone needs a world renderer, then **B6 / B7**.
+2. **B6 / B7** (more companions, metal HITL) when the API is stable.
 3. **D\*** morphologies last.
 
 When official MHS is open-sourced, translate `flight-mhs` onto that schema. Do not collapse P1–P14 to make a driver “easier.”

@@ -185,7 +185,7 @@ Hold, airborne, station, resume, dock, park, return, recover are walked on `Worl
 
 ### 6.1 `no_std` vehicle API
 
-**Status: landed as std-only vehicles.** Crate docs state `Vehicle` / `GroundVehicle` / `MarineVehicle` require `std`. `--no-default-features` is units, frames, sensors, safety, hydro, mech, and the attitude estimator. CI checks that build. There is no `no_std` typestate handle.
+**Status: landed as std-only vehicles.** Crate docs state `Vehicle` / `GroundVehicle` / `MarineVehicle` require `std`. `--no-default-features` is units, frames, sensors, safety, hydro, mech, and the attitude estimator. CI checks that build. There is no `no_std` typestate handle. Host tick of the discrete machines is `flight_core::host::kernel_host_tick` / `cargo run -p flight-core --example kernel_tick` (NEXT B8).
 
 ### 6.2 Ground / marine pose hold
 

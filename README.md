@@ -277,6 +277,7 @@ cargo run -p flight-px4 --bin flight-test-px4
 cargo run -p flight-hitl --bin flight-test-hitl
 cargo run -p flight-ros2 --bin flight-test-ros2
 cargo run -p flight-hitl --example contract_miss
+cargo run -p flight-core --example kernel_tick  # no_std kernel host tick (NEXT B8)
 cargo run -p flight-sim --example fleet   # attach now-APIs, one WorldSession::step
 cargo run -p flight-sim --example fuzzed_world  # FuzzedImu around WorldImu; plant still WorldSession::step
 cargo run -p robot-lab --example coastal
@@ -478,7 +479,7 @@ physical autonomy (agentic experiment / control / understand still applies):
 - [`docs/safety-contract.md`](docs/safety-contract.md) — generated-from-tables traceability
 - [`docs/generated/traceability.md`](docs/generated/traceability.md) — ID matrix
 - [`docs/copper.md`](docs/copper.md) — complement Copper; do not compete on runtime
-- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed; C1–C4 landed)
+- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed; C1–C4 and B8 landed)
 
 A live PX4 SITL binary is optional locally (`cargo run -p flight-px4 --example sitl_hover`). Default `cargo test` skips `sitl_live` (`#[ignore]`). GitHub CI runs fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, a lavapipe GPU hydro job, `cargo kani -p flight-verify` (45 harnesses, kani-verifier 0.67.0), `cargo test -p flight-ros2 --features rclrs` (ROS 2 Jazzy), `cargo creusot prove -p flight-core` (Creusot 0.5.0, 81 libraries), and job `sitl` (PX4 SIH `px4io/px4-sitl:v1.18.0-beta2` + the ignored companion test). `docs/generated/proof-summary.txt` is the agent digest those counts lockstep; `Experiment` copies it into `run.json`.
 
