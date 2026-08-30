@@ -18,7 +18,7 @@
 //! [`WorldSession::attach_hold`]. An idle Twist (absent drone field) leaves
 //! that hold in place; a live Twist velocity clears it.
 
-use flight_core::contracts::{evaluate_trace, AerialOffboard, TraceSample};
+use flight_core::contracts::{evaluate_trace, AerialOffboard, LeftoverContract, TraceSample};
 use flight_core::safety::Event;
 use flight_core::temporal::Sequence;
 use flight_core::vehicle::{
@@ -366,47 +366,92 @@ fn drone_trace(backend: &WorldBackend) -> Result<TraceSample, String> {
     })
 }
 
-/// Leftover OffboardControl after `EstimatorInvalid`, evaluated against
-/// [`AerialOffboard::GPS_LOSS_REQUIRE`] (same monitors as world gps-loss).
-/// Inland grant is Takeoff. Lives here because `flight-sim` cannot depend
-/// on this crate.
-pub fn run_ros2_gps_loss() -> Result<Ros2GpsLossReport, String> {
+/// Leftover OffboardControl after `contract.inject`, evaluated against
+/// `contract.require`. Inland grant is Takeoff. Lives here because
+/// `flight-sim` cannot depend on this crate.
+pub fn run_ros2_leftover_contract(
+    contract: LeftoverContract,
+) -> Result<LeftoverContractReport, String> {
     let mut plant = FleetPlant::inland(1);
-    plant.grant_all().map_err(|err| format!("grant: {err}"))?;
+    plant
+        .grant_all()
+        .map_err(|err| format!("{} grant: {err}", contract.name))?;
     let VehicleHandle::Takeoff(mut leftover) = plant
         .session()
         .aerial("drone")
         .attach()
-        .map_err(|err| format!("bind Takeoff: {err}"))?
+        .map_err(|err| format!("{} bind Takeoff: {err}", contract.name))?
     else {
-        return Err("inland grant must bind Takeoff".into());
+        return Err(format!("{}: inland grant must bind Takeoff", contract.name));
     };
     if leftover.leftover_commands_stale().is_ok() {
-        return Err("leftover already stale before GPS-loss inject".into());
+        return Err(format!(
+            "{}: leftover already stale before inject",
+            contract.name
+        ));
     }
     let before = drone_trace(leftover.backend())?;
     if before.failsafe {
-        return Err("failsafe already latched before GPS-loss inject".into());
+        return Err(format!(
+            "{}: failsafe already latched before inject",
+            contract.name
+        ));
     }
     plant
-        .inject_revoke(Event::EstimatorInvalid)
-        .map_err(|err| format!("inject EstimatorInvalid: {err}"))?;
+        .inject_revoke(contract.inject)
+        .map_err(|err| format!("{} inject {:?}: {err}", contract.name, contract.inject))?;
     leftover
         .leftover_commands_stale()
-        .map_err(|err| format!("leftover after GPS-loss: {err}"))?;
+        .map_err(|err| format!("{} leftover after inject: {err}", contract.name))?;
     let after = drone_trace(leftover.backend())?;
     if !after.failsafe {
-        return Err("EstimatorInvalid must latch failsafe".into());
+        return Err(format!(
+            "{}: {:?} must latch failsafe",
+            contract.name, contract.inject
+        ));
     }
     if after.epoch <= before.epoch {
-        return Err("GPS-loss inject did not bump epoch".into());
+        return Err(format!("{}: inject did not bump epoch", contract.name));
     }
     let samples = vec![before, after];
-    evaluate_trace(&samples, AerialOffboard::GPS_LOSS_REQUIRE)
-        .map_err(|e| format!("GPS_LOSS {} at {}", e.requirement, e.index))?;
-    AerialOffboard::evaluate(&samples)
-        .map_err(|e| format!("capability {} at {}", e.requirement, e.index))?;
-    Ok(Ros2GpsLossReport { samples })
+    evaluate_trace(&samples, contract.require)
+        .map_err(|e| format!("{} {} at {}", contract.name, e.requirement, e.index))?;
+    AerialOffboard::evaluate(&samples).map_err(|e| {
+        format!(
+            "{} capability {} at {}",
+            contract.name, e.requirement, e.index
+        )
+    })?;
+    Ok(LeftoverContractReport {
+        name: contract.name,
+        inject: contract.inject,
+        samples,
+    })
+}
+
+/// Every distinct leftover contract at the ROS 2 plant.
+pub fn run_ros2_leftover_contracts() -> Result<Vec<LeftoverContractReport>, String> {
+    AerialOffboard::LEFTOVER_CONTRACTS
+        .iter()
+        .copied()
+        .map(run_ros2_leftover_contract)
+        .collect()
+}
+
+/// Leftover OffboardControl after `EstimatorInvalid`.
+pub fn run_ros2_gps_loss() -> Result<Ros2GpsLossReport, String> {
+    let report = run_ros2_leftover_contract(AerialOffboard::GPS_LOSS_CONTRACT)?;
+    Ok(Ros2GpsLossReport {
+        samples: report.samples,
+    })
+}
+
+/// Result of [`run_ros2_leftover_contract`].
+#[derive(Clone, Debug)]
+pub struct LeftoverContractReport {
+    pub name: &'static str,
+    pub inject: Event,
+    pub samples: Vec<TraceSample>,
 }
 
 /// Result of [`run_ros2_gps_loss`].
@@ -1676,6 +1721,20 @@ mod tests {
         assert!(!report.samples[0].failsafe);
         assert!(report.samples[1].failsafe);
         assert!(report.samples[1].epoch > report.samples[0].epoch);
+    }
+
+    #[test]
+    fn leftover_named_contracts_satisfy_world_monitors() {
+        let reports = run_ros2_leftover_contracts().expect("ros2 leftover contracts");
+        assert_eq!(reports.len(), AerialOffboard::LEFTOVER_CONTRACTS.len());
+        for (report, contract) in reports.iter().zip(AerialOffboard::LEFTOVER_CONTRACTS) {
+            assert_eq!(report.name, contract.name);
+            assert_eq!(report.inject, contract.inject);
+            assert_eq!(report.samples.len(), 2);
+            assert!(!report.samples[0].failsafe);
+            assert!(report.samples[1].failsafe);
+            assert!(report.samples[1].epoch > report.samples[0].epoch);
+        }
     }
 
     #[test]

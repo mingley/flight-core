@@ -22,7 +22,7 @@
 //!   rover halt, and a drone NED pose hold through `attach_hold`;
 //!   [`plant::inject_revoke`] / [`plant::leftover_after_failsafe`] /
 //!   [`plant::leftover_after_disarm`] / [`plant::run_ros2_revoke_table`] /
-//!   [`plant::run_ros2_gps_loss`]
+//!   [`plant::run_ros2_leftover_contracts`] / [`plant::run_ros2_gps_loss`]
 //!   are leftover OffboardControl after `apply_failsafe`, `apply_disarm`,
 //!   and every `REVOKE_ON` event — `flight-sim` does not depend on this crate)
 //! - [`px4`] serializes that setpoint as ROS 2 CDR `px4_msgs` (NED, `NaN` unused)

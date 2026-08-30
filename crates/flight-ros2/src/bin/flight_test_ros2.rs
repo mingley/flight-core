@@ -22,8 +22,8 @@ fn main() {
         eprintln!("FAIL scenario=revoke-table leftover backend=ros2: {e}");
         std::process::exit(1);
     });
-    let gps = flight_ros2::plant::run_ros2_gps_loss().unwrap_or_else(|e| {
-        eprintln!("FAIL scenario=gps-loss leftover backend=ros2: {e}");
+    let contracts = flight_ros2::plant::run_ros2_leftover_contracts().unwrap_or_else(|e| {
+        eprintln!("FAIL leftover-contracts leftover backend=ros2: {e}");
         std::process::exit(1);
     });
     println!("PASS scenario=ros2-failsafe leftover={failsafe} backend=ros2 (apply_failsafe)");
@@ -31,8 +31,12 @@ fn main() {
     println!(
         "PASS scenario=revoke-table leftover={n} events={n} backend=ros2 (plant inject_revoke)"
     );
-    println!(
-        "PASS scenario=gps-loss leftover=1 samples={} backend=ros2 (plant EstimatorInvalid, GPS_LOSS require)",
-        gps.samples.len()
-    );
+    for report in contracts {
+        println!(
+            "PASS scenario={} leftover=1 samples={} backend=ros2 (plant {:?}, leftover contract)",
+            report.name,
+            report.samples.len(),
+            report.inject
+        );
+    }
 }
