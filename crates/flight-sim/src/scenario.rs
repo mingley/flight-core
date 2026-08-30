@@ -7,8 +7,9 @@
 use flight_core::contracts::{
     evaluate_trace, parse_trace_jsonl, AerialOffboard, MonitorFail, Requirement, TraceSample,
 };
+use flight_core::frames::Ned;
 use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
-use flight_core::temporal::{heartbeat_revoke_event, Estimate};
+use flight_core::temporal::{heartbeat_revoke_event, Estimate, Observation};
 use flight_core::time::MonotonicInstant;
 use robot_world::World;
 
@@ -349,7 +350,8 @@ fn inject_drone_event(session: &WorldSession, e: Event) -> Result<(), String> {
 fn apply_fault(session: &WorldSession, fault: Fault) -> Result<(), String> {
     match fault {
         Fault::GpsDropout { .. } => {
-            let est = Estimate::new((), false, MonotonicInstant::ZERO);
+            let gps = Observation::<(), Ned>::new((), MonotonicInstant::ZERO);
+            let est = Estimate::new(gps, false, gps.stamped_at);
             if let Some(e) = est.revoke_event() {
                 inject_drone_event(session, e)?;
             }
@@ -456,7 +458,8 @@ mod tests {
 
     #[test]
     fn gps_dropout_is_an_invalid_estimate() {
-        let est = Estimate::new((), false, MonotonicInstant::ZERO);
+        let gps = Observation::<(), Ned>::new((), MonotonicInstant::ZERO);
+        let est = Estimate::new(gps, false, gps.stamped_at);
         assert_eq!(
             est.revoke_event(),
             Fault::GpsDropout { at_secs: 0.0 }.kernel_event()

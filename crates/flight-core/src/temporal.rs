@@ -398,5 +398,10 @@ mod tests {
         assert!(ts.precedes(Timestamp::from_millis(6)));
         assert!(!Timestamp::from_millis(6).precedes(ts));
         assert_eq!(ts.age_ms(MonotonicInstant::from_millis(9)), 4);
+        assert_eq!(
+            Rate::HZ_50.period_ns(),
+            crate::hitl::DeadlineSpec::HZ_50.period_ns
+        );
+        assert!(crate::hitl::DeadlineSpec::HZ_50.budget_ns <= Rate::HZ_50.period_ns());
     }
 }
