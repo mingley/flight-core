@@ -295,7 +295,7 @@ epoch bump predicates. Everything else is untrusted relative to `step`.
 `heartbeat_age_ok` / `command_age_ok`. `require_live_permit` uses
 `HeartbeatFresh::check_age` **and** `AerialOffboard::admit`.
 `Vehicle::apply_velocity_command_now` rejects `StaleCommand` when command age
-≥ 100 ms (`Command::check_age`). An invalid `Estimate` yields
+≥ 100 ms (`Command::deadline` / `Command::check_age`). An invalid `Estimate` yields
 `Event::EstimatorInvalid` (`Estimate::revoke_event`); a stale heartbeat age
 yields `Event::HeartbeatStale` (`heartbeat_revoke_event`). GPS-loss and
 heartbeat-loss inject those events. PX4 setpoints fail `StaleHeartbeat` when the
@@ -321,7 +321,8 @@ generates `admit_offboard_now` / `set_velocity_now` / `set_position_now` /
 `OffboardAdmitted`, which is kernel `admit_offboard_command`).
 `prove_aerial_authority!` expands to Kani `dsl_revokes_match_kernel`.
 Checked-in generated artifacts under [`docs/generated/`](generated/) must
-match the table. The macro does not emit a second Creusot file.
+match the table (`SPEC`, mermaid, Graphviz, `CREUSOT`, `FAULTS`). The macro
+does not emit a second Creusot proof file.
 
 ### F5. PX4 production-quality backend
 
@@ -333,7 +334,9 @@ heartbeat. Ingested HEARTBEAT with `MAV_STATE_CRITICAL` / `EMERGENCY` /
 (NAV_LAND) does not latch failsafe. `authority_heartbeat_age_ms` feeds the
 permit check. After failsafe is latched, `set_velocity_ned` /
 `set_position_ned` return `BackendError::Rejected` at this backend (the
-pre-offboard `pump_setpoint` stream is not gated).
+pre-offboard `pump_setpoint` stream is not gated). After a local-position
+sample older than 250 ms, `Estimate::revoke_event` latches failsafe and
+refuses new setpoints (never-seen pose is not a dropout).
 
 ### F6. Torture laboratory / differential conformance
 
@@ -372,7 +375,8 @@ dependency. Do not add a scheduler/pubsub/physics engine.
 ### F9. HITL on the same contract
 
 **Status: landed.** Deadline miss already trips attach failsafe; the plant
-epoch now increments. `injected_miss_zeros_command_and_trips_failsafe`
+epoch now increments. `WorldRack::finish` fail-closes if `temporal::Deadline`
+and kernel `deadline_outcome` disagree. `injected_miss_zeros_command_and_trips_failsafe`
 asserts `authority_epoch > 0` and evaluates `Requirement::ActuatorsImplyArmed`
 on the miss sample. `WorldRack::contract_deadline_miss` and
 `flight-test --backend hitl` evaluate `Scenario::HITL_MISS.require`

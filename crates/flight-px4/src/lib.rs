@@ -75,6 +75,7 @@ pub struct Px4Backend {
     failsafe_latched: bool,
     authority_epoch: u32,
     last_heartbeat: Option<Instant>,
+    last_local_position_at: Option<Instant>,
 }
 
 impl Px4Backend {
@@ -93,6 +94,7 @@ impl Px4Backend {
             failsafe_latched: false,
             authority_epoch: 0,
             last_heartbeat: None,
+            last_local_position_at: None,
         }
     }
 
@@ -120,6 +122,7 @@ impl Px4Backend {
                     self.last_position = Position::ned(p.x, p.y, p.z);
                     self.last_velocity = Velocity::ned(p.vx, p.vy, p.vz);
                     self.seen_local_position = true;
+                    self.last_local_position_at = Some(Instant::now());
                 }
                 Ok((_, MavMessage::HEARTBEAT(h)))
                     if h.mavtype == MavType::MAV_TYPE_QUADROTOR
@@ -152,7 +155,8 @@ impl Px4Backend {
         }
     }
 
-    /// New offboard setpoints after failsafe are refused at this backend.
+    /// New offboard setpoints after failsafe **or** a stale local-position
+    /// Estimate are refused at this backend.
     /// `pump_setpoint` stays ungated so the PX4 ~1 s pre-offboard stream still
     /// runs; Vehicle-layer `set_velocity_ned` / `set_position_ned` stop.
     fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
@@ -160,6 +164,49 @@ impl Px4Backend {
             return Err(BackendError::Rejected("actuation authority revoked"));
         }
         Ok(())
+    }
+
+    fn local_position_age_ms(&self) -> Option<u32> {
+        self.last_local_position_at.map(|t| {
+            let ms = t.elapsed().as_millis();
+            if ms > u128::from(u32::MAX) {
+                u32::MAX
+            } else {
+                ms as u32
+            }
+        })
+    }
+
+    /// GPS / local-position evidence. Never-seen is not a revoke (preflight
+    /// still waits for the first sample). After a sample, age uses the offboard
+    /// heartbeat bound so a dropout is `Estimate::revoke_event`.
+    fn estimator_estimate(&self) -> flight_core::temporal::Estimate<()> {
+        match self.local_position_age_ms() {
+            None => flight_core::temporal::Estimate::new(
+                (),
+                false,
+                flight_core::time::MonotonicInstant::ZERO,
+            ),
+            Some(age) => flight_core::temporal::Estimate::new(
+                (),
+                flight_core::temporal::HeartbeatFresh::check_age(age).is_ok(),
+                flight_core::time::MonotonicInstant::ZERO,
+            ),
+        }
+    }
+
+    fn maybe_revoke_stale_estimator(&mut self) {
+        if self.local_position_age_ms().is_none() {
+            return;
+        }
+        if self.estimator_estimate().revoke_event().is_none() {
+            return;
+        }
+        if !self.failsafe_latched {
+            self.failsafe_latched = true;
+            self.offboard = false;
+            self.revoke_authority();
+        }
     }
 
     fn pump_setpoint(&mut self) -> Result<(), BackendError> {
@@ -313,6 +360,8 @@ impl VehicleBackend for Px4Backend {
     }
 
     async fn set_velocity_ned(&mut self, velocity: Velocity<Ned>) -> Result<(), BackendError> {
+        self.ingest_inbox();
+        self.maybe_revoke_stale_estimator();
         self.refuse_revoked_setpoint()?;
         self.last_velocity = velocity;
         self.stream_position = false;
@@ -320,6 +369,8 @@ impl VehicleBackend for Px4Backend {
     }
 
     async fn set_position_ned(&mut self, position: Position<Ned>) -> Result<(), BackendError> {
+        self.ingest_inbox();
+        self.maybe_revoke_stale_estimator();
         self.refuse_revoked_setpoint()?;
         self.last_position = position;
         self.stream_position = true;
@@ -368,7 +419,8 @@ impl VehicleBackend for Px4Backend {
             imu: None,
             imu_health: SensorHealth::Ok,
             imu_healthy: self.seen_px4,
-            estimator_valid: self.seen_local_position,
+            estimator_valid: self.seen_local_position
+                && self.estimator_estimate().revoke_event().is_none(),
             armed: self.armed,
             actuators_enabled: self.armed && !self.failsafe_latched,
             offboard: self.offboard,
@@ -533,6 +585,21 @@ mod tests {
         let err = b.set_velocity_ned_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0));
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, -1.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+    }
+
+    #[test]
+    fn stale_local_position_estimate_refuses_setpoint() {
+        let mut b = Px4Backend::new(Px4Config::default());
+        b.armed = true;
+        b.seen_local_position = true;
+        b.last_local_position_at = Some(Instant::now() - Duration::from_millis(250));
+        let err = b.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, -1.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        assert!(b.authority_epoch() > 0);
+        assert!(b.telemetry_now().unwrap().failsafe);
+        assert!(!b.telemetry_now().unwrap().estimator_valid);
+        let err = b.set_velocity_ned_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0));
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
     }
 
