@@ -9,8 +9,8 @@ edges in [`aerial-offboard.transitions.md`](aerial-offboard.transitions.md).
 | TriggerFailsafe | `event_revokes_authority` | `Fault::Failsafe` / HITL miss |
 | Disarm | `event_revokes_authority` | revoke-table |
 | Disconnect | `event_revokes_authority` | revoke-table |
-| HeartbeatStale | `event_revokes_authority` | `Scenario::HEARTBEAT_LOSS` |
-| EstimatorInvalid | `event_revokes_authority` | `Scenario::GPS_LOSS` |
+| HeartbeatStale | `event_revokes_authority` | `Scenario::HEARTBEAT_LOSS` via `heartbeat_revoke_event` |
+| EstimatorInvalid | `event_revokes_authority` | `Scenario::GPS_LOSS` via `Estimate::revoke_event` |
 | ImuUnhealthy | `event_revokes_authority` | revoke-table |
 
 CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`

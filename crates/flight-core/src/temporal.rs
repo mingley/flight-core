@@ -132,6 +132,15 @@ pub type HeartbeatFresh = Fresh<(), { OFFBOARD_HEARTBEAT_MAX_AGE_MS }>;
 /// Planner command younger than [`COMMAND_MAX_AGE_MS`].
 pub type CommandFresh<T> = Fresh<T, { COMMAND_MAX_AGE_MS }>;
 
+/// Kernel event when heartbeat age is outside the offboard bound.
+pub const fn heartbeat_revoke_event(age_ms: u32) -> Option<crate::safety::Event> {
+    if HeartbeatFresh::check_age(age_ms).is_ok() {
+        None
+    } else {
+        Some(crate::safety::Event::HeartbeatStale)
+    }
+}
+
 /// Monotonic sequence numbers. A jump backward is a replay or clock fault.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sequence {
@@ -207,6 +216,15 @@ impl<T> Estimate<T> {
             Some(&self.value)
         } else {
             None
+        }
+    }
+
+    /// Kernel event when this estimate is not usable as actuation evidence.
+    pub const fn revoke_event(&self) -> Option<crate::safety::Event> {
+        if self.valid {
+            None
+        } else {
+            Some(crate::safety::Event::EstimatorInvalid)
         }
     }
 }
@@ -329,6 +347,12 @@ mod tests {
     fn estimate_validated_is_none_when_invalid() {
         let e = Estimate::new(1u8, false, MonotonicInstant::ZERO);
         assert!(e.validated().is_none());
+        assert_eq!(
+            e.revoke_event(),
+            Some(crate::safety::Event::EstimatorInvalid)
+        );
+        let ok = Estimate::new(1u8, true, MonotonicInstant::ZERO);
+        assert!(ok.revoke_event().is_none());
     }
 
     #[test]
@@ -362,6 +386,11 @@ mod tests {
                     && CommandFresh::<()>::check_age(age).is_ok(),
                 crate::safety::admit_offboard_command(age, age),
                 "admit age {age}"
+            );
+            assert_eq!(
+                heartbeat_revoke_event(age).is_some(),
+                !crate::safety::heartbeat_age_ok(age),
+                "heartbeat revoke age {age}"
             );
         }
         let ts = Timestamp::from_millis(5);

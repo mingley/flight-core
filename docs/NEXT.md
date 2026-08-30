@@ -295,7 +295,10 @@ epoch bump predicates. Everything else is untrusted relative to `step`.
 `heartbeat_age_ok` / `command_age_ok`. `require_live_permit` uses
 `HeartbeatFresh::check_age` **and** `AerialOffboard::admit`.
 `Vehicle::apply_velocity_command_now` rejects `StaleCommand` when command age
-≥ 100 ms (`Command::check_age`). PX4 setpoints fail `StaleHeartbeat` when the
+≥ 100 ms (`Command::check_age`). An invalid `Estimate` yields
+`Event::EstimatorInvalid` (`Estimate::revoke_event`); a stale heartbeat age
+yields `Event::HeartbeatStale` (`heartbeat_revoke_event`). GPS-loss and
+heartbeat-loss inject those events. PX4 setpoints fail `StaleHeartbeat` when the
 last HEARTBEAT is older than 250 ms. Monitors: `CommandAgeMs`,
 `EstimatorTimestampsMonotonic`, `EpochBumped`.
 
@@ -311,7 +314,8 @@ last HEARTBEAT is older than 250 ms. Monitors: `CommandAgeMs`,
 `COMMANDS` **is** `AERIAL_OFFBOARD_COMMANDS`; `TRANSITIONS` / `GATE` /
 `UI_FORBIDDEN` are the capability surface). `impl_aerial_offboard_now!`
 generates `admit_offboard_now` / `set_velocity_now` / `set_position_now` /
-`hold_now`. `AerialOffboard::evaluate` runs `MONITORS` (including
+`hold_now`, the matching async wrappers (`set_velocity` / `set_position` /
+`hold`), and `apply_velocity_command_now`. `AerialOffboard::evaluate` runs `MONITORS` (including
 `OffboardAdmitted`, which is kernel `admit_offboard_command`).
 `prove_aerial_authority!` expands to Kani `dsl_revokes_match_kernel`.
 Checked-in generated artifacts under [`docs/generated/`](generated/) must
@@ -341,9 +345,11 @@ writes JSONL, and differential-runs two world traces. Native ULog subset
 Live Gazebo is still out of scope; `--backend px4-sitl` evaluates a converted
 JSONL or `.ulg` (checked-in `crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl`).
 `--backend hitl` is the attach-failsafe miss path (same contract as
-`WorldRack::contract_deadline_miss`). `--backend all` on gps-loss runs
-[`differential_gps_loss`](../crates/flight-sim/src/scenario.rs) (world +
-checked-in ULog + converted PX4 SITL JSONL). Every DSL revoke event has a world
+`WorldRack::contract_deadline_miss`). `--backend all` runs
+[`differential_contract`](../crates/flight-sim/src/scenario.rs) for every named
+scenario (world + JSONL replay + ULog round-trip; gps-loss also the checked-in
+ULog and converted PX4 SITL JSONL). GPS-loss posts `Estimate::revoke_event` and
+a bound `Vehicle<Offboard>` cannot `set_position_now`. Every DSL revoke event has a world
 test that the plant epoch increments.
 
 ### F7. Typed geometry

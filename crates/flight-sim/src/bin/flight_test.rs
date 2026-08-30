@@ -8,6 +8,8 @@
 //! cargo run -p flight-sim --bin flight-test -- --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
 //! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
 //! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend all
+//! cargo run -p flight-sim --bin flight-test -- --scenario heartbeat-stale --backend all
+//! cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend all
 //! cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
 //! cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
 //! ```
@@ -17,7 +19,7 @@
 
 use flight_core::contracts::{evaluate_trace, parse_trace_jsonl, Requirement};
 use flight_sim::{
-    differential_gps_loss, is_ulog, parse_ulog, replay_jsonl, run_hitl_miss, run_revoke_table,
+    differential_contract, is_ulog, parse_ulog, replay_jsonl, run_hitl_miss, run_revoke_table,
     run_world, write_ulog, Scenario,
 };
 
@@ -115,6 +117,7 @@ fn main() {
         "world" | "sim" => {
             let report = run_world(scenario).expect("world run");
             report.evaluate(scenario.require).expect("contract");
+            report.evaluate_capability().expect("capability");
             if let Some(path) = write_ulog_path.as_ref() {
                 std::fs::write(path, write_ulog(&report.samples))
                     .unwrap_or_else(|e| panic!("write {path}: {e}"));
@@ -177,18 +180,13 @@ fn main() {
             );
         }
         "all" => {
+            differential_contract(scenario).expect("differential contract");
             if scenario.name == "gps-loss" {
-                differential_gps_loss().expect("world + ulog + px4-sitl");
                 println!("PASS scenario=gps-loss backend=all (world, ulog, px4-sitl corpus)");
             } else {
-                let report = run_world(scenario).expect("world run");
-                report.evaluate(scenario.require).expect("contract");
                 println!(
-                    "PASS scenario={} backend=all (world) samples={} failsafe={} epoch_final={}",
-                    report.name,
-                    report.samples.len(),
-                    report.samples.iter().any(|s| s.failsafe),
-                    report.samples.last().map(|s| s.epoch).unwrap_or(0)
+                    "PASS scenario={} backend=all (world, replay, ulog roundtrip)",
+                    scenario.name
                 );
             }
         }
@@ -197,6 +195,7 @@ fn main() {
             report
                 .evaluate(Scenario::HITL_MISS.require)
                 .expect("contract");
+            report.evaluate_capability().expect("capability");
             println!(
                 "PASS scenario={} backend=hitl samples={} failsafe={} epoch_final={}",
                 report.name,

@@ -8,6 +8,8 @@ use flight_core::contracts::{
     evaluate_trace, parse_trace_jsonl, AerialOffboard, MonitorFail, Requirement, TraceSample,
 };
 use flight_core::safety::{Event, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS};
+use flight_core::temporal::{heartbeat_revoke_event, Estimate};
+use flight_core::time::MonotonicInstant;
 use robot_world::World;
 
 use super::world_backend::shared::aerial_event;
@@ -286,30 +288,48 @@ pub fn differential_world(scenario: &Scenario) -> Result<(), String> {
     Ok(())
 }
 
-/// Same GPS-loss contract on the verified world, checked-in ULog, and
-/// converted PX4 SITL JSONL. Differential conformance, not a second physics.
-pub fn differential_gps_loss() -> Result<(), String> {
-    let reqs = Scenario::GPS_LOSS.require;
-    let world = run_world(&Scenario::GPS_LOSS)?;
+/// Same safety contract on the verified world, JSONL replay, and a ULog
+/// round-trip. GPS-loss also evaluates the checked-in ULog and converted
+/// PX4 SITL corpus. Differential conformance, not a second physics.
+pub fn differential_contract(scenario: &Scenario) -> Result<(), String> {
+    let reqs = scenario.require;
+    let world = run_world(scenario)?;
     world
         .evaluate(reqs)
         .map_err(|e| format!("world: {} at {}", e.requirement, e.index))?;
     world
         .evaluate_capability()
         .map_err(|e| format!("world capability: {} at {}", e.requirement, e.index))?;
-    differential_world(&Scenario::GPS_LOSS)?;
-    let ulog = crate::parse_ulog(include_bytes!("../corpus/gps_loss.ulg"))
-        .map_err(|e| format!("ulog: {e}"))?;
-    evaluate_trace(&ulog, reqs).map_err(|e| format!("ulog: {} at {}", e.requirement, e.index))?;
-    AerialOffboard::evaluate(&ulog)
+    differential_world(scenario)?;
+    replay_jsonl(&world.to_jsonl(), reqs)
+        .map_err(|e| format!("jsonl: {} at {}", e.requirement, e.index))?;
+    let ulog_bytes = crate::write_ulog(&world.samples);
+    let from_ulog = crate::parse_ulog(&ulog_bytes).map_err(|e| format!("ulog roundtrip: {e}"))?;
+    evaluate_trace(&from_ulog, reqs)
+        .map_err(|e| format!("ulog roundtrip: {} at {}", e.requirement, e.index))?;
+    AerialOffboard::evaluate(&from_ulog)
         .map_err(|e| format!("ulog capability: {} at {}", e.requirement, e.index))?;
-    let sitl = parse_trace_jsonl(include_str!("../corpus/px4_sitl_gps_loss.jsonl"))
-        .map_err(|_| "px4-sitl: parse_jsonl".to_string())?;
-    evaluate_trace(&sitl, reqs)
-        .map_err(|e| format!("px4-sitl: {} at {}", e.requirement, e.index))?;
-    AerialOffboard::evaluate(&sitl)
-        .map_err(|e| format!("px4-sitl capability: {} at {}", e.requirement, e.index))?;
+    if scenario.name == Scenario::GPS_LOSS.name {
+        let ulog = crate::parse_ulog(include_bytes!("../corpus/gps_loss.ulg"))
+            .map_err(|e| format!("ulog: {e}"))?;
+        evaluate_trace(&ulog, reqs)
+            .map_err(|e| format!("ulog: {} at {}", e.requirement, e.index))?;
+        AerialOffboard::evaluate(&ulog)
+            .map_err(|e| format!("ulog capability: {} at {}", e.requirement, e.index))?;
+        let sitl = parse_trace_jsonl(include_str!("../corpus/px4_sitl_gps_loss.jsonl"))
+            .map_err(|_| "px4-sitl: parse_jsonl".to_string())?;
+        evaluate_trace(&sitl, reqs)
+            .map_err(|e| format!("px4-sitl: {} at {}", e.requirement, e.index))?;
+        AerialOffboard::evaluate(&sitl)
+            .map_err(|e| format!("px4-sitl capability: {} at {}", e.requirement, e.index))?;
+    }
     Ok(())
+}
+
+/// Same GPS-loss contract on the verified world, checked-in ULog, and
+/// converted PX4 SITL JSONL.
+pub fn differential_gps_loss() -> Result<(), String> {
+    differential_contract(&Scenario::GPS_LOSS)
 }
 
 /// Evaluate a previously recorded JSONL (ulog-shaped conversion or
@@ -322,12 +342,31 @@ pub fn replay_jsonl(text: &str, reqs: &[Requirement]) -> Result<(), MonitorFail>
     evaluate_trace(&samples, reqs)
 }
 
+fn inject_drone_event(session: &WorldSession, e: Event) -> Result<(), String> {
+    aerial_event(session.aerial("drone").session(), "drone", e).map_err(|err| format!("{err}"))
+}
+
 fn apply_fault(session: &WorldSession, fault: Fault) -> Result<(), String> {
-    if let Some(e) = fault.kernel_event() {
-        aerial_event(session.aerial("drone").session(), "drone", e)
-            .map_err(|err| format!("{err}"))?;
-    }
     match fault {
+        Fault::GpsDropout { .. } => {
+            let est = Estimate::new((), false, MonotonicInstant::ZERO);
+            if let Some(e) = est.revoke_event() {
+                inject_drone_event(session, e)?;
+            }
+        }
+        Fault::HeartbeatStale { .. } => {
+            if let Some(e) = heartbeat_revoke_event(OFFBOARD_HEARTBEAT_MAX_AGE_MS) {
+                inject_drone_event(session, e)?;
+            }
+        }
+        Fault::Failsafe { .. } => {
+            inject_drone_event(
+                session,
+                fault
+                    .kernel_event()
+                    .expect("failsafe is a kernel revoke event"),
+            )?;
+        }
         Fault::BatterySag { percent, .. } => {
             session.with_world_mut(|w| {
                 if let Some(b) = w.body_mut("drone") {
@@ -342,7 +381,6 @@ fn apply_fault(session: &WorldSession, fault: Fault) -> Result<(), String> {
                 w.env.wind_ned[1] += east;
             });
         }
-        _ => {}
     }
     Ok(())
 }
@@ -407,6 +445,58 @@ mod tests {
     #[test]
     fn gps_loss_same_contract_on_world_ulog_and_sitl() {
         differential_gps_loss().expect("world + ulog + px4-sitl");
+    }
+
+    #[test]
+    fn differential_contract_on_every_named_scenario() {
+        for s in Scenario::ALL {
+            differential_contract(s).unwrap_or_else(|e| panic!("{}: {e}", s.name));
+        }
+    }
+
+    #[test]
+    fn gps_dropout_is_an_invalid_estimate() {
+        let est = Estimate::new((), false, MonotonicInstant::ZERO);
+        assert_eq!(
+            est.revoke_event(),
+            Fault::GpsDropout { at_secs: 0.0 }.kernel_event()
+        );
+        assert_eq!(
+            heartbeat_revoke_event(OFFBOARD_HEARTBEAT_MAX_AGE_MS),
+            Fault::HeartbeatStale { at_secs: 0.0 }.kernel_event()
+        );
+        assert!(heartbeat_revoke_event(0).is_none());
+    }
+
+    #[test]
+    fn gps_loss_revokes_position_control_authority() {
+        use flight_core::frames::Ned;
+        use flight_core::vector::{Position, Velocity};
+        use flight_core::vehicle::{ErrorKind, VehicleHandle};
+
+        let session = WorldSession::inland(1);
+        session.attach_offboard("drone").expect("grant");
+        let VehicleHandle::Offboard(mut v) = session.aerial("drone").attach().unwrap() else {
+            panic!("attach_offboard must bind Offboard");
+        };
+        v.set_position_now(Position::<Ned>::ned(0.0, 0.0, -2.0))
+            .unwrap();
+        apply_fault(&session, Fault::GpsDropout { at_secs: 0.0 }).expect("gps dropout");
+        assert!(session.world().body("drone").unwrap().authority_epoch > 0);
+        let pos_err = v
+            .set_position_now(Position::<Ned>::ned(0.0, 0.0, -2.0))
+            .unwrap_err();
+        assert!(
+            matches!(pos_err, ErrorKind::StaleAuthority(_)),
+            "set_position after gps-loss: {pos_err:?}"
+        );
+        let vel_err = v
+            .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+            .unwrap_err();
+        assert!(matches!(vel_err, ErrorKind::StaleAuthority(_)));
+        let hold_err = v.hold_now().unwrap_err();
+        assert!(matches!(hold_err, ErrorKind::StaleAuthority(_)));
+        assert!(v.safety().offboard);
     }
 
     #[test]
