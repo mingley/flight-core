@@ -343,14 +343,19 @@ kernel `EnableActuators`). PX4 / ArduPilot / `NullBackend` / point-mass
 `SimBackend` refuse `enter_offboard`, climb, `enable_actuators`, setpoints, and
 motor thrust at the backend after `actuation_revoked`. The verified-world
 `WorldBackend` reports `actuation_revoked` from plant failsafe and refuses the
-same physical-authority commands (kernel `step` remains the TCB). Connect /
+same physical-authority commands (kernel `step` remains the TCB). Ground
+`GroundWorldBackend` reports it from plant E-stop and refuses drive / pose
+hold / yaw; marine `MarineWorldBackend` reports it from plant failsafe and
+refuses thrust / pose hold / yaw. Leftover `set_position` cannot skip
+`DriveCommand` / `ThrustCommand`. Connect /
 `revoke_authority` bump the epoch without that bit so `hold_now` before arm
 still works. Ground ClearEstop and marine Recover call `restore_actuation`.
 Failsafe / disarm / recover / land stay ungated (safety actions).
 `pump_setpoint` stays ungated.
 
 **Acceptance:** NullBackend revoke test; NullBackend / SimBackend /
-WorldBackend backend-direct refuse after disarm/failsafe; world two-handle
+WorldBackend / GroundWorldBackend / MarineWorldBackend backend-direct refuse
+after disarm/failsafe/estop; world two-handle
 failsafe test; trybuild `permit_is_not_clone`; Kani
 `permit_epoch_mismatch_is_stale`.
 
