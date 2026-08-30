@@ -7,6 +7,7 @@
 //! cargo run -p flight-sim --bin flight-test -- --backend replay --replay trace.jsonl
 //! cargo run -p flight-sim --bin flight-test -- --backend replay --replay crates/flight-sim/corpus/gps_loss.ulg
 //! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend px4-sitl --replay crates/flight-sim/corpus/px4_sitl_gps_loss.jsonl
+//! cargo run -p flight-sim --bin flight-test -- --scenario gps-loss --backend all
 //! cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
 //! cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
 //! ```
@@ -16,13 +17,13 @@
 
 use flight_core::contracts::{evaluate_trace, parse_trace_jsonl, Requirement};
 use flight_sim::{
-    is_ulog, parse_ulog, replay_jsonl, run_hitl_miss, run_revoke_table, run_world, write_ulog,
-    Scenario,
+    differential_gps_loss, is_ulog, parse_ulog, replay_jsonl, run_hitl_miss, run_revoke_table,
+    run_world, write_ulog, Scenario,
 };
 
 fn usage() -> ! {
     eprintln!(
-        "flight-test --scenario gps-loss|heartbeat-stale|hitl-miss|revoke-table [--backend world|replay|px4-sitl|ulog|hitl] [--replay FILE] [--write-ulog FILE]"
+        "flight-test --scenario gps-loss|heartbeat-stale|hitl-miss|revoke-table [--backend world|replay|px4-sitl|ulog|hitl|all] [--replay FILE] [--write-ulog FILE]"
     );
     std::process::exit(2);
 }
@@ -174,6 +175,22 @@ fn main() {
                 scenario.name,
                 samples.len()
             );
+        }
+        "all" => {
+            if scenario.name == "gps-loss" {
+                differential_gps_loss().expect("world + ulog + px4-sitl");
+                println!("PASS scenario=gps-loss backend=all (world, ulog, px4-sitl corpus)");
+            } else {
+                let report = run_world(scenario).expect("world run");
+                report.evaluate(scenario.require).expect("contract");
+                println!(
+                    "PASS scenario={} backend=all (world) samples={} failsafe={} epoch_final={}",
+                    report.name,
+                    report.samples.len(),
+                    report.samples.iter().any(|s| s.failsafe),
+                    report.samples.last().map(|s| s.epoch).unwrap_or(0)
+                );
+            }
         }
         "hitl" => {
             let report = run_hitl_miss().expect("hitl miss");

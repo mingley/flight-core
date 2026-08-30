@@ -281,6 +281,23 @@ pub fn differential_world(scenario: &Scenario) -> Result<(), String> {
     Ok(())
 }
 
+/// Same GPS-loss contract on the verified world, checked-in ULog, and
+/// converted PX4 SITL JSONL. Differential conformance, not a second physics.
+pub fn differential_gps_loss() -> Result<(), String> {
+    let reqs = Scenario::GPS_LOSS.require;
+    let world = run_world(&Scenario::GPS_LOSS)?;
+    world
+        .evaluate(reqs)
+        .map_err(|e| format!("world: {} at {}", e.requirement, e.index))?;
+    differential_world(&Scenario::GPS_LOSS)?;
+    let ulog = crate::parse_ulog(include_bytes!("../corpus/gps_loss.ulg"))
+        .map_err(|e| format!("ulog: {e}"))?;
+    evaluate_trace(&ulog, reqs).map_err(|e| format!("ulog: {} at {}", e.requirement, e.index))?;
+    replay_jsonl(include_str!("../corpus/px4_sitl_gps_loss.jsonl"), reqs)
+        .map_err(|e| format!("px4-sitl: {} at {}", e.requirement, e.index))?;
+    Ok(())
+}
+
 /// Evaluate a previously recorded JSONL (ulog-shaped conversion or
 /// [`ScenarioReport::to_jsonl`]) against `reqs`.
 pub fn replay_jsonl(text: &str, reqs: &[Requirement]) -> Result<(), MonitorFail> {
@@ -370,6 +387,11 @@ mod tests {
             Scenario::GPS_LOSS.require,
         )
         .expect("ulog replay");
+    }
+
+    #[test]
+    fn gps_loss_same_contract_on_world_ulog_and_sitl() {
+        differential_gps_loss().expect("world + ulog + px4-sitl");
     }
 
     #[test]
