@@ -121,8 +121,9 @@ pub mod prelude {
     #[cfg(not(creusot))]
     pub use crate::safety::ContractEdge;
     pub use crate::safety::{
-        command_age_ok, estimator_ts_monotonic, event_revokes_authority, heartbeat_age_ok, step,
-        Event, Phase, Reject, SafetyState, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS,
+        admit_offboard_command, command_age_ok, estimator_ts_monotonic, event_revokes_authority,
+        heartbeat_age_ok, step, Event, Phase, Reject, SafetyState, COMMAND_MAX_AGE_MS,
+        OFFBOARD_HEARTBEAT_MAX_AGE_MS,
     };
     #[cfg(not(creusot))]
     pub use crate::sensors::{ActuatorCommand, Actuators, Imu, ImuSample, SensorHealth};

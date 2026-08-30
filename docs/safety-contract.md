@@ -19,19 +19,19 @@ capability AerialOffboard {
 
 Generates (one expansion in the kernel, aliased by the capability type):
 
-- kernel [`event_revokes_authority`](../crates/flight-core/src/safety.rs) / `heartbeat_age_ok` / `command_age_ok` / `estimator_ts_monotonic`
+- kernel [`event_revokes_authority`](../crates/flight-core/src/safety.rs) / `heartbeat_age_ok` / `command_age_ok` / `admit_offboard_command` / `estimator_ts_monotonic`
 - Creusot `ensures` on `event_revokes_authority` (same event list)
-- Rust capability `AerialOffboard` (`REVOKE_ON` is `AUTHORITY_REVOKE_EVENTS`)
-- typestate methods (`OffboardControl`, `apply_velocity_command_now`)
+- Rust capability `AerialOffboard` (`REVOKE_ON` is `AUTHORITY_REVOKE_EVENTS`; `admit` is `admit_offboard_command`)
+- typestate methods (`OffboardControl`, `admit_offboard_now`, `set_velocity_now` / `set_position_now` / `hold_now`)
 - runtime monitors (`Requirement::OffboardHeartbeatFresh`, `CommandAgeMs`, `EstimatorTimestampsMonotonic`, `EpochBumped`)
-- Kani harness `dsl_revokes_match_kernel` (table membership + bounds)
+- Kani harness `dsl_revokes_match_kernel` via `prove_aerial_authority!` (table membership + bounds + admit)
 - Kani harness `permit_epoch_mismatch_is_stale`
 - mermaid (`AerialOffboard::MERMAID`, [`docs/generated/aerial-offboard.mmd`](generated/aerial-offboard.mmd))
 - Graphviz (`AerialOffboard::GRAPHVIZ`, [`docs/generated/aerial-offboard.dot`](generated/aerial-offboard.dot))
 - transition table (`AerialOffboard::TRANSITIONS`, [`docs/generated/aerial-offboard.transitions.md`](generated/aerial-offboard.transitions.md))
 - fault-injection list (`REVOKE_ON` / `run_revoke_table`, [`docs/generated/aerial-offboard.faults.md`](generated/aerial-offboard.faults.md))
 - compile-fail names (`AerialOffboard::UI_FORBIDDEN`)
-- this specification
+- this specification (`AerialOffboard::SPEC`, [`docs/generated/aerial-offboard.spec.txt`](generated/aerial-offboard.spec.txt))
 - [`docs/generated/traceability.md`](generated/traceability.md)
 
 A unit test fails if `AerialOffboard::REVOKE_ON` is not the kernel table.

@@ -1,0 +1,5 @@
+capability AerialOffboard {
+  requires heartbeat.age < 250.ms();
+  requires command.age < 100.ms();
+  revokes_on [TriggerFailsafe, Disarm, Disconnect, HeartbeatStale, EstimatorInvalid, ImuUnhealthy]
+}

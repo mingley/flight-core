@@ -276,7 +276,7 @@ impl<S: State, B: VehicleBackend> Vehicle<S, B> {
     fn require_live_permit(&self) -> Result<(), ErrorKind> {
         self.require_permit()?;
         if let Some(age) = self.inner.backend.authority_heartbeat_age_ms() {
-            if !safety::heartbeat_age_ok(age) {
+            if !crate::contracts::AerialOffboard::admit(age, 0) {
                 return Err(ErrorKind::StaleAuthority(AuthorityReject::StaleHeartbeat));
             }
         }
@@ -284,7 +284,7 @@ impl<S: State, B: VehicleBackend> Vehicle<S, B> {
     }
 
     fn require_command_age(&self, command_age_ms: u32) -> Result<(), ErrorKind> {
-        if !safety::command_age_ok(command_age_ms) {
+        if !crate::contracts::AerialOffboard::admit(0, command_age_ms) {
             return Err(ErrorKind::StaleAuthority(AuthorityReject::StaleCommand));
         }
         Ok(())
@@ -589,12 +589,21 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
         Ok(())
     }
 
-    /// Same grant as [`Self::set_velocity`] without stepping the plant.
-    /// Pair with a backend flush and one shared world step.
-    pub fn set_velocity_now(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
+    /// AerialOffboard command gate: live permit, then kernel `HeartbeatFresh`
+    /// and `MissionCommand`. `set_velocity_now` / `set_position_now` /
+    /// `hold_now` are the capability methods listed in
+    /// [`crate::contracts::AerialOffboard::COMMANDS`].
+    pub fn admit_offboard_now(&mut self) -> Result<(), ErrorKind> {
         self.require_live_permit()?;
         self.apply_event(Event::HeartbeatFresh)?;
         self.apply_event(Event::MissionCommand)?;
+        Ok(())
+    }
+
+    /// Same grant as [`Self::set_velocity`] without stepping the plant.
+    /// Pair with a backend flush and one shared world step.
+    pub fn set_velocity_now(&mut self, velocity: Velocity<Ned>) -> Result<(), ErrorKind> {
+        self.admit_offboard_now()?;
         self.inner
             .backend
             .set_velocity_ned_now(velocity)
@@ -607,7 +616,6 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
         &mut self,
         command: Command<Velocity<Ned>>,
     ) -> Result<(), ErrorKind> {
-        self.require_live_permit()?;
         self.require_command_age(command.age_ms(self.inner.backend.authority_now()))?;
         self.set_velocity_now(command.payload)
     }
@@ -625,9 +633,7 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
     /// Same grant as [`Self::set_position`] without stepping the plant.
     /// Pair with a backend flush and one shared world step.
     pub fn set_position_now(&mut self, position: Position<Ned>) -> Result<(), ErrorKind> {
-        self.require_live_permit()?;
-        self.apply_event(Event::HeartbeatFresh)?;
-        self.apply_event(Event::MissionCommand)?;
+        self.admit_offboard_now()?;
         self.inner
             .backend
             .set_position_ned_now(position)
@@ -636,9 +642,7 @@ impl<S: OffboardControl, B: VehicleBackend> Vehicle<S, B> {
 
     /// Hold at the current NED pose. Same grant as [`Self::set_position_now`].
     pub fn hold_now(&mut self) -> Result<(), ErrorKind> {
-        self.require_live_permit()?;
-        self.apply_event(Event::HeartbeatFresh)?;
-        self.apply_event(Event::MissionCommand)?;
+        self.admit_offboard_now()?;
         self.inner.backend.hold_now().map_err(ErrorKind::Backend)
     }
 

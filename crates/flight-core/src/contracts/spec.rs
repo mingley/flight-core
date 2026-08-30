@@ -30,6 +30,11 @@ macro_rules! vehicle_contract {
                 $crate::safety::event_revokes_authority(event)
             }
 
+            /// Kernel admission for this capability (heartbeat ∧ command age).
+            pub const fn admit(heartbeat_age_ms: u32, command_age_ms: u32) -> bool {
+                $crate::safety::admit_offboard_command(heartbeat_age_ms, command_age_ms)
+            }
+
             pub const TRANSITIONS: &'static [$crate::safety::ContractEdge] =
                 $crate::safety::AERIAL_OFFBOARD_TRANSITIONS;
             pub const GATE: &'static str = "OffboardControl";
@@ -124,6 +129,57 @@ vehicle_contract! {
     }
 }
 
+/// Kani harness generated from the aerial authority table.
+///
+/// Expand inside `flight-verify`'s `#[cfg(kani)]` proofs module:
+/// `flight_core::prove_aerial_authority!();`
+#[macro_export]
+macro_rules! prove_aerial_authority {
+    () => {
+        #[kani::proof]
+        fn dsl_revokes_match_kernel() {
+            use flight_core::contracts::AerialOffboard;
+            use flight_core::safety::{
+                admit_offboard_command, command_age_ok, estimator_ts_monotonic,
+                event_revokes_authority, heartbeat_age_ok, Event, AUTHORITY_REVOKE_EVENTS,
+                COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS,
+            };
+            let bits: u8 = kani::any();
+            kani::assume(bits <= 23);
+            let Some(e) = Event::from_u8(bits) else {
+                return;
+            };
+            let mut in_table = false;
+            let mut i = 0;
+            while i < AUTHORITY_REVOKE_EVENTS.len() {
+                if AUTHORITY_REVOKE_EVENTS[i] == e {
+                    in_table = true;
+                    break;
+                }
+                i += 1;
+            }
+            assert_eq!(event_revokes_authority(e), in_table);
+            assert_eq!(AerialOffboard::revokes(e), event_revokes_authority(e));
+            let age: u32 = kani::any();
+            assert_eq!(heartbeat_age_ok(age), age < OFFBOARD_HEARTBEAT_MAX_AGE_MS);
+            assert_eq!(command_age_ok(age), age < COMMAND_MAX_AGE_MS);
+            let hb: u32 = kani::any();
+            let cmd: u32 = kani::any();
+            assert_eq!(
+                admit_offboard_command(hb, cmd),
+                heartbeat_age_ok(hb) && command_age_ok(cmd)
+            );
+            assert_eq!(
+                AerialOffboard::admit(hb, cmd),
+                admit_offboard_command(hb, cmd)
+            );
+            let prev: u64 = kani::any();
+            let next: u64 = kani::any();
+            assert_eq!(estimator_ts_monotonic(prev, next), next >= prev);
+        }
+    };
+}
+
 /// Kernel invariant `actuators_enabled → armed` (traceability FC-INV-001).
 pub const INV_ACTUATORS_IMPLY_ARMED: &str = "FC-INV-001";
 /// Permit epoch must match the live backend (FC-INV-002).
@@ -150,6 +206,7 @@ pub fn human_readable_spec() -> &'static str {
         "  OffboardControl => heartbeat_age < 250 ms  [FC-INV-003]\n",
         "  command.age < 100 ms at actuation  [FC-INV-004]\n",
         "  estimator timestamps monotonic  [FC-INV-005]\n",
+        "  admit_offboard := heartbeat.age < 250 && command.age < 100\n",
         "}\n"
     )
 }
@@ -186,6 +243,14 @@ mod tests {
         );
         assert_eq!(AerialOffboard::COMMAND_MAX_AGE_MS, COMMAND_MAX_AGE_MS);
         assert_eq!(AerialOffboard::SPEC, crate::safety::AERIAL_OFFBOARD_SPEC);
+        assert!(AerialOffboard::admit(0, 0));
+        assert!(AerialOffboard::admit(249, 99));
+        assert!(!AerialOffboard::admit(250, 0));
+        assert!(!AerialOffboard::admit(0, 100));
+        assert_eq!(
+            AerialOffboard::admit(1, 1),
+            crate::safety::admit_offboard_command(1, 1)
+        );
     }
 
     #[test]
@@ -216,6 +281,7 @@ mod tests {
         assert!(human_readable_spec().contains("FC-INV-001"));
         assert!(human_readable_spec().contains("FC-INV-004"));
         assert!(human_readable_spec().contains("command.age < 100"));
+        assert!(human_readable_spec().contains("admit_offboard"));
         assert!(AerialOffboard::SPEC.contains("command.age < 100"));
         assert_eq!(AerialOffboard::GATE, "OffboardControl");
         assert!(AerialOffboard::COMMANDS.contains(&"set_velocity"));
@@ -237,6 +303,12 @@ mod tests {
             tokens(AerialOffboard::GRAPHVIZ),
             tokens(generated_dot),
             "docs/generated/aerial-offboard.dot must match AerialOffboard::GRAPHVIZ"
+        );
+        let generated_spec = include_str!("../../../../docs/generated/aerial-offboard.spec.txt");
+        assert_eq!(
+            tokens(AerialOffboard::SPEC),
+            tokens(generated_spec),
+            "docs/generated/aerial-offboard.spec.txt must match AerialOffboard::SPEC"
         );
         assert_eq!(
             AerialOffboard::TRANSITIONS.len(),

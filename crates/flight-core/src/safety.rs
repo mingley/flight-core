@@ -398,6 +398,13 @@ macro_rules! define_aerial_authority {
             age_ms < COMMAND_MAX_AGE_MS
         }
 
+        /// OffboardControl admission: heartbeat and command both inside the
+        /// contract bounds. Typestate `admit_offboard_now` is the untrusted
+        /// wrapper; this predicate is the TCB check.
+        pub const fn admit_offboard_command(heartbeat_age_ms: u32, command_age_ms: u32) -> bool {
+            heartbeat_age_ok(heartbeat_age_ms) && command_age_ok(command_age_ms)
+        }
+
         /// Estimator timestamps must not jump backward (replay / clock fault).
         pub const fn estimator_ts_monotonic(prev_us: u64, next_us: u64) -> bool {
             next_us >= prev_us
@@ -889,6 +896,10 @@ mod tests {
         assert!(estimator_ts_monotonic(10, 10));
         assert!(estimator_ts_monotonic(10, 11));
         assert!(!estimator_ts_monotonic(11, 10));
+        assert!(admit_offboard_command(0, 0));
+        assert!(admit_offboard_command(249, 99));
+        assert!(!admit_offboard_command(250, 0));
+        assert!(!admit_offboard_command(0, 100));
         for e in Event::ALL {
             let in_table = AUTHORITY_REVOKE_EVENTS.contains(&e);
             assert_eq!(event_revokes_authority(e), in_table, "{e:?}");

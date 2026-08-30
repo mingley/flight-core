@@ -941,36 +941,7 @@ mod proofs {
             .is_err());
     }
 
-    #[kani::proof]
-    fn dsl_revokes_match_kernel() {
-        use flight_core::contracts::AerialOffboard;
-        use flight_core::safety::{
-            command_age_ok, estimator_ts_monotonic, event_revokes_authority, heartbeat_age_ok,
-            Event, AUTHORITY_REVOKE_EVENTS, COMMAND_MAX_AGE_MS, OFFBOARD_HEARTBEAT_MAX_AGE_MS,
-        };
-        let bits: u8 = kani::any();
-        kani::assume(bits <= 23);
-        let Some(e) = Event::from_u8(bits) else {
-            return;
-        };
-        let mut in_table = false;
-        let mut i = 0;
-        while i < AUTHORITY_REVOKE_EVENTS.len() {
-            if AUTHORITY_REVOKE_EVENTS[i] == e {
-                in_table = true;
-                break;
-            }
-            i += 1;
-        }
-        assert_eq!(event_revokes_authority(e), in_table);
-        assert_eq!(AerialOffboard::revokes(e), event_revokes_authority(e));
-        let age: u32 = kani::any();
-        assert_eq!(heartbeat_age_ok(age), age < OFFBOARD_HEARTBEAT_MAX_AGE_MS);
-        assert_eq!(command_age_ok(age), age < COMMAND_MAX_AGE_MS);
-        let prev: u64 = kani::any();
-        let next: u64 = kani::any();
-        assert_eq!(estimator_ts_monotonic(prev, next), next >= prev);
-    }
+    flight_core::prove_aerial_authority!();
 }
 
 #[cfg(test)]
