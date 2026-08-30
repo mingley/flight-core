@@ -586,6 +586,8 @@ mod tests {
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
         let err = b.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, -1.0));
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.hold_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
     }
 
     #[test]
@@ -600,6 +602,8 @@ mod tests {
         assert!(b.telemetry_now().unwrap().failsafe);
         assert!(!b.telemetry_now().unwrap().estimator_valid);
         let err = b.set_velocity_ned_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = b.hold_now();
         assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
     }
 
@@ -760,5 +764,47 @@ mod tests {
             err.error
         );
         assert!(err.vehicle.safety().armed);
+    }
+
+    #[test]
+    fn leftover_offboard_refuses_all_commands_after_failsafe() {
+        use flight_core::contracts::AerialOffboard;
+        use flight_core::safety::{step_all, Event, SafetyState};
+        use flight_core::vehicle::{ErrorKind, VehicleHandle};
+        let backend = Px4Backend::new(Px4Config::default());
+        let safety = step_all(
+            SafetyState::disconnected(),
+            &[
+                Event::Connect,
+                Event::InitComplete,
+                Event::Initialized,
+                Event::ImuHealthy,
+                Event::EstimatorValid,
+                Event::PreflightPassed,
+                Event::Arm,
+                Event::HeartbeatFresh,
+                Event::EnterOffboard,
+            ],
+        )
+        .expect("offboard");
+        let VehicleHandle::Offboard(mut v) = VehicleHandle::from_state(backend, safety) else {
+            panic!("offboard safety maps to Offboard");
+        };
+        assert_eq!(
+            AerialOffboard::COMMANDS,
+            &["set_velocity", "set_position", "hold"]
+        );
+        let _ = v.backend_mut().trigger_failsafe_now();
+        assert!(v.backend().authority_epoch() >= 1);
+        let vel = v.set_velocity_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0));
+        assert!(matches!(vel, Err(ErrorKind::StaleAuthority(_))), "{vel:?}");
+        let pos = v.set_position_now(Position::<Ned>::ned(0.0, 0.0, -1.0));
+        assert!(matches!(pos, Err(ErrorKind::StaleAuthority(_))), "{pos:?}");
+        let hold = v.hold_now();
+        assert!(
+            matches!(hold, Err(ErrorKind::StaleAuthority(_))),
+            "{hold:?}"
+        );
+        assert!(v.safety().offboard);
     }
 }
