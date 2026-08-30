@@ -18,6 +18,8 @@ pub enum SceneError {
     /// Reserved catalog `open_water` cannot include a rover.
     OpenWaterRover,
     UnknownBody,
+    /// Hydro grid is empty, non-finite, or larger than the C4 cap.
+    InvalidHydro,
 }
 
 impl core::fmt::Display for SceneError {
@@ -27,6 +29,7 @@ impl core::fmt::Display for SceneError {
             Self::InlandHull => write!(f, "inland catalog cannot include a hull"),
             Self::OpenWaterRover => write!(f, "open_water catalog cannot include a rover"),
             Self::UnknownBody => write!(f, "unknown body"),
+            Self::InvalidHydro => write!(f, "invalid hydro grid"),
         }
     }
 }
@@ -44,6 +47,7 @@ pub struct Scene {
     current: Option<[f32; 3]>,
     wave_amp: Option<f32>,
     charges: Vec<(&'static str, f32)>,
+    hydro: Option<(usize, usize, f32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +68,7 @@ impl Scene {
             current: None,
             wave_amp: None,
             charges: Vec::new(),
+            hydro: None,
         })
     }
 
@@ -87,6 +92,7 @@ impl Scene {
             current: None,
             wave_amp: None,
             charges: Vec::new(),
+            hydro: None,
         })
     }
 
@@ -118,6 +124,14 @@ impl Scene {
         self
     }
 
+    /// Rebuild the shallow-water field at `nx` × `ny` with cell size `dx`
+    /// (metres). Same origin as the catalog patch. Catalogs stay 40×32 unless
+    /// this overlay is set.
+    pub fn hydro(mut self, nx: usize, ny: usize, dx: f32) -> Self {
+        self.hydro = Some((nx, ny, dx));
+        self
+    }
+
     pub fn name(&self) -> &'static str {
         self.name
     }
@@ -140,7 +154,14 @@ impl Scene {
         }
         if let Some(amp) = self.wave_amp {
             world.env.wave_amp = amp;
-            world.hydro = HydroField::from_env(&world.env);
+        }
+        if self.wave_amp.is_some() || self.hydro.is_some() {
+            world.hydro = match self.hydro {
+                Some((nx, ny, dx)) => {
+                    HydroField::from_env_grid(&world.env, hydro_grid(&world.env, nx, ny, dx)?)
+                }
+                None => HydroField::from_env(&world.env),
+            };
         }
         for (id, j) in self.charges {
             let Some(body) = world.body_mut(id) else {
@@ -164,6 +185,26 @@ fn check_reserved_p11(name: &str, bodies: &[Body]) -> Result<(), SceneError> {
         "open_water" | "open-water" if has_rover => Err(SceneError::OpenWaterRover),
         _ => Ok(()),
     }
+}
+
+fn hydro_grid(
+    env: &Environment,
+    nx: usize,
+    ny: usize,
+    dx: f32,
+) -> Result<flight_core::hydro::HydroGrid, SceneError> {
+    const MAX: usize = 256;
+    if nx == 0 || ny == 0 || nx > MAX || ny > MAX || !dx.is_finite() || dx <= 0.0 {
+        return Err(SceneError::InvalidHydro);
+    }
+    Ok(flight_core::hydro::HydroGrid {
+        nx,
+        ny,
+        dx,
+        g: env.gravity.abs(),
+        origin_n: crate::hydro::HYDRO_ORIGIN_N,
+        origin_e: crate::hydro::HYDRO_ORIGIN_E,
+    })
 }
 
 #[cfg(test)]
@@ -288,5 +329,118 @@ mod tests {
             .build()
             .unwrap_err();
         assert_eq!(err, SceneError::UnknownBody);
+    }
+
+    #[test]
+    fn invalid_hydro_grid_is_an_error() {
+        assert_eq!(
+            Scene::catalog("coastal")
+                .unwrap()
+                .hydro(0, 16, 4.0)
+                .build()
+                .unwrap_err(),
+            SceneError::InvalidHydro
+        );
+        assert_eq!(
+            Scene::catalog("coastal")
+                .unwrap()
+                .hydro(20, 16, 0.0)
+                .build()
+                .unwrap_err(),
+            SceneError::InvalidHydro
+        );
+    }
+
+    fn hydro_ids_hold(world: &World) {
+        let ids: Vec<_> = world
+            .last_properties
+            .iter()
+            .filter(|p| p.holds)
+            .map(|p| p.id)
+            .collect();
+        for id in [
+            "hydro_height_nonnegative",
+            "hydro_volume_conserved",
+            "hydro_land_stays_dry",
+        ] {
+            assert!(
+                ids.contains(&id),
+                "{id} missing/failed {:?}",
+                world.last_properties
+            );
+        }
+    }
+
+    #[test]
+    fn coastal_half_and_double_hydro_keep_invariants() {
+        for (nx, ny, dx) in [(20, 16, 4.0), (80, 64, 1.0)] {
+            let mut world = Scene::catalog("coastal")
+                .unwrap()
+                .seed(1)
+                .hydro(nx, ny, dx)
+                .build()
+                .unwrap();
+            assert_eq!(world.hydro.grid.nx, nx);
+            assert_eq!(world.hydro.grid.ny, ny);
+            assert_eq!(world.hydro.grid.dx, dx);
+            assert!(
+                world.hydro.volume0 > 100.0,
+                "volume0={}",
+                world.hydro.volume0
+            );
+            for _ in 0..80 {
+                world.step(0.02);
+                assert!(world.all_hold(), "{nx}x{ny} {:?}", world.last_properties);
+                hydro_ids_hold(&world);
+            }
+        }
+    }
+
+    #[test]
+    fn extra_body_keeps_contact_properties() {
+        let mut rover = Body::rover("rover");
+        rover.position_m = [14.0, 0.05, 0.0];
+        rover.velocity_mps = [0.0, -0.8, 0.0];
+        let mut scout = Body::rover("scout");
+        scout.position_m = [14.0, 0.0, 0.0];
+        scout.velocity_mps = [0.0, 0.4, 0.0];
+        let mut world = Scene::custom(
+            "pad_trio",
+            Environment::inland(),
+            [Body::aerial_ready("drone"), rover, scout],
+        )
+        .unwrap()
+        .seed(3)
+        .build()
+        .unwrap();
+        assert_eq!(world.bodies.len(), 3);
+        world.step(0.02);
+        assert!(world.all_hold(), "{:?}", world.last_properties);
+        let rover = world.body("rover").unwrap();
+        let scout = world.body("scout").unwrap();
+        let dx = rover.position_m[0] - scout.position_m[0];
+        let dy = rover.position_m[1] - scout.position_m[1];
+        let dz = rover.position_m[2] - scout.position_m[2];
+        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+        assert!(
+            dist + 1e-3 >= rover.radius_m + scout.radius_m,
+            "dist {dist} radii {} {}",
+            rover.radius_m,
+            scout.radius_m
+        );
+        assert!(
+            rover.last_sphere_impulse > 0.0 || scout.last_sphere_impulse > 0.0,
+            "jn rover={} scout={}",
+            rover.last_sphere_impulse,
+            scout.last_sphere_impulse
+        );
+        assert!(world
+            .last_properties
+            .iter()
+            .any(|p| p.id == "no_body_interpenetration" && p.holds));
+        assert!(world
+            .last_properties
+            .iter()
+            .any(|p| p.id == "no_terrain_penetration" && p.holds));
     }
 }

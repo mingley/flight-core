@@ -25,16 +25,27 @@ pub struct HydroField {
     pub(crate) scratch: Vec<f32>,
 }
 
+/// Default catalog patch. Catalog worlds keep this size; a [`crate::Scene`]
+/// hydro overlay may rebuild a finer or coarser field over the same origin.
+pub fn default_grid(env: &Environment) -> HydroGrid {
+    HydroGrid {
+        nx: HYDRO_NX,
+        ny: HYDRO_NY,
+        dx: HYDRO_DX,
+        g: env.gravity.abs(),
+        origin_n: HYDRO_ORIGIN_N,
+        origin_e: HYDRO_ORIGIN_E,
+    }
+}
+
 impl HydroField {
     pub fn from_env(env: &Environment) -> Self {
-        let grid = HydroGrid {
-            nx: HYDRO_NX,
-            ny: HYDRO_NY,
-            dx: HYDRO_DX,
-            g: env.gravity.abs(),
-            origin_n: HYDRO_ORIGIN_N,
-            origin_e: HYDRO_ORIGIN_E,
-        };
+        Self::from_env_grid(env, default_grid(env))
+    }
+
+    /// Same bathymetry rules as [`Self::from_env`] on an explicit grid
+    /// (NEXT C4). Catalogs stay [`HYDRO_NX`] × [`HYDRO_NY`].
+    pub fn from_env_grid(env: &Environment, grid: HydroGrid) -> Self {
         let n = grid.cells();
         let mut still = vec![0.0; n];
         let mut h = vec![0.0; n];
