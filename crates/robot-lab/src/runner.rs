@@ -45,6 +45,8 @@ pub struct RunRecord {
     pub steps_requested: u32,
     pub require_property: Option<String>,
     pub property_ok: bool,
+    /// Checked-in Kani / Creusot digest ([`crate::PROOF_SUMMARY`]).
+    pub proof_summary: &'static str,
     pub run: ResearchRun,
 }
 
@@ -209,6 +211,7 @@ impl Experiment {
             steps_requested: self.steps,
             require_property: self.require_property.clone(),
             property_ok,
+            proof_summary: crate::PROOF_SUMMARY,
             run,
         };
         fs::write(dir.join("run.json"), serde_json::to_vec_pretty(&record)?)?;
@@ -414,6 +417,10 @@ mod tests {
             assert_eq!(run["run"]["agent"], "typed_fleet_hold");
             assert_eq!(run["property_ok"], true);
             assert!(run["git_commit"].as_str().is_some());
+            let summary = run["proof_summary"].as_str().expect("proof_summary");
+            assert!(summary.contains("kani_harnesses: 45"), "{summary}");
+            assert!(summary.contains("creusot_libraries: 81"), "{summary}");
+            assert!(summary.contains("f32_stays_kani"), "{summary}");
             let obs = fs::read_to_string(dir.join("observations.jsonl")).unwrap();
             assert!(obs.lines().count() >= 2);
             let acts = fs::read_to_string(dir.join("actions.jsonl")).unwrap();
@@ -486,5 +493,14 @@ mod tests {
         assert!(acts.contains("set_wind"));
         assert!(acts.contains("set_waves"));
         let _ = fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn proof_summary_names_kani_and_creusot() {
+        assert!(crate::PROOF_SUMMARY.contains("kani_harnesses: 45"));
+        assert!(crate::PROOF_SUMMARY.contains("creusot_libraries: 81"));
+        assert!(crate::PROOF_SUMMARY.contains("creusot_modules: safety ground marine hitl"));
+        assert!(crate::PROOF_SUMMARY
+            .contains("f32_stays_kani: hold buoyancy hydro_mass hitl_miss_zero"));
     }
 }
