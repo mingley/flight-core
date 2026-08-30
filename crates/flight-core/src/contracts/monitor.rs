@@ -7,6 +7,7 @@
 use crate::safety::{
     admit_offboard_command, command_age_ok, estimator_ts_monotonic, OFFBOARD_HEARTBEAT_MAX_AGE_MS,
 };
+use crate::temporal::{CommandFresh, HeartbeatFresh, Timestamp};
 
 /// One sample of physical/control state for contract evaluation.
 #[derive(Clone, Copy, Debug)]
@@ -172,8 +173,12 @@ pub fn evaluate_trace(samples: &[TraceSample], reqs: &[Requirement]) -> Result<(
             }
             Requirement::OffboardHeartbeatFresh => {
                 for (i, s) in samples.iter().enumerate() {
-                    if s.armed && !s.failsafe && s.heartbeat_age_ms >= OFFBOARD_HEARTBEAT_MAX_AGE_MS
-                    {
+                    if !s.armed || s.failsafe {
+                        continue;
+                    }
+                    let typed_stale = HeartbeatFresh::check_age(s.heartbeat_age_ms).is_err();
+                    let kernel_stale = s.heartbeat_age_ms >= OFFBOARD_HEARTBEAT_MAX_AGE_MS;
+                    if typed_stale || kernel_stale {
                         return Err(MonitorFail {
                             requirement: "offboard_heartbeat_fresh",
                             index: i,
@@ -197,7 +202,9 @@ pub fn evaluate_trace(samples: &[TraceSample], reqs: &[Requirement]) -> Result<(
                         continue;
                     }
                     if max_ms == crate::safety::COMMAND_MAX_AGE_MS {
-                        if !command_age_ok(s.command_age_ms) {
+                        if CommandFresh::<()>::check_age(s.command_age_ms).is_err()
+                            || !command_age_ok(s.command_age_ms)
+                        {
                             return Err(MonitorFail {
                                 requirement: "command_age",
                                 index: i,
@@ -212,15 +219,18 @@ pub fn evaluate_trace(samples: &[TraceSample], reqs: &[Requirement]) -> Result<(
                 }
             }
             Requirement::EstimatorTimestampsMonotonic => {
-                let mut prev = samples[0].estimator_ts_ms;
+                let mut prev = Timestamp::from_millis(samples[0].estimator_ts_ms);
                 for (i, s) in samples.iter().enumerate().skip(1) {
-                    if !estimator_ts_monotonic(prev, s.estimator_ts_ms) {
+                    let next = Timestamp::from_millis(s.estimator_ts_ms);
+                    if !prev.precedes(next)
+                        || !estimator_ts_monotonic(prev.as_millis(), s.estimator_ts_ms)
+                    {
                         return Err(MonitorFail {
                             requirement: "estimator_ts_monotonic",
                             index: i,
                         });
                     }
-                    prev = s.estimator_ts_ms;
+                    prev = next;
                 }
             }
             Requirement::OffboardAdmitted => {
