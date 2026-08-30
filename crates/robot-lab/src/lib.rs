@@ -27,14 +27,15 @@
 //! attach consume-self typestate to the live machine without resetting it.
 //! [`Lab::attach_takeoff`] / [`Lab::attach_start_takeoff`] / [`Lab::attach_drive`] / [`Lab::attach_undock`]
 //! / [`Lab::attach_land`] / [`Lab::attach_touchdown`] / [`Lab::attach_airborne`] /
-//! [`Lab::attach_hold`] / [`Lab::attach_failsafe`] / [`Lab::attach_estop`] / [`Lab::attach_reset`] /
+//! [`Lab::attach_hold`] / [`Lab::attach_ground_hold`] / [`Lab::attach_failsafe`] / [`Lab::attach_estop`] / [`Lab::attach_reset`] /
 //! [`Lab::attach_marine_failsafe`] / [`Lab::attach_recover`] / [`Lab::attach_recover_ready`] /
 //! [`Lab::attach_station`] / [`Lab::attach_resume`] walk those machines and
 //! return the live backend. [`Lab::apply_script`] is the same path (attach
 //! helpers and NED now-APIs, then one shared step) — not kernel events on a
 //! borrowed body. Velocity ticks are not logged. Position holds walk
 //! `set_position_now` (P-term at flush, never a raw NED velocity). Current-pose
-//! holds walk [`Lab::attach_hold`] (`LabCmd::Hold`).
+//! holds walk [`Lab::attach_hold`] (`LabCmd::Hold`). Ground holds walk
+//! [`Lab::attach_ground_hold`] (same `LabCmd::Hold`, Moving only).
 //! [`Lab::replay_until`] walks
 //! the same attach helpers without re-logging; Protocol falls back to JSON.
 
@@ -70,10 +71,11 @@ pub use research::{
     CoastalFleet, CollisionSweep, PadLanding, ResearchAgent, ResearchRun, RoverProbe,
     ScriptedCoastal, TypedAerialAirborne, TypedAerialDisarm, TypedAerialFailsafe, TypedAttachFleet,
     TypedCollisionSweep, TypedFailsafeTouchdown, TypedFleet, TypedFleetHold, TypedFleetReturn,
-    TypedGroundEstop, TypedGroundHalt, TypedHold, TypedHullDock, TypedHullFailsafe, TypedPadDisarm,
-    TypedPadFailsafe, TypedPadLanding, TypedPositionHold, TypedStationDock, TypedStationFailsafe,
-    TypedStationResume, TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
-    TypedSurveyorStationFailsafe, TypedSurveyorStationResume,
+    TypedGroundEstop, TypedGroundHalt, TypedGroundHold, TypedHold, TypedHullDock,
+    TypedHullFailsafe, TypedPadDisarm, TypedPadFailsafe, TypedPadLanding, TypedPositionHold,
+    TypedStationDock, TypedStationFailsafe, TypedStationResume, TypedSurveyorDock,
+    TypedSurveyorFailsafe, TypedSurveyorStationDock, TypedSurveyorStationFailsafe,
+    TypedSurveyorStationResume,
 };
 pub use runner::{git_head, named_agent, Experiment, ExperimentSummary, RunError, RunRecord};
 pub use schema::{validate_instance, AGENT_ACTION_SCHEMA, OBSERVATION_SCHEMA, TIMED_ACTION_SCHEMA};

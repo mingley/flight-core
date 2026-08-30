@@ -2,7 +2,7 @@ use flight_core::ground::{GroundEvent, GroundPhase, GroundState};
 use flight_core::time::{Clock, MonotonicInstant};
 use flight_core::vector::{Position, Velocity};
 use flight_core::vehicle::{
-    AutopilotKind, BackendError, CanTripEstop, ConnectionInfo, GroundVehicle, MotorThrust,
+    AutopilotKind, BackendError, CanTripEstop, ConnectionInfo, GroundVehicle, MotorThrust, Moving,
     PreflightReport, Telemetry, VehicleBackend,
 };
 use robot_world::World;
@@ -127,6 +127,15 @@ pub(crate) fn ground_estop<S: CanTripEstop>(
     v: GroundVehicle<S, GroundWorldBackend>,
 ) -> GroundWorldBackend {
     v.emergency_stop_now().into_backend()
+}
+
+pub(crate) fn ground_hold(
+    mut v: GroundVehicle<Moving, GroundWorldBackend>,
+) -> Result<GroundWorldBackend, BackendError> {
+    v.hold_now().map_err(|e| e.into_backend())?;
+    let backend = v.into_backend();
+    backend.flush()?;
+    Ok(backend)
 }
 
 impl Clock for GroundWorldBackend {

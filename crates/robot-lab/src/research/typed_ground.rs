@@ -1,6 +1,6 @@
 use crate::{AgentAction, GroundKind, Lab, LabCmd, Observation};
 
-use super::support::{cmd, note, robot, rover_drive_attached};
+use super::support::{cmd, note, robot, rover_drive_attached, rover_hold_attached};
 use super::ResearchAgent;
 
 /// Inland rover: probe parked drive, then attach drive and sweep south until
@@ -152,6 +152,50 @@ impl ResearchAgent for TypedGroundHalt {
         if g.kind == GroundKind::Moving {
             if lab.attach_park("rover").is_ok() {
                 note(lab, cmd("rover", LabCmd::Halt, 0.0, 0.0, 0.0));
+                self.done = true;
+            }
+            return Vec::new();
+        }
+        if g.kind == GroundKind::Parked && lab.attach_drive("rover").is_ok() {
+            note(lab, cmd("rover", LabCmd::Release, 0.0, 0.0, 0.0));
+        }
+        Vec::new()
+    }
+}
+
+/// Inland, coastal, or harbor rover: probe parked drive, then attach drive
+/// and hold the current NED pose. Open water has no rover (P11). Legal
+/// motion never goes through [`Lab::act`]. Distinct from [`TypedGroundHalt`],
+/// which parks instead of holding.
+#[derive(Default)]
+pub struct TypedGroundHold {
+    pub(crate) probed: bool,
+    pub(crate) done: bool,
+}
+
+impl ResearchAgent for TypedGroundHold {
+    fn name(&self) -> &'static str {
+        "typed_ground_hold"
+    }
+
+    fn act(&mut self, lab: &mut Lab, obs: &Observation) -> Vec<AgentAction> {
+        let Some(rover) = robot(obs, "rover") else {
+            return Vec::new();
+        };
+        let Some(g) = rover.ground.as_ref() else {
+            return Vec::new();
+        };
+        if self.done {
+            return Vec::new();
+        }
+        if !self.probed {
+            self.probed = true;
+            if g.kind == GroundKind::Parked {
+                return vec![cmd("rover", LabCmd::Drive, -0.6, 0.0, 0.0)];
+            }
+        }
+        if g.kind == GroundKind::Moving {
+            if rover.hold_ned.is_some() || rover_hold_attached(lab) {
                 self.done = true;
             }
             return Vec::new();

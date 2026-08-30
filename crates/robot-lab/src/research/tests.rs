@@ -1391,6 +1391,72 @@ fn typed_ground_halt_skips_open_water() {
 }
 
 #[test]
+fn typed_ground_hold_holds_current_pose() {
+    for name in ["inland", "coastal", "harbor"] {
+        let mut lab = Lab::open(name, 3).unwrap();
+        let mut agent = TypedGroundHold::default();
+        let run = lab.research(&mut agent, 0.02, 40);
+        assert!(run.ok(), "{name} {run} broken={:?}", run.broken);
+        assert_eq!(run.actions_applied, 0, "{name}");
+        assert!(run.actions_rejected >= 1, "{name}");
+        assert!(agent.done, "{name}");
+        assert!(
+            lab.log.iter().any(|a| a.action.cmd == LabCmd::Release),
+            "{name}"
+        );
+        assert!(
+            lab.log.iter().any(|a| a.action.cmd == LabCmd::Hold),
+            "{name}"
+        );
+        assert!(
+            lab.log
+                .iter()
+                .all(|a| a.action.cmd != LabCmd::Estop && a.action.cmd != LabCmd::Halt),
+            "{name}"
+        );
+        let end = lab.observe();
+        let rover = robot(&end, "rover").unwrap();
+        let g = rover.ground.as_ref().unwrap();
+        assert_eq!(g.kind, GroundKind::Moving, "{name}");
+        assert!(g.drive_enabled, "{name}");
+        let hold = rover.hold_ned.unwrap_or_else(|| panic!("{name} hold_ned"));
+        assert!(hold.iter().all(|c| c.is_finite()), "{name} hold {hold:?}");
+        assert!(run.holds("position_hold_restores_pose"), "{name}");
+    }
+}
+
+#[test]
+fn typed_ground_hold_log_replays_on_a_fresh_lab() {
+    let mut live = Lab::open("inland", 3).unwrap();
+    let mut agent = TypedGroundHold::default();
+    let run = live.research(&mut agent, 0.02, 40);
+    assert!(run.ok(), "{run} broken={:?}", run.broken);
+    assert!(agent.done);
+
+    let mut replayed = Lab::open("inland", 3).unwrap();
+    replayed
+        .replay_until(&live.log, 0.02, live.world().t)
+        .unwrap();
+    let obs = replayed.observe();
+    let rover = robot(&obs, "rover").unwrap();
+    let g = rover.ground.as_ref().unwrap();
+    assert_eq!(g.kind, GroundKind::Moving);
+    assert!(rover.hold_ned.is_some());
+    assert!(replayed.all_hold());
+    assert!(replayed.log.is_empty(), "replay must not re-log");
+}
+
+#[test]
+fn typed_ground_hold_skips_open_water() {
+    let mut lab = Lab::open("open_water", 3).unwrap();
+    let mut agent = TypedGroundHold::default();
+    let run = lab.research(&mut agent, 0.02, 20);
+    assert!(run.ok(), "{run} broken={:?}", run.broken);
+    assert!(!agent.done);
+    assert_eq!(run.actions_applied, 0);
+}
+
+#[test]
 fn typed_fleet_return_homes_coastal_bodies() {
     for name in ["coastal", "harbor"] {
         let mut lab = Lab::open(name, 3).unwrap();

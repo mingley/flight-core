@@ -155,6 +155,7 @@ fn legal_abuse() -> Vec<AgentAction> {
         action("", LabCmd::SetCurrent, 0.8, 0.2, 0.0),
         action("rover", LabCmd::Release, 0.0, 0.0, 0.0),
         action("rover", LabCmd::Drive, -2.5, 0.4, 0.0),
+        action("rover", LabCmd::Hold, 0.0, 0.0, 0.0),
         action("skiff", LabCmd::Undock, 0.0, 0.0, 0.0),
         action("skiff", LabCmd::Thrust, 1.2, 0.0, 0.0),
         action("surveyor", LabCmd::Undock, 0.0, 0.0, 0.0),

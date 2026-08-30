@@ -9,7 +9,7 @@ use robot_world::World;
 use super::aerial::{
     aerial_disarm, aerial_failsafe, aerial_hold, aerial_land, aerial_touchdown, WorldBackend,
 };
-use super::ground::{ground_estop, GroundWorldBackend};
+use super::ground::{ground_estop, ground_hold, GroundWorldBackend};
 use super::marine::{marine_dock, marine_failsafe, MarineWorldBackend};
 use super::shared::{body_imu, clamp_dt, Plant};
 
@@ -125,6 +125,18 @@ impl WorldSession {
                 let moving = parked.enable_drive().map_err(|e| e.into_backend())?;
                 Ok(moving.into_backend())
             }
+            _ => Err(BackendError::Protocol),
+        }
+    }
+
+    /// Hold at the current NED pose while the chassis is Moving.
+    /// Parked / EStop are [`BackendError::Protocol`].
+    pub fn attach_ground_hold(
+        &self,
+        body_id: &'static str,
+    ) -> Result<GroundWorldBackend, BackendError> {
+        match self.ground(body_id).attach()? {
+            GroundHandle::Moving(v) => ground_hold(v),
             _ => Err(BackendError::Protocol),
         }
     }

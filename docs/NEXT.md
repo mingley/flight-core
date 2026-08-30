@@ -109,7 +109,7 @@ Goal: every domain can **hold and move** under the same typestate story; compani
 
 ### B1. Ground pose hold
 
-Was v0 out of scope. Now a north-star control item.
+**Status: landed.** `GroundVehicle<Moving>::hold_now` + trybuild Parked / EStop. Plant field is the same NED `hold_ned` / `position_hold_restores_pose` as aerial. Restore fact is existing Kani `hold_velocity_restores_pose` (f32; no second harness). `LabCmd::Hold` + `legal_cmds` + `TypedGroundHold` + JSON probe (parked Hold stays not-legal; Moving Hold is legal). Inland / coastal / harbor include the rover; open_water skips (P11). Halt, E-stop, empty battery, and ungranted `clear_command()` wipe hold (P13 spirit, remaining-spec §5.4 A). `LabCmd::Position` remains aerial-only.
 
 **Acceptance:**
 
@@ -232,7 +232,7 @@ Only after A is usable and B1–B2 have a written status (landed or explicitly d
 
 ## Suggested implementation order
 
-1. **A1–A6 landed.** Next: **B1 / B2** (ground hold, marine DP).
+1. **A1–A6 landed. B1 landed.** Next: **B2** (marine DP).
 2. **B3 / B4 / B5** (estimation bit, planning, coordination).
 3. **C1–C3** (proofs, traces, scenarios) can overlap A3.
 4. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.

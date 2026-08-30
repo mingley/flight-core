@@ -24,8 +24,9 @@ The workspace already has a usable slice of that goal. In-scope functional items
 - Consume-self typestate for aerial / ground / marine vehicles (`Vehicle`, `GroundVehicle`, `MarineVehicle`) with compile-fail UI tests under `crates/flight-core/tests/ui/` (123 `.rs` files).
 - `OffboardControl` gates `set_velocity` / `set_position` / `hold`. `MotorsEnabled` gates `set_motor_thrust`. Recovery is a real aerial typestate.
 - One mechanically verified plant: `robot-world::World::try_step` clones, advances, and commits only if all **22** named properties hold. NED z-down. Catalogs `coastal` / `harbor` / `inland` / `open_water`.
-- `WorldSession` attach walks (`attach_takeoff`, `attach_drive`, `attach_undock`, `attach_hold`, failsafe / recover / return / station / airborne, …) shared by HITL, ROS 2, PX4 `WorldPlant`, and `robot-lab`.
+- `WorldSession` attach walks (`attach_takeoff`, `attach_drive`, `attach_undock`, `attach_hold`, `attach_ground_hold`, failsafe / recover / return / station / airborne, …) shared by HITL, ROS 2, PX4 `WorldPlant`, and `robot-lab`.
 - Aerial position hold: plant `hold_ned`, kernel `hold_velocity_ned` / `HOLD_KP`, Kani `hold_velocity_restores_pose`, `LabCmd::Hold` + `LabCmd::Position`, `TypedHold` / `TypedPositionHold` / `TypedFleetHold`, demo `POST /api/hold`.
+- Ground pose hold: same plant `hold_ned` / `position_hold_restores_pose` / Kani restore fact; `GroundVehicle<Moving>::hold_now`; `WorldSession::attach_ground_hold`; `TypedGroundHold`. Parked / EStop compile-fail. `LabCmd::Position` stays aerial-only.
 - Research loop: `Lab::observe` / `act_through_attach` / `research` / `replay_until` / `research_probe`, typed agents with `actions_applied == 0` for legal motion, JSONL + Foxglove-shaped MCAP. `WorldImu` + `FuzzedImu` read noisy samples without replacing `WorldSession::step`.
 - Live PX4 SIH companion path: `sitl_live --ignored` recorded pass (14.59s, `px4io/px4-sitl:v1.18.0-beta2`); CI job `sitl`.
 
@@ -157,7 +158,7 @@ Hold, airborne, station, resume, dock, park, return, recover are walked on `Worl
 
 ### 5.2 Illegal catalog completeness
 
-**Status: landed.** `research_probe` illegal catalog includes parked Drive/Thrust/Velocity, pad Hold/Position/Airborne/Takeoff, rover Hold/Halt, docked Station, plus Failsafe Hold on a clone (so the main lab stays Ready). Illegal phase stays on `Lab::act`. Legal abuse still walks Hold then Velocity through `act_through_attach`.
+**Status: landed.** `research_probe` illegal catalog includes parked Drive/Thrust/Velocity, pad Hold/Position/Airborne/Takeoff, parked rover Hold/Halt, docked Station, plus Failsafe Hold on a clone (so the main lab stays Ready). Illegal phase stays on `Lab::act`. Legal abuse walks rover Hold after Drive, then drone Hold then Velocity through `act_through_attach`.
 
 ### 5.3 MCAP / JSONL research traces
 
@@ -181,9 +182,11 @@ Hold, airborne, station, resume, dock, park, return, recover are walked on `Worl
 
 ### 6.2 Ground / marine pose hold
 
-**Current evidence:** Aerial hold is NED P-term on `hold_ned`. Marine “hold” is `StationKeep` (heading/station machine), not a NED pose target. Ground has Halt to Parked, no pose hold.
+**Status: landed (ground).** `GroundVehicle<Moving>::hold_now` fires kernel `DriveCommand` then `VehicleBackend::hold_now`. Parked / EStop compile-fail (`parked_hold.rs`, `estopped_hold.rs`). Plant field is aerial `hold_ned` / `position_hold_restores_pose`. Restore fact is existing Kani `hold_velocity_restores_pose` (f32; no second harness). `LabCmd::Hold` is legal on Moving; `LabCmd::Position` stays aerial-only. `WorldSession::attach_ground_hold` / `Lab::attach_ground_hold` / `TypedGroundHold`. Inland / coastal / harbor include the rover; open_water skips (P11). Halt, E-stop, empty battery, and ungranted `clear_command()` wipe `hold_ned` (P13 spirit, §5.4 A).
 
-**Acceptance:** north-star work, not v0. See [`docs/NEXT.md`](NEXT.md) **B1** (ground) and **B2** (marine DP). Do not invent rover GPS-hold without those acceptance rows. If added: compile-fail from Parked/EStop/Docked, plant field, Kani-style restore fact, typed agent, catalog skips.
+**Current evidence (marine):** Marine “hold” is `StationKeep` (heading/station machine), not a NED pose target. NEXT **B2**.
+
+**Acceptance:** north-star **B2** (marine DP). Do not invent rover GPS-hold without the B1 rows above (now landed). If adding marine DP: compile-fail from Docked/Failsafe, plant field, Kani-style restore or reuse, typed agent, catalog skips. Do not add `declare_failsafe` on `Docked`. Do not dock from Failsafe in typestate.
 
 ### 6.3 Kernel `EnterOffboard` vs Armed-only now-API
 

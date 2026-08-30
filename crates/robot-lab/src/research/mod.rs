@@ -16,7 +16,7 @@ pub use typed_aerial::{
     TypedPadDisarm, TypedPadFailsafe, TypedPadLanding, TypedPositionHold,
 };
 pub use typed_fleet::{TypedAttachFleet, TypedFleet, TypedFleetHold, TypedFleetReturn};
-pub use typed_ground::{TypedCollisionSweep, TypedGroundEstop, TypedGroundHalt};
+pub use typed_ground::{TypedCollisionSweep, TypedGroundEstop, TypedGroundHalt, TypedGroundHold};
 pub use typed_marine::{
     TypedHullDock, TypedHullFailsafe, TypedStationDock, TypedStationFailsafe, TypedStationResume,
     TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,

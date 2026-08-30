@@ -552,6 +552,24 @@ fn position_is_legal_only_on_offboard_control_aerial() {
 }
 
 #[test]
+fn hold_is_legal_on_moving_rover_not_parked() {
+    let mut lab = Lab::open("inland", 1).unwrap();
+    assert!(!view(&lab, "rover").allows(LabCmd::Hold));
+    lab.act_through_attach(AgentAction::new("rover", LabCmd::Release))
+        .unwrap();
+    assert!(view(&lab, "rover").allows(LabCmd::Hold));
+    assert!(!view(&lab, "rover").allows(LabCmd::Position));
+    let pose = body(&lab, "rover").position_m;
+    lab.act_through_attach(AgentAction::new("rover", LabCmd::Hold))
+        .unwrap();
+    assert_eq!(body(&lab, "rover").hold_ned, Some(pose));
+    assert!(lab.all_hold());
+    lab.act_through_attach(AgentAction::new("rover", LabCmd::Halt))
+        .unwrap();
+    assert!(body(&lab, "rover").hold_ned.is_none());
+}
+
+#[test]
 fn act_through_attach_position_walks_set_position_now() {
     let mut lab = Lab::open("inland", 1).unwrap();
     lab.act_through_attach(AgentAction::new("drone", LabCmd::Takeoff))
@@ -754,6 +772,66 @@ fn json_hold_from_ready_is_rejected_and_rover_is_wrong_domain() {
         ),
         "{err}"
     );
+}
+
+#[test]
+fn json_hold_from_moving_rover_sets_hold_ned() {
+    let mut lab = Lab::open("inland", 1).unwrap();
+    lab.act_through_attach(AgentAction::new("rover", LabCmd::Release))
+        .unwrap();
+    let pose = body(&lab, "rover").position_m;
+    lab.act(AgentAction::new("rover", LabCmd::Hold)).unwrap();
+    assert_eq!(body(&lab, "rover").hold_ned, Some(pose));
+    assert!(lab.all_hold());
+}
+
+#[test]
+fn act_through_attach_ground_hold_walks_attach_ground_hold() {
+    let mut lab = Lab::open("inland", 1).unwrap();
+    lab.act_through_attach(AgentAction::new("rover", LabCmd::Release))
+        .unwrap();
+    let pose = body(&lab, "rover").position_m;
+    lab.act_through_attach(AgentAction::new("rover", LabCmd::Hold))
+        .unwrap();
+    assert!(
+        lab.log.iter().any(|a| a.action.cmd == LabCmd::Hold),
+        "attach ground hold must log Hold"
+    );
+    assert_eq!(body(&lab, "rover").hold_ned, Some(pose));
+    assert!(lab.all_hold());
+
+    let mut replayed = Lab::open("inland", 1).unwrap();
+    replayed
+        .replay_until(&lab.log, 0.02, lab.world().t.max(0.02))
+        .unwrap();
+    assert!(replayed.all_hold());
+    assert_eq!(body(&replayed, "rover").hold_ned, Some(pose));
+    assert!(replayed.log.is_empty(), "replay must not re-log");
+}
+
+#[test]
+fn rover_hold_wiped_by_estop_and_empty_drive() {
+    let lab = Lab::open("inland", 1).unwrap();
+    lab.attach_drive("rover").unwrap();
+    lab.attach_ground_hold("rover").unwrap();
+    assert!(body(&lab, "rover").hold_ned.is_some());
+    lab.attach_estop("rover").unwrap();
+    assert!(body(&lab, "rover").hold_ned.is_none());
+    assert!(body(&lab, "rover").command.is_none());
+}
+
+#[test]
+fn rover_hold_wiped_when_battery_empty() {
+    let mut lab = Lab::open("inland", 1).unwrap();
+    lab.attach_drive("rover").unwrap();
+    lab.attach_ground_hold("rover").unwrap();
+    assert!(body(&lab, "rover").hold_ned.is_some());
+    lab.act(AgentAction::new("rover", LabCmd::SetCharge).ned(0.0, 0.0, 0.0))
+        .unwrap();
+    lab.step(0.02);
+    assert!(body(&lab, "rover").hold_ned.is_none());
+    assert!(body(&lab, "rover").command.is_none());
+    assert!(lab.all_hold());
 }
 
 #[test]

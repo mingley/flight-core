@@ -47,7 +47,14 @@ pub(crate) fn apply_action_world(
         }
         LabCmd::Hold => {
             let p = body.position_m;
-            set_position(body, p)?;
+            match body.domain {
+                Domain::Aerial => set_position(body, p)?,
+                Domain::Ground => {
+                    ground(body, GroundEvent::DriveCommand)?;
+                    body.set_position_hold(p);
+                }
+                Domain::Surface | Domain::Underwater => return Err(LabError::WrongDomain),
+            }
             body.yaw_cmd = action.yaw_rate;
         }
         LabCmd::Release => ground(body, GroundEvent::Release)?,

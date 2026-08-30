@@ -1358,6 +1358,37 @@ fn attach_hold_sets_ned_pose_from_offboard_control() {
 }
 
 #[test]
+fn attach_ground_hold_sets_ned_pose_from_moving() {
+    let session = WorldSession::inland(1);
+    assert_eq!(
+        session.attach_ground_hold("rover").unwrap_err(),
+        BackendError::Protocol
+    );
+    session.attach_drive("rover").unwrap();
+    let pose = session.world().body("rover").unwrap().position_m;
+    session.attach_ground_hold("rover").unwrap();
+    assert_eq!(session.world().body("rover").unwrap().hold_ned, Some(pose));
+    session.step(0.02).unwrap();
+    assert!(session.world().body("rover").unwrap().hold_ned.is_some());
+    assert!(session.world().all_hold());
+    session.attach_park("rover").unwrap();
+    assert!(session.world().body("rover").unwrap().hold_ned.is_none());
+    assert_eq!(
+        session.attach_ground_hold("rover").unwrap_err(),
+        BackendError::Protocol
+    );
+    session.attach_drive("rover").unwrap();
+    session.attach_ground_hold("rover").unwrap();
+    assert!(session.world().body("rover").unwrap().hold_ned.is_some());
+    session.attach_estop("rover").unwrap();
+    assert!(session.world().body("rover").unwrap().hold_ned.is_none());
+    assert_eq!(
+        session.attach_ground_hold("rover").unwrap_err(),
+        BackendError::Protocol
+    );
+}
+
+#[test]
 fn fuzzed_world_imu_hold_keeps_properties() {
     use crate::FuzzedImu;
     use flight_core::sensors::Imu;

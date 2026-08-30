@@ -189,6 +189,11 @@ impl Lab {
         self.session.attach_hold(id)
     }
 
+    /// Moving → current NED pose hold. Parked / EStop are Protocol.
+    pub fn attach_ground_hold(&self, id: &'static str) -> Result<GroundWorldBackend, BackendError> {
+        self.session.attach_ground_hold(id)
+    }
+
     /// Ready, Armed, Offboard, Takeoff, Airborne, or Landing → Failsafe.
     pub fn attach_failsafe(&self, id: &'static str) -> Result<WorldBackend, BackendError> {
         self.session.attach_failsafe(id)
@@ -386,7 +391,15 @@ impl Lab {
             },
             LabCmd::Velocity => self.try_aerial_velocity(t, id, action, log),
             LabCmd::Position => self.try_aerial_position(t, id, action, log),
-            LabCmd::Hold => self.attach_apply(t, action, self.session.attach_hold(id), log),
+            LabCmd::Hold => match self.with_world(|w| w.body(id).map(|b| b.domain)) {
+                Some(Domain::Aerial) => {
+                    self.attach_apply(t, action, self.session.attach_hold(id), log)
+                }
+                Some(Domain::Ground) => {
+                    self.attach_apply(t, action, self.session.attach_ground_hold(id), log)
+                }
+                _ => Ok(false),
+            },
             LabCmd::Drive => self.try_ground_drive(t, id, action, log),
             LabCmd::Thrust => self.try_marine_thrust(t, id, action, log),
         }

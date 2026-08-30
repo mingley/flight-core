@@ -96,7 +96,11 @@ fn attempted_event(cmd: LabCmd, domain: Option<Domain>) -> Option<&'static str> 
             Some(Domain::Surface | Domain::Underwater) => "Failsafe",
             Some(Domain::Aerial) | None => "TriggerFailsafe",
         },
-        LabCmd::Velocity | LabCmd::Position | LabCmd::Hold => "MissionCommand",
+        LabCmd::Velocity | LabCmd::Position => "MissionCommand",
+        LabCmd::Hold => match domain {
+            Some(Domain::Ground) => "DriveCommand",
+            _ => "MissionCommand",
+        },
         LabCmd::Drive => "DriveCommand",
         LabCmd::Thrust => "ThrustCommand",
         LabCmd::Release => "Release",
