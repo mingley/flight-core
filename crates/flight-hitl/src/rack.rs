@@ -32,7 +32,7 @@ use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Instant;
 
-use flight_core::contracts::{AerialOffboard, TraceSample};
+use flight_core::contracts::{evaluate_trace, AerialOffboard, TraceSample};
 use flight_core::hitl::{
     command_after_deadline, deadline_outcome, hitl_apply_allowed, DeadlineOutcome, DeadlineSpec,
 };
@@ -796,6 +796,53 @@ impl WorldRack {
         }
         Ok(n)
     }
+
+    /// Leftover OffboardControl after `EstimatorInvalid`, evaluated against
+    /// [`AerialOffboard::GPS_LOSS_REQUIRE`] (same monitors as world gps-loss).
+    /// Inland grant is Takeoff. Lives here because `flight-sim` cannot depend
+    /// on this crate.
+    pub fn run_hitl_gps_loss() -> Result<HitlGpsLossReport, String> {
+        let rack = Self::inland(1).map_err(|err| format!("rack: {err}"))?;
+        let VehicleHandle::Takeoff(mut leftover) = rack
+            .session
+            .aerial("drone")
+            .attach()
+            .map_err(|err| format!("bind Takeoff: {err}"))?
+        else {
+            return Err("inland grant must bind Takeoff".into());
+        };
+        if leftover.leftover_commands_stale().is_ok() {
+            return Err("leftover already stale before GPS-loss inject".into());
+        }
+        let before = drone_trace(&rack.world()).map_err(|e| format!("trace before: {e}"))?;
+        if before.failsafe {
+            return Err("failsafe already latched before GPS-loss inject".into());
+        }
+        rack.inject_revoke(Event::EstimatorInvalid)
+            .map_err(|err| format!("inject EstimatorInvalid: {err}"))?;
+        leftover
+            .leftover_commands_stale()
+            .map_err(|err| format!("leftover after GPS-loss: {err}"))?;
+        let after = drone_trace(&rack.world()).map_err(|e| format!("trace after: {e}"))?;
+        if !after.failsafe {
+            return Err("EstimatorInvalid must latch failsafe".into());
+        }
+        if after.epoch <= before.epoch {
+            return Err("GPS-loss inject did not bump epoch".into());
+        }
+        let samples = vec![before, after];
+        evaluate_trace(&samples, AerialOffboard::GPS_LOSS_REQUIRE)
+            .map_err(|e| format!("GPS_LOSS {} at {}", e.requirement, e.index))?;
+        AerialOffboard::evaluate(&samples)
+            .map_err(|e| format!("capability {} at {}", e.requirement, e.index))?;
+        Ok(HitlGpsLossReport { samples })
+    }
+}
+
+/// Result of [`WorldRack::run_hitl_gps_loss`].
+#[derive(Clone, Debug)]
+pub struct HitlGpsLossReport {
+    pub samples: Vec<TraceSample>,
 }
 
 /// Decode a companion command datagram (hardware rack → this process).
@@ -1501,5 +1548,14 @@ mod tests {
     fn leftover_commands_stale_after_every_dsl_revoke() {
         let n = WorldRack::run_hitl_revoke_table().expect("hitl leftover revoke table");
         assert_eq!(n, AerialOffboard::REVOKE_ON.len());
+    }
+
+    #[test]
+    fn leftover_offboard_gps_loss_satisfies_world_contract() {
+        let report = WorldRack::run_hitl_gps_loss().expect("hitl gps-loss");
+        assert_eq!(report.samples.len(), 2);
+        assert!(!report.samples[0].failsafe);
+        assert!(report.samples[1].failsafe);
+        assert!(report.samples[1].epoch > report.samples[0].epoch);
     }
 }

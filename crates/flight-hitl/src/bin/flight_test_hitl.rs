@@ -20,6 +20,10 @@ fn main() {
         eprintln!("FAIL scenario=revoke-table leftover backend=hitl: {e}");
         std::process::exit(1);
     });
+    let gps = flight_hitl::WorldRack::run_hitl_gps_loss().unwrap_or_else(|e| {
+        eprintln!("FAIL scenario=gps-loss leftover backend=hitl: {e}");
+        std::process::exit(1);
+    });
     let mock = flight_hitl::run_fch1_udp_mock().unwrap_or_else(|e| {
         eprintln!("FAIL scenario=fch1-udp-mock backend=hitl: {e}");
         std::process::exit(1);
@@ -27,6 +31,10 @@ fn main() {
     println!("PASS scenario=hitl-miss leftover={miss} backend=hitl (rack deadline miss + Rate)");
     println!(
         "PASS scenario=revoke-table leftover={n} events={n} backend=hitl (rack inject_revoke)"
+    );
+    println!(
+        "PASS scenario=gps-loss leftover=1 samples={} backend=hitl (rack EstimatorInvalid, GPS_LOSS require)",
+        gps.samples.len()
     );
     println!(
         "PASS scenario=fch1-udp-mock frames={} samples={} backend=hitl (faithful UDP card, not in-process plant)",
