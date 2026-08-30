@@ -70,6 +70,7 @@ pub struct SimBackend {
     last_command_at: MonotonicInstant,
     rng: u64,
     authority_epoch: u32,
+    actuation_revoked: bool,
 }
 
 impl SimBackend {
@@ -90,6 +91,7 @@ impl SimBackend {
             last_command: "idle",
             last_command_at: MonotonicInstant::ZERO,
             authority_epoch: 0,
+            actuation_revoked: false,
         }
     }
 
@@ -197,6 +199,13 @@ impl SimBackend {
         }
     }
 
+    fn refuse_revoked_setpoint(&self) -> Result<(), BackendError> {
+        if self.actuation_revoked {
+            return Err(BackendError::Rejected("actuation authority revoked"));
+        }
+        Ok(())
+    }
+
     fn snapshot(&mut self) -> Telemetry {
         let imu = self.imu_sample();
         Telemetry {
@@ -285,6 +294,7 @@ impl VehicleBackend for SimBackend {
     }
 
     async fn arm(&mut self) -> Result<(), BackendError> {
+        self.restore_actuation();
         self.armed = true;
         self.last_command = "arm";
         self.last_command_at = self.clock.now();
@@ -296,11 +306,13 @@ impl VehicleBackend for SimBackend {
         self.actuators = false;
         self.setpoint = None;
         self.last_command = "disarm";
+        self.actuation_revoked = true;
         self.revoke_authority();
         Ok(())
     }
 
     async fn enter_offboard(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.setpoint = Some(Setpoint::Velocity(Velocity::ned(0.0, 0.0, 0.0)));
         self.last_command = "offboard";
         self.last_command_at = self.clock.now();
@@ -311,6 +323,7 @@ impl VehicleBackend for SimBackend {
         &mut self,
         velocity: Velocity<flight_core::frames::Ned>,
     ) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.setpoint = Some(Setpoint::Velocity(velocity));
         self.last_command = "set_velocity";
         self.last_command_at = self.clock.now();
@@ -321,6 +334,7 @@ impl VehicleBackend for SimBackend {
         &mut self,
         position: Position<flight_core::frames::Ned>,
     ) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         self.setpoint = Some(Setpoint::Position(position));
         self.last_command = "set_position";
         self.last_command_at = self.clock.now();
@@ -328,6 +342,7 @@ impl VehicleBackend for SimBackend {
     }
 
     async fn set_motor_thrust(&mut self, thrust: MotorThrust) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         if !self.armed {
             return Err(BackendError::Rejected("not armed"));
         }
@@ -338,6 +353,7 @@ impl VehicleBackend for SimBackend {
     }
 
     async fn enable_actuators(&mut self) -> Result<(), BackendError> {
+        self.refuse_revoked_setpoint()?;
         if !self.armed {
             return Err(BackendError::Rejected("not armed"));
         }
@@ -376,12 +392,21 @@ impl VehicleBackend for SimBackend {
     async fn trigger_failsafe(&mut self) -> Result<(), BackendError> {
         self.setpoint = None;
         self.last_command = "failsafe";
+        self.actuation_revoked = true;
         self.revoke_authority();
         Ok(())
     }
 
     fn authority_epoch(&self) -> u32 {
         self.authority_epoch
+    }
+
+    fn actuation_revoked(&self) -> bool {
+        self.actuation_revoked
+    }
+
+    fn restore_actuation(&mut self) {
+        self.actuation_revoked = false;
     }
 
     fn authority_now(&self) -> MonotonicInstant {
@@ -391,6 +416,11 @@ impl VehicleBackend for SimBackend {
     fn revoke_authority(&mut self) {
         self.authority_epoch = self.authority_epoch.saturating_add(1);
     }
+
+    fn recover_now(&mut self) -> Result<(), BackendError> {
+        self.restore_actuation();
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -398,6 +428,7 @@ mod tests {
     use super::*;
     use flight_core::prelude::*;
     use flight_core::units::Qty;
+    use flight_core::vehicle::{MotorThrust, VehicleBackend};
 
     #[tokio::test]
     async fn connect_preflight_arm_takeoff_land() {
@@ -437,5 +468,66 @@ mod tests {
         let sample = sim.sample().unwrap();
         assert!(sample.accel.is_finite());
         assert_eq!(sim.apply(cmd), Err(ActuatorError::NotArmed));
+    }
+
+    #[test]
+    fn hold_now_after_connect_is_not_a_revoked_setpoint() {
+        let mut sim = SimBackend::new(SimConfig::default());
+        sim.connect_now().unwrap();
+        assert!(sim.authority_epoch() >= 1);
+        assert!(!sim.actuation_revoked());
+        sim.hold_now().unwrap();
+        sim.set_velocity_ned_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+            .unwrap();
+    }
+
+    #[test]
+    fn disarm_refuses_backend_direct_setpoints_and_does_not_store_them() {
+        let mut sim = SimBackend::new(SimConfig::default());
+        sim.connect_now().unwrap();
+        sim.arm_now().unwrap();
+        sim.enable_actuators_now().unwrap();
+        sim.enter_offboard_now().unwrap();
+        sim.set_velocity_ned_now(Velocity::<Ned>::ned(1.0, 0.0, 0.0))
+            .unwrap();
+        sim.disarm_now().unwrap();
+        assert!(sim.actuation_revoked());
+        assert!(!sim.telemetry_now().unwrap().offboard);
+        let err = sim.set_velocity_ned_now(Velocity::<Ned>::ned(1.5, 0.0, 0.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let tel = sim.telemetry_now().unwrap();
+        assert!(
+            !tel.offboard,
+            "refused velocity must not revive the mixer setpoint"
+        );
+        assert_eq!(tel.last_command, "disarm");
+        let err = sim.enter_offboard_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = sim.enable_actuators_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = sim.set_motor_thrust_now(MotorThrust::hover(4, 0.4));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        let err = sim.hold_now();
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        sim.arm_now().unwrap();
+        sim.enable_actuators_now().unwrap();
+        sim.set_velocity_ned_now(Velocity::<Ned>::ned(0.2, 0.0, 0.0))
+            .unwrap();
+        assert!(sim.telemetry_now().unwrap().offboard);
+    }
+
+    #[test]
+    fn failsafe_refuses_backend_direct_physical_authority() {
+        let mut sim = SimBackend::new(SimConfig::default());
+        sim.connect_now().unwrap();
+        sim.arm_now().unwrap();
+        sim.enable_actuators_now().unwrap();
+        sim.enter_offboard_now().unwrap();
+        sim.trigger_failsafe_now().unwrap();
+        assert!(sim.actuation_revoked());
+        assert!(!sim.telemetry_now().unwrap().offboard);
+        let err = sim.set_position_ned_now(Position::<Ned>::ned(0.0, 0.0, 0.0));
+        assert!(matches!(err, Err(BackendError::Rejected(_))), "{err:?}");
+        assert!(!sim.telemetry_now().unwrap().offboard);
     }
 }
