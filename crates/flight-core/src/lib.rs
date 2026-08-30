@@ -29,7 +29,9 @@
 //! `MarineVehicle` and backends). `--no-default-features` builds units, frames,
 //! sensors, safety, hydro, and mech on `no_std`. There is no `no_std` vehicle
 //! handle: a microcontroller companion uses the kernel + attitude estimator,
-//! not `Vehicle<S, B>`. Do not claim `no_std` vehicles.
+//! not `Vehicle<S, B>`. Do not claim `no_std` vehicles. [`host::kernel_host_tick`]
+//! (NEXT B8, `examples/kernel_tick`) walks `step` / `ground_step` /
+//! `marine_step` / `deadline_outcome` on the host.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_code)]
@@ -46,6 +48,8 @@ pub mod frames;
 pub mod geometry;
 pub mod ground;
 pub mod hitl;
+#[cfg(not(creusot))]
+pub mod host;
 #[cfg(not(creusot))]
 pub mod hydro;
 pub mod marine;
