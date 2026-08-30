@@ -206,12 +206,28 @@ README / remaining-spec.
 
 ### C2. Causal / property traces
 
+**Status: landed.** `Lab::broken` / `Observation.broken` / `ResearchRun.broken`
+name the failed property ids from a refused `try_step` (refuse is atomic:
+pose / hydro / `t` stay). Tests induce `hydro_volume_conserved` on a **clone**
+(`observation_broken_names_refused_try_step_without_extra_step`,
+`research_run_broken_on_clone_does_not_break_live`); the live catalog still
+holds.
+
 **Acceptance:**
 
 1. When `try_step` refuses, the caller can read which property id failed (already implied by the vector — expose it on `Lab` without panicking away the world).
 2. ResearchRun `broken` stays the list of failed ids; tests cover at least one induced break in a **clone** (do not ship a catalog that fails).
 
 ### C3. Scenario DSL
+
+**Status: landed.** [`robot_world::Scene`](../crates/robot-world/src/scene.rs)
+is a Rust builder: `catalog(name)` or `custom(name, env, bodies)`, then
+`seed` / `wind_ned` / `current_ned` / `waves` / `charge`.
+`Lab::from_scene` / `WorldSession::from_scene` build the plant. Reserved
+`inland` cannot include a hull; `open_water` cannot include a rover. New
+names (`pad_pair`) are new catalogs with an explicit body table and are **not**
+registered on `World::named` / `Lab::open`. `TypedFleetHold` skips a missing
+skiff or rover. Wind overlays **replace** after the catalog seed is applied.
 
 **Acceptance:**
 
@@ -434,8 +450,8 @@ FC-CAP-AerialOffboard, FC-INV-001..003. `human_readable_spec()`.
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B5 landed. E1 landed. F1–F10 landed. C1 landed.** Next: **C2–C3** (traces, richer scenarios) and live Gazebo if someone needs a world renderer.
-2. **C1–C3** (proofs, traces, scenarios) can overlap A3.
+1. **A1–A6 landed. B1–B5 landed. E1 landed. F1–F10 landed. C1–C3 landed.** Next: **C4** (scale) and live Gazebo if someone needs a world renderer.
+2. **C4** (hydro/body scale) can overlap B6.
 3. **B6 / B7 / B8** (more companions, metal, `no_std` tick) when the API is stable.
 4. **D\*** morphologies last.
 

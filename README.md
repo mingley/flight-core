@@ -396,7 +396,7 @@ position_hold_restores_pose  when hold_ned is set, command · (hold − pose) �
 
 The coastal scene is virtual and specific: land `n ≥ 0` at `z = 0`, water `n < 0` with a 4 m seabed, east wind, northbound current, and a **conserved shallow-water heightfield** (Rusanov Saint-Venant). The seed sets the initial swell phase; the field then evolves. Set `FLIGHT_HYDRO_GPU=1` (the live demo does this) to run the same sweep on a Vulkan compute shader (lavapipe works). Bodies sample free-surface height and orbital flow from that field. Four platforms share it: drone (air), rover (ground), skiff (surface), surveyor (underwater). Pairwise sphere contact runs after integration; terrain is resolved again so a flattened ground plane cannot restore overlap.
 
-`Lab::open(name, seed)` loads a catalog world. The seed is not a comment: it sets wave phase and a small deterministic gust, so two labs with the same seed replay the same field.
+`Lab::open(name, seed)` loads a catalog world. The seed is not a comment: it sets wave phase and a small deterministic gust, so two labs with the same seed replay the same field. `Lab::from_scene` / `WorldSession::from_scene` take a Rust [`Scene`](crates/robot-world/src/scene.rs) (named catalog or a new name with an explicit body table, plus optional wind/current/waves/charges). Reserved names `inland` and `open_water` still refuse a hull or a rover. Custom names are not added to `Lab::open`.
 
 `Lab::open` also loads:
 
@@ -478,7 +478,7 @@ physical autonomy (agentic experiment / control / understand still applies):
 - [`docs/safety-contract.md`](docs/safety-contract.md) — generated-from-tables traceability
 - [`docs/generated/traceability.md`](docs/generated/traceability.md) — ID matrix
 - [`docs/copper.md`](docs/copper.md) — complement Copper; do not compete on runtime
-- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed)
+- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed; C1–C3 landed)
 
 A live PX4 SITL binary is optional locally (`cargo run -p flight-px4 --example sitl_hover`). Default `cargo test` skips `sitl_live` (`#[ignore]`). GitHub CI runs fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, a lavapipe GPU hydro job, `cargo kani -p flight-verify` (45 harnesses, kani-verifier 0.67.0), `cargo test -p flight-ros2 --features rclrs` (ROS 2 Jazzy), `cargo creusot prove -p flight-core` (Creusot 0.5.0, 81 libraries), and job `sitl` (PX4 SIH `px4io/px4-sitl:v1.18.0-beta2` + the ignored companion test). `docs/generated/proof-summary.txt` is the agent digest those counts lockstep; `Experiment` copies it into `run.json`.
 
