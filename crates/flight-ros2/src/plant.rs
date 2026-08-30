@@ -18,7 +18,7 @@
 //! [`WorldSession::attach_hold`]. An idle Twist (absent drone field) leaves
 //! that hold in place; a live Twist velocity clears it.
 
-use flight_core::contracts::AerialOffboard;
+use flight_core::contracts::{evaluate_trace, AerialOffboard, TraceSample};
 use flight_core::safety::Event;
 use flight_core::temporal::Sequence;
 use flight_core::vehicle::{
@@ -346,6 +346,73 @@ pub fn run_ros2_revoke_table() -> Result<usize, String> {
         n += 1;
     }
     Ok(n)
+}
+
+fn drone_trace(backend: &WorldBackend) -> Result<TraceSample, String> {
+    let world = backend.world();
+    let body = world.body("drone").ok_or("no drone")?;
+    let aerial = body.aerial.ok_or("no aerial")?;
+    Ok(TraceSample {
+        t_secs: world.t,
+        armed: aerial.armed,
+        actuators_enabled: aerial.actuators_enabled,
+        failsafe: aerial.failsafe,
+        epoch: body.authority_epoch,
+        heartbeat_age_ms: 0,
+        command: body.command,
+        altitude_m: body.altitude_agl(),
+        command_age_ms: 0,
+        estimator_ts_ms: (world.t * 1000.0) as u64,
+    })
+}
+
+/// Leftover OffboardControl after `EstimatorInvalid`, evaluated against
+/// [`AerialOffboard::GPS_LOSS_REQUIRE`] (same monitors as world gps-loss).
+/// Inland grant is Takeoff. Lives here because `flight-sim` cannot depend
+/// on this crate.
+pub fn run_ros2_gps_loss() -> Result<Ros2GpsLossReport, String> {
+    let mut plant = FleetPlant::inland(1);
+    plant.grant_all().map_err(|err| format!("grant: {err}"))?;
+    let VehicleHandle::Takeoff(mut leftover) = plant
+        .session()
+        .aerial("drone")
+        .attach()
+        .map_err(|err| format!("bind Takeoff: {err}"))?
+    else {
+        return Err("inland grant must bind Takeoff".into());
+    };
+    if leftover.leftover_commands_stale().is_ok() {
+        return Err("leftover already stale before GPS-loss inject".into());
+    }
+    let before = drone_trace(leftover.backend())?;
+    if before.failsafe {
+        return Err("failsafe already latched before GPS-loss inject".into());
+    }
+    plant
+        .inject_revoke(Event::EstimatorInvalid)
+        .map_err(|err| format!("inject EstimatorInvalid: {err}"))?;
+    leftover
+        .leftover_commands_stale()
+        .map_err(|err| format!("leftover after GPS-loss: {err}"))?;
+    let after = drone_trace(leftover.backend())?;
+    if !after.failsafe {
+        return Err("EstimatorInvalid must latch failsafe".into());
+    }
+    if after.epoch <= before.epoch {
+        return Err("GPS-loss inject did not bump epoch".into());
+    }
+    let samples = vec![before, after];
+    evaluate_trace(&samples, AerialOffboard::GPS_LOSS_REQUIRE)
+        .map_err(|e| format!("GPS_LOSS {} at {}", e.requirement, e.index))?;
+    AerialOffboard::evaluate(&samples)
+        .map_err(|e| format!("capability {} at {}", e.requirement, e.index))?;
+    Ok(Ros2GpsLossReport { samples })
+}
+
+/// Result of [`run_ros2_gps_loss`].
+#[derive(Clone, Debug)]
+pub struct Ros2GpsLossReport {
+    pub samples: Vec<TraceSample>,
 }
 
 fn require_aerial_setpoint(backend: &WorldBackend) -> Result<(), BackendError> {
@@ -1600,6 +1667,15 @@ mod tests {
     fn leftover_commands_stale_after_every_dsl_revoke() {
         let n = run_ros2_revoke_table().expect("ros2 leftover revoke table");
         assert_eq!(n, AerialOffboard::REVOKE_ON.len());
+    }
+
+    #[test]
+    fn leftover_offboard_gps_loss_satisfies_world_contract() {
+        let report = run_ros2_gps_loss().expect("ros2 gps-loss");
+        assert_eq!(report.samples.len(), 2);
+        assert!(!report.samples[0].failsafe);
+        assert!(report.samples[1].failsafe);
+        assert!(report.samples[1].epoch > report.samples[0].epoch);
     }
 
     #[test]
