@@ -30,7 +30,7 @@ Generates (one expansion in the kernel, aliased by the capability type):
 - Graphviz (`AerialOffboard::GRAPHVIZ`, [`docs/generated/aerial-offboard.dot`](generated/aerial-offboard.dot))
 - transition table (`AerialOffboard::TRANSITIONS`, [`docs/generated/aerial-offboard.transitions.md`](generated/aerial-offboard.transitions.md))
 - fault-injection list (`REVOKE_ON` / `run_revoke_table`, [`docs/generated/aerial-offboard.faults.md`](generated/aerial-offboard.faults.md))
-- compile-fail names (`AerialOffboard::UI_FORBIDDEN`)
+- compile-fail names (`AerialOffboard::UI_FORBIDDEN`, including `unsafe_mission.rs`)
 - this specification (`AerialOffboard::SPEC`, [`docs/generated/aerial-offboard.spec.txt`](generated/aerial-offboard.spec.txt))
 - [`docs/generated/traceability.md`](generated/traceability.md)
 

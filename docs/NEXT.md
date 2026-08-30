@@ -289,13 +289,15 @@ epoch bump predicates. Everything else is untrusted relative to `step`.
 
 ### F3. Temporal contracts
 
-**Status: landed.** `Fresh` / `HeartbeatFresh` / `Sequence` / `Estimate` /
-`Observation` / `Rate` / `Deadline` / `Lease` / `Command` / `Timestamp`.
-Kernel `heartbeat_age_ok`, `command_age_ok`, and `estimator_ts_monotonic`
-share bounds with the DSL. `Vehicle::apply_velocity_command_now` rejects
-`StaleCommand` when command age ≥ 100 ms. PX4 setpoints fail
-`StaleHeartbeat` when the last HEARTBEAT is older than 250 ms. Monitors:
-`CommandAgeMs`, `EstimatorTimestampsMonotonic`, `EpochBumped`.
+**Status: landed.** `Fresh` / `HeartbeatFresh` / `CommandFresh` / `Sequence` /
+`Estimate` / `Observation` / `Rate` / `Deadline` / `Lease` / `Command` /
+`Timestamp`. `Fresh::check_age` is the typed bound; it is the same predicate as
+`heartbeat_age_ok` / `command_age_ok`. `require_live_permit` uses
+`HeartbeatFresh::check_age` **and** `AerialOffboard::admit`.
+`Vehicle::apply_velocity_command_now` rejects `StaleCommand` when command age
+≥ 100 ms (`Command::check_age`). PX4 setpoints fail `StaleHeartbeat` when the
+last HEARTBEAT is older than 250 ms. Monitors: `CommandAgeMs`,
+`EstimatorTimestampsMonotonic`, `EpochBumped`.
 
 ### F4. Single-source contract DSL
 
@@ -326,7 +328,9 @@ plus the revoke `ensures`.
 heartbeat. Ingested HEARTBEAT with `MAV_STATE_CRITICAL` / `EMERGENCY` /
 `FLIGHT_TERMINATION` or AUTO+RTL revokes authority **once**. AUTO+LAND
 (NAV_LAND) does not latch failsafe. `authority_heartbeat_age_ms` feeds the
-permit check.
+permit check. After failsafe is latched, `set_velocity_ned` /
+`set_position_ned` return `BackendError::Rejected` at this backend (the
+pre-offboard `pump_setpoint` stream is not gated).
 
 ### F6. Torture laboratory / differential conformance
 
@@ -352,8 +356,8 @@ test that the plant epoch increments.
 `apply_point` / `apply_displacement`, `Rotation`, `Covariance<T>`.
 trybuild `transform_wrong_frames`, `orientation_is_not_angular_velocity`,
 `force_is_not_torque`, `velocity_is_not_acceleration`,
-`point_is_not_displacement`. Copper `cu_transform` is interop, not a
-copy (`docs/copper.md`).
+`point_is_not_displacement`, `unsafe_mission`. Copper `cu_transform` is
+interop, not a copy (`docs/copper.md`).
 
 ### F8. Copper integration
 

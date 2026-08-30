@@ -1,0 +1,11 @@
+//! README unsafe mission: `set_velocity` is not a method on `Vehicle<Armed>`.
+//!
+//! `cargo test -p flight-core --test ui` is the cargo-check failure.
+use flight_core::prelude::*;
+use flight_core::vehicle::Vehicle;
+
+fn boom<B>(mut vehicle: Vehicle<Armed, B>, v: Velocity<Ned>) {
+    let _ = vehicle.set_velocity(v);
+}
+
+fn main() {}

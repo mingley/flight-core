@@ -26,7 +26,8 @@ increments the epoch. The old permit is still memory. It has no authority.
 
 ```text
 1. Write an unsafe autonomous mission.
-2. cargo check:    FAIL — actuator authority unavailable in this state.
+2. cargo check:    FAIL — actuator authority unavailable in this state
+                   (tests/ui/unsafe_mission.rs).
 3. Fix it.
 4. cargo kani:     PROVED — no reachable kernel path enables actuators while unarmed.
 5. flight-test --scenario gps-loss --backend world:
@@ -38,7 +39,8 @@ increments the epoch. The old permit is still memory. It has no authority.
                    PASS — same contract on recorded ULog
 ```
 
-Today: (2) is 131 trybuild compile-fails (including `permit_is_not_clone`,
+Today: (2) is 132 trybuild compile-fails (including `unsafe_mission`,
+`permit_is_not_clone`,
 `orientation_is_not_angular_velocity`, `force_is_not_torque`,
 `velocity_is_not_acceleration`, `point_is_not_displacement`). (4) is Kani
 including `permit_epoch_mismatch_is_stale`, `dsl_revokes_match_kernel` (kernel

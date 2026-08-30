@@ -43,6 +43,7 @@ macro_rules! vehicle_contract {
             pub const UI_FORBIDDEN: &'static [&'static str] = &[
                 "ready_velocity.rs",
                 "armed_velocity.rs",
+                "unsafe_mission.rs",
                 "disarmed_velocity.rs",
                 "disconnected_velocity.rs",
                 "failsafe_offboard.rs",

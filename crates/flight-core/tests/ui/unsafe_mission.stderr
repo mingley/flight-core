@@ -1,0 +1,18 @@
+error[E0599]: the method `set_velocity` exists for struct `Vehicle<Armed, B>`, but its trait bounds were not satisfied
+ --> tests/ui/unsafe_mission.rs:8:21
+  |
+8 |     let _ = vehicle.set_velocity(v);
+  |                     ^^^^^^^^^^^^ method cannot be called on `Vehicle<Armed, B>` due to unsatisfied trait bounds
+  |
+ ::: src/vehicle/typestate.rs
+  |
+  | state!(Armed, "armed");
+  | ---------------------- doesn't satisfy `flight_core::vehicle::Armed: OffboardControl`
+  |
+  = note: the following trait bounds were not satisfied:
+          `flight_core::vehicle::Armed: OffboardControl`
+          `B: VehicleBackend`
+help: consider restricting the type parameter to satisfy the trait bound
+  |
+7 | fn boom<B>(mut vehicle: Vehicle<Armed, B>, v: Velocity<Ned>) where B: VehicleBackend {
+  |                                                              +++++++++++++++++++++++
