@@ -696,10 +696,10 @@ pub fn preview_write(
     }
 
     if !crate::limits::all_finite(&[req.vn, req.ve, req.vd, req.yaw_rate]) {
-        return Err(MhsError::Limit(LimitReject::finite(
+        return Err(MhsError::Limit(Box::new(LimitReject::finite(
             &req.device,
             &req.channel,
-        )));
+        ))));
     }
 
     let allowed = if LabCmd::ENV.contains(&cmd) {
@@ -714,7 +714,7 @@ pub fn preview_write(
         });
     }
     if let Some(limit) = numeric_limit(obs, req, cmd, limits) {
-        return Err(MhsError::Limit(limit));
+        return Err(MhsError::Limit(Box::new(limit)));
     }
     Ok(cmd)
 }

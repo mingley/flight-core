@@ -11,11 +11,7 @@ const PROTOCOL: &str = "2025-03-26";
 /// Handle one JSON-RPC object. Notifications return `None`.
 pub fn handle_rpc(driver: &mut Driver, req: &Value) -> Option<Value> {
     let method = req.get("method").and_then(Value::as_str)?;
-    let id = req.get("id").cloned();
-    if id.is_none() {
-        return None;
-    }
-    let id = id.unwrap();
+    let id = req.get("id").cloned()?;
     let result = match method {
         "initialize" => json!({
             "protocolVersion": PROTOCOL,

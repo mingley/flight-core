@@ -20,7 +20,7 @@ pub enum MhsError {
         device: String,
         cmd: LabCmd,
     },
-    Limit(LimitReject),
+    Limit(Box<LimitReject>),
     ReadOnly {
         device: String,
     },
@@ -65,7 +65,7 @@ impl MhsError {
             invariant: self.invariant().map(str::to_string),
             reject,
             limit: match self {
-                Self::Limit(l) => Some(l.clone()),
+                Self::Limit(l) => Some((**l).clone()),
                 _ => None,
             },
         }

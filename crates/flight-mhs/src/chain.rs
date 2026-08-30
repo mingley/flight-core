@@ -58,10 +58,6 @@ impl ChainDoc {
         if trimmed.is_empty() {
             return Err(crate::MhsError::Chain("empty chain".into()));
         }
-        if trimmed.starts_with('{') {
-            return serde_json::from_str(trimmed)
-                .map_err(|e| crate::MhsError::Chain(format!("chain json: {e}")));
-        }
         if trimmed.starts_with('[') {
             let ops: Vec<ChainOp> = serde_json::from_str(trimmed)
                 .map_err(|e| crate::MhsError::Chain(format!("chain array: {e}")))?;
@@ -71,6 +67,11 @@ impl ChainDoc {
                 dt: None,
                 ops,
             });
+        }
+        if trimmed.starts_with('{') {
+            if let Ok(doc) = serde_json::from_str::<Self>(trimmed) {
+                return Ok(doc);
+            }
         }
         let mut ops = Vec::new();
         for (i, line) in trimmed.lines().enumerate() {
