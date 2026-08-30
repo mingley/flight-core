@@ -1164,6 +1164,55 @@ fn world_failsafe_refuses_backend_direct_marine_authority() {
 }
 
 #[test]
+fn world_estop_revokes_attached_moving_permit() {
+    let session = WorldSession::inland(1);
+    session.attach_drive("rover").unwrap();
+    let GroundHandle::Moving(mut rover) = session.ground("rover").attach().unwrap() else {
+        panic!("attach_drive must bind Moving");
+    };
+    rover
+        .set_velocity_ned_now(Velocity::<Ned>::ned(-0.4, 0.0, 0.0))
+        .unwrap();
+    session.attach_estop("rover").unwrap();
+    assert!(session.world().body("rover").unwrap().authority_epoch > 0);
+    let err = rover
+        .set_velocity_ned_now(Velocity::<Ned>::ned(-0.4, 0.0, 0.0))
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        flight_core::vehicle::GroundError::StaleAuthority(_)
+    ));
+    assert_eq!(rover.phase(), GroundPhase::Moving);
+    assert!(session.ground("rover").actuation_revoked());
+}
+
+#[test]
+fn world_failsafe_revokes_attached_underway_permit() {
+    let session = WorldSession::coastal(1);
+    session.attach_undock("skiff").unwrap();
+    let MarineHandle::Underway(mut skiff) = session.marine("skiff").attach().unwrap() else {
+        panic!("attach_undock must bind Underway");
+    };
+    skiff
+        .set_ned_velocity_now(Velocity::<Ned>::ned(0.0, 0.4, 0.0))
+        .unwrap();
+    session.attach_marine_failsafe("skiff").unwrap();
+    assert!(session.world().body("skiff").unwrap().authority_epoch > 0);
+    let err = skiff
+        .set_ned_velocity_now(Velocity::<Ned>::ned(0.0, 0.4, 0.0))
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        flight_core::vehicle::MarineError::StaleAuthority(_)
+    ));
+    assert!(
+        !skiff.safety().failsafe,
+        "leftover handle stays typed Underway"
+    );
+    assert!(session.marine("skiff").actuation_revoked());
+}
+
+#[test]
 fn attach_failsafe_from_ready_trips_the_plant() {
     let session = WorldSession::inland(1);
     session.attach_failsafe("drone").unwrap();
