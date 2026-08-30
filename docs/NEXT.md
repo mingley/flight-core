@@ -328,7 +328,7 @@ fails `cargo check`. `AerialOffboard::evaluate` runs `MONITORS` (including
 Checked-in generated artifacts under [`docs/generated/`](generated/) must
 match the table (`SPEC`, mermaid, Graphviz, `CREUSOT`, `FAULTS`). The macro
 does not emit a second Creusot proof file. `run_revoke_table` uses
-`inject` so a leftover `Vehicle<Offboard>` refuses every `COMMANDS` method.
+`WorldSession::inject_revoke` so a leftover `Vehicle<Offboard>` refuses every `COMMANDS` method.
 Named scenario faults (`GpsDropout` / `HeartbeatStale` / `Failsafe`) go
 through the same `inject`. `differential_revoke_table` round-trips the
 leftover samples on JSONL and ULog. `Px4Backend::inject_revoke` /
@@ -380,8 +380,12 @@ cannot run `set_velocity` / `set_position` / `hold`. Named scenario
 round-trips those leftover samples on JSONL and ULog. The PX4 companion
 runs the same leftover table via `cargo run -p flight-px4 --bin flight-test-px4`
 (`inject_revoke`); `flight-sim` does not depend on `flight-px4`. HITL leftover
-after a rack deadline miss is `WorldRack::leftover_after_deadline_miss` /
-`flight-test-hitl` (`flight-sim` does not depend on `flight-hitl`).
+after a rack deadline miss is `WorldRack::leftover_after_deadline_miss`;
+every `REVOKE_ON` leftover is `WorldRack::run_hitl_revoke_table` /
+`flight-test-hitl` (`flight-sim` does not depend on `flight-hitl`). ROS 2
+leftover after `apply_failsafe` and every `REVOKE_ON` is
+`plant::leftover_after_failsafe` / `run_ros2_revoke_table` /
+`flight-test-ros2` (`flight-sim` does not depend on `flight-ros2`; no rclrs).
 
 ### F7. Typed geometry
 
@@ -408,8 +412,9 @@ asserts `authority_epoch > 0` and evaluates `Requirement::ActuatorsImplyArmed`
 on the miss sample. `WorldRack::contract_deadline_miss` and
 `flight-test --backend hitl` evaluate `Scenario::HITL_MISS.require`
 (including `EpochBumped`). A leftover OffboardControl handle bound before the
-miss cannot run `COMMANDS` (`leftover_after_deadline_miss` /
-`flight-test-hitl`). `cargo run -p flight-hitl --example contract_miss`.
+miss cannot run `COMMANDS` (`leftover_after_deadline_miss`). Leftover after
+every `REVOKE_ON` is `run_hitl_revoke_table`. Both via `flight-test-hitl`.
+`cargo run -p flight-hitl --example contract_miss`.
 
 ### F10. Certification-oriented traceability
 

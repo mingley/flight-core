@@ -1,8 +1,9 @@
 # AerialOffboard fault injection
 
 `flight_sim::run_revoke_table` injects each `AerialOffboard::REVOKE_ON`
-event through `AerialOffboard::inject` from an Offboard grant. A leftover
-`Vehicle<Offboard>` bound before the inject cannot run `COMMANDS`
+event through `WorldSession::inject_revoke` (`AerialOffboard::inject`
+first) from an Offboard grant. A leftover `Vehicle<Offboard>` bound before
+the inject cannot run `COMMANDS`
 (`set_velocity`, `set_position`, `hold`) — `StaleAuthority`, still typed
 Offboard. The same events appear as Offboard → Failsafe edges in
 [`aerial-offboard.transitions.md`](aerial-offboard.transitions.md).
@@ -20,6 +21,12 @@ CLI: `cargo run -p flight-sim --bin flight-test -- --scenario revoke-table`
 (world leftover Offboard + JSONL + ULog). PX4 companion leftover table:
 `cargo run -p flight-px4 --bin flight-test-px4` (`Px4Backend::inject_revoke`
 for every `REVOKE_ON` event; `flight-sim` does not depend on `flight-px4`).
-HITL leftover after a rack deadline/`Rate` miss:
-`cargo run -p flight-hitl --bin flight-test-hitl` (`WorldRack::leftover_after_deadline_miss`;
-`flight-sim` does not depend on `flight-hitl`).
+HITL leftover after a rack deadline/`Rate` miss, and leftover after every
+`REVOKE_ON` through `WorldRack::inject_revoke`:
+`cargo run -p flight-hitl --bin flight-test-hitl`
+(`WorldRack::leftover_after_deadline_miss` / `run_hitl_revoke_table`;
+`flight-sim` does not depend on `flight-hitl`). ROS 2 leftover after
+`apply_failsafe` and every `REVOKE_ON`:
+`cargo run -p flight-ros2 --bin flight-test-ros2`
+(`plant::leftover_after_failsafe` / `run_ros2_revoke_table`;
+`flight-sim` does not depend on `flight-ros2`; no rclrs).

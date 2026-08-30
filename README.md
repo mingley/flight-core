@@ -59,7 +59,9 @@ Offboard cannot `set_velocity` / `set_position` / `hold`; JSONL and ULog
 round-trip the same samples). `flight-test-px4` is the same leftover table
 at the PX4 companion (`inject_revoke` for every `REVOKE_ON` event).
 `flight-test-hitl` is leftover OffboardControl `COMMANDS` after a rack
-deadline/`Rate` miss. A leftover
+deadline/`Rate` miss **and** after every `REVOKE_ON` (`WorldSession::inject_revoke`).
+`flight-test-ros2` is leftover OffboardControl after `apply_failsafe` and
+every `REVOKE_ON` (no rclrs). A leftover
 `Vehicle<Armed>` after an async PX4 disarm HEARTBEAT is still typed Armed and
 has no actuation authority (`enter_offboard_now` is `StaleEpoch`). A leftover
 `Vehicle<Offboard>` after `connect` / `begin_session` is still typed Offboard
@@ -242,8 +244,8 @@ Rust does not automatically “verify” a robot. It lets you move physical-syst
 | `flight-mhs` | MHS-shaped driver (discover / compiled reference / read / write / chain / stdio MCP). Not official MHS. Writes are `Lab::act_through_attach`. |
 | `flight-mavlink` | MAVLink messages for heartbeat, arm, offboard, NED velocity |
 | `flight-px4` | PX4 offboard backend (`udpin:0.0.0.0:14540`) and `WorldPlant` — same MAVLink setpoints, verified world step; `hold` writes the current NED pose |
-| `flight-ros2` | PX4 external modes: ROS 2 CDR `px4_msgs` setpoints (NED), NED→ENU Twist onto aerial / ground / marine `WorldSession` bodies (`FleetPlant` on coastal, harbor, inland, open water; `hold` writes the current NED pose), optional production `rclrs` 0.7 node |
-| `flight-hitl` | Deadline-aware HITL rack over every catalog: coastal / harbor (four bodies), inland (no hull), open water (no rover). Verified world as plant, `FCH1` UDP samples, miss ⇒ attach failsafe (or idempotent re-trip) + zero command; OffboardControl `Rate` lockstep with `DeadlineSpec`; leftover OffboardControl `COMMANDS` stale after a miss (`flight-test-hitl`); on-time frames write NED only while attach is Offboard-control / Moving / Underway / StationKeep; `airborne` / `station_all` / `resume_all` / `dock_all` / `park_all` / `hold` walk climb-complete, hull station, hull dock, rover halt, and NED position hold |
+| `flight-ros2` | PX4 external modes: ROS 2 CDR `px4_msgs` setpoints (NED), NED→ENU Twist onto aerial / ground / marine `WorldSession` bodies (`FleetPlant` on coastal, harbor, inland, open water; `hold` writes the current NED pose; leftover OffboardControl after `apply_failsafe` and every `REVOKE_ON` via `flight-test-ros2`), optional production `rclrs` 0.7 node |
+| `flight-hitl` | Deadline-aware HITL rack over every catalog: coastal / harbor (four bodies), inland (no hull), open water (no rover). Verified world as plant, `FCH1` UDP samples, miss ⇒ attach failsafe (or idempotent re-trip) + zero command; OffboardControl `Rate` lockstep with `DeadlineSpec`; leftover OffboardControl `COMMANDS` stale after a miss and after every `REVOKE_ON` (`flight-test-hitl`); on-time frames write NED only while attach is Offboard-control / Moving / Underway / StationKeep; `airborne` / `station_all` / `resume_all` / `dock_all` / `park_all` / `hold` walk climb-complete, hull station, hull dock, rover halt, and NED position hold |
 | `flight-verify` | Kani proofs: actuators, drive, thrust, contact, drag, buoyancy, hydro mass, HITL miss, position-hold restore |
 | `flight-demo` | Live lab console (safety trips, return, station / resume / airborne / hold) |
 
@@ -273,6 +275,7 @@ cargo run -p flight-sim --bin flight-test -- --scenario hitl-miss --backend hitl
 cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
 cargo run -p flight-px4 --bin flight-test-px4
 cargo run -p flight-hitl --bin flight-test-hitl
+cargo run -p flight-ros2 --bin flight-test-ros2
 cargo run -p flight-hitl --example contract_miss
 cargo run -p flight-sim --example fleet   # attach now-APIs, one WorldSession::step
 cargo run -p flight-sim --example fuzzed_world  # FuzzedImu around WorldImu; plant still WorldSession::step

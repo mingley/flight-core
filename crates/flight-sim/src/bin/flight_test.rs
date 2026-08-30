@@ -15,6 +15,7 @@
 //! cargo run -p flight-sim --bin flight-test -- --scenario revoke-table
 //! cargo run -p flight-px4 --bin flight-test-px4
 //! cargo run -p flight-hitl --bin flight-test-hitl
+//! cargo run -p flight-ros2 --bin flight-test-ros2
 //! ```
 //!
 //! `--backend px4-sitl` evaluates a converted HEARTBEAT/ulog JSONL or `.ulg`
