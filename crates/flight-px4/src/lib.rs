@@ -33,8 +33,8 @@ use flight_core::vehicle::{
 };
 use flight_mavlink::{
     arm_disarm, flight_termination, gcs_heartbeat, heartbeat_reports_armed,
-    heartbeat_revokes_authority, nav_land, set_offboard_mode, set_position_ned, set_velocity_ned,
-    UdpLink,
+    heartbeat_revokes_authority, nav_land, px4_vehicle_heartbeat, set_offboard_mode,
+    set_position_ned, set_velocity_ned, UdpLink,
 };
 use mavlink::common::{MavMessage, MavType};
 use std::time::{Duration, Instant};
