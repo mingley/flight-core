@@ -339,12 +339,16 @@ the backend. World failsafe on a sibling handle increments `Body.authority_epoch
 the old `Vehicle<Offboard>` is still typed Offboard and is `StaleAuthority`.
 An async PX4 disarm HEARTBEAT bumps the epoch; leftover `Vehicle<Armed>` cannot
 `enter_offboard_now` **or** `set_motor_thrust_now` (permit is checked **before**
-kernel `EnableActuators`). PX4 / ArduPilot `enter_offboard`, climb,
-`enable_actuators`, and motor thrust refuse at the backend after
-`actuation_revoked`. Failsafe / disarm / recover / land stay ungated (safety
-actions). `pump_setpoint` stays ungated.
+kernel `EnableActuators`). PX4 / ArduPilot / `NullBackend` / point-mass
+`SimBackend` refuse `enter_offboard`, climb, `enable_actuators`, setpoints, and
+motor thrust at the backend after `actuation_revoked`. Connect /
+`revoke_authority` bump the epoch without that bit so `hold_now` before arm
+still works. Ground ClearEstop and marine Recover call `restore_actuation`.
+Failsafe / disarm / recover / land stay ungated (safety actions).
+`pump_setpoint` stays ungated.
 
-**Acceptance:** NullBackend revoke test; world two-handle failsafe test;
+**Acceptance:** NullBackend revoke test; NullBackend / SimBackend
+backend-direct refuse after disarm/failsafe; world two-handle failsafe test;
 trybuild `permit_is_not_clone`; Kani `permit_epoch_mismatch_is_stale`.
 
 ### F2. Tiny verified safety kernel TCB
