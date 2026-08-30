@@ -168,6 +168,14 @@ pub struct LeftoverContract {
     pub require: &'static [crate::contracts::Requirement],
 }
 
+impl LeftoverContract {
+    /// `TriggerFailsafe` sends PX4 `flight_termination`. Live SIH leftover
+    /// skips that row so takeoff/hold/land can still run on the same instance.
+    pub const fn live_sitl_safe(self) -> bool {
+        !matches!(self.inject, crate::safety::Event::TriggerFailsafe)
+    }
+}
+
 impl AerialOffboard {
     /// Leftover GPS-loss / IMU-delay monitors (invalid `Estimate`).
     /// World `Scenario::GPS_LOSS.require` and `Scenario::IMU_DELAY.require`
@@ -606,6 +614,18 @@ mod tests {
             AerialOffboard::LEFTOVER_CONTRACTS.len(),
             crate::safety::AERIAL_OFFBOARD_LEFTOVER.len()
         );
+        assert_eq!(
+            AerialOffboard::LEFTOVER_CONTRACTS
+                .iter()
+                .filter(|c| c.live_sitl_safe())
+                .count(),
+            3,
+            "live SIH leftover skips only TriggerFailsafe (flight_termination)"
+        );
+        assert!(!AerialOffboard::HITL_MISS_CONTRACT.live_sitl_safe());
+        assert!(AerialOffboard::GPS_LOSS_CONTRACT.live_sitl_safe());
+        assert!(AerialOffboard::HEARTBEAT_LOSS_CONTRACT.live_sitl_safe());
+        assert!(AerialOffboard::IMU_LOSS_CONTRACT.live_sitl_safe());
         for (c, &(name, inject)) in AerialOffboard::LEFTOVER_CONTRACTS
             .iter()
             .zip(crate::safety::AERIAL_OFFBOARD_LEFTOVER)

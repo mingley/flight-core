@@ -1,7 +1,9 @@
 //! Live PX4 companion path. Ignored unless a SITL instance is up.
 //!
 //! Default `cargo test --workspace` skips this. The `sitl` CI job (and a
-//! local SIH binary) run it with `--ignored`.
+//! local SIH binary) run it with `--ignored`. Leftover contracts that are
+//! [`LeftoverContract::live_sitl_safe`] (not `TriggerFailsafe` /
+//! `flight_termination`) run before takeoff/hold/land.
 //!
 //! ```text
 //! docker run --rm --network host -e PX4_SIM_MODEL=sihsim_quadx \
@@ -11,8 +13,89 @@
 
 use flight_core::prelude::*;
 use flight_core::units::Qty;
-use flight_core::vehicle::{ErrorKind, VehicleBackend};
-use flight_px4::{vehicle, Px4Config};
+use flight_core::vehicle::{ErrorKind, Offboard, Vehicle, VehicleBackend};
+use flight_px4::{vehicle, Px4Backend, Px4Config};
+
+async fn connect_live_offboard() -> Vehicle<Offboard, Px4Backend> {
+    let cfg = Px4Config::default();
+    let vehicle = match vehicle(cfg.clone()).connect().await {
+        Ok(v) => v,
+        Err(e) => panic!("could not reach PX4 SITL at {}: {}", cfg.endpoint, e.error),
+    };
+    vehicle
+        .verify_preflight()
+        .await
+        .expect("preflight")
+        .arm()
+        .await
+        .expect("arm")
+        .enter_offboard()
+        .await
+        .expect("offboard")
+}
+
+/// Companion leftover after a live-safe inject (`TriggerFailsafe` sends
+/// `flight_termination` and is loopback-only so takeoff/hold/land can run).
+async fn live_leftover_contract(contract: LeftoverContract) {
+    let mut vehicle = connect_live_offboard().await;
+    assert!(
+        vehicle.leftover_commands_stale().is_err(),
+        "{}: live Offboard must have authority before inject",
+        contract.name
+    );
+    let epoch0 = vehicle.backend().authority_epoch();
+    let before = vehicle
+        .telemetry()
+        .await
+        .expect("telemetry before")
+        .to_trace_sample(epoch0);
+
+    vehicle
+        .backend_mut()
+        .inject_revoke(contract.inject)
+        .unwrap_or_else(|e| panic!("{} live inject {:?}: {e}", contract.name, contract.inject));
+    vehicle
+        .leftover_commands_stale()
+        .unwrap_or_else(|e| panic!("{} leftover after live inject: {e}", contract.name));
+
+    let epoch1 = vehicle.backend().authority_epoch();
+    assert!(
+        epoch1 > epoch0,
+        "{}: live inject must bump epoch",
+        contract.name
+    );
+    let after = vehicle
+        .telemetry()
+        .await
+        .expect("telemetry after")
+        .to_trace_sample(epoch1);
+    assert!(
+        after.failsafe,
+        "{}: {:?} must latch failsafe",
+        contract.name, contract.inject
+    );
+
+    let err = vehicle
+        .set_position(Position::<Ned>::ned(0.0, 0.0, -3.0))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, ErrorKind::StaleAuthority(_)),
+        "{} leftover set_position must be StaleAuthority, got {err:?}",
+        contract.name
+    );
+
+    evaluate_trace(&[before, after], contract.require)
+        .unwrap_or_else(|e| panic!("{} {} at {}", contract.name, e.requirement, e.index));
+    AerialOffboard::evaluate(&[before, after]).unwrap_or_else(|e| {
+        panic!(
+            "{} capability {} at {}",
+            contract.name, e.requirement, e.index
+        )
+    });
+
+    let _ = vehicle.backend_mut().disarm().await;
+}
 
 #[tokio::test]
 #[ignore = "needs a live PX4 SITL on UDP 14540 (CI job sitl)"]
@@ -84,61 +167,17 @@ async fn sitl_takeoff_hold_land() {
 #[tokio::test]
 #[ignore = "needs a live PX4 SITL on UDP 14540 (CI job sitl)"]
 async fn sitl_gps_loss_revokes_leftover_offboard() {
-    let cfg = Px4Config::default();
-    let vehicle = match vehicle(cfg.clone()).connect().await {
-        Ok(v) => v,
-        Err(e) => panic!("could not reach PX4 SITL at {}: {}", cfg.endpoint, e.error),
-    };
-
-    let vehicle = vehicle.verify_preflight().await.expect("preflight");
-    let mut vehicle = vehicle
-        .arm()
-        .await
-        .expect("arm")
-        .enter_offboard()
-        .await
-        .expect("offboard");
-
-    assert!(
-        vehicle.leftover_commands_stale().is_err(),
-        "live Offboard must have authority before GPS-loss inject"
+    let live: Vec<_> = AerialOffboard::LEFTOVER_CONTRACTS
+        .iter()
+        .copied()
+        .filter(|c| c.live_sitl_safe())
+        .collect();
+    assert_eq!(
+        live.len(),
+        3,
+        "gps-loss, heartbeat-stale, imu-loss; hitl-miss is flight_termination"
     );
-    let epoch0 = vehicle.backend().authority_epoch();
-    let before = vehicle
-        .telemetry()
-        .await
-        .expect("telemetry before")
-        .to_trace_sample(epoch0);
-
-    vehicle
-        .backend_mut()
-        .inject_revoke(Event::EstimatorInvalid)
-        .expect("live EstimatorInvalid");
-    vehicle
-        .leftover_commands_stale()
-        .expect("leftover Offboard after live GPS-loss inject");
-
-    let epoch1 = vehicle.backend().authority_epoch();
-    assert!(epoch1 > epoch0, "live GPS-loss must bump epoch");
-    let after = vehicle
-        .telemetry()
-        .await
-        .expect("telemetry after")
-        .to_trace_sample(epoch1);
-    assert!(after.failsafe, "live GPS-loss must latch failsafe");
-
-    let err = vehicle
-        .set_position(Position::<Ned>::ned(0.0, 0.0, -3.0))
-        .await
-        .expect_err("leftover set_position after GPS-loss");
-    assert!(
-        matches!(err, ErrorKind::StaleAuthority(_)),
-        "leftover set_position must be StaleAuthority, got {err:?}"
-    );
-
-    evaluate_trace(&[before, after], AerialOffboard::GPS_LOSS_REQUIRE)
-        .expect("live GPS_LOSS require");
-    AerialOffboard::evaluate(&[before, after]).expect("live GPS_LOSS capability");
-
-    let _ = vehicle.backend_mut().disarm().await;
+    for contract in live {
+        live_leftover_contract(contract).await;
+    }
 }

@@ -723,7 +723,8 @@ pub fn run_px4_revoke_table() -> Result<usize, String> {
 
 /// Leftover Offboard after `contract.inject`: `COMMANDS` are `StaleAuthority`
 /// and the before/after trace satisfies `contract.require`.
-/// Does not require a live UDP link. Live SIH GPS-loss is `tests/sitl_live.rs`.
+/// Does not require a live UDP link. Live SIH leftover is `tests/sitl_live.rs`
+/// (`LeftoverContract::live_sitl_safe`; not `TriggerFailsafe`).
 pub fn run_px4_leftover_contract(
     contract: LeftoverContract,
 ) -> Result<LeftoverContractReport, String> {
