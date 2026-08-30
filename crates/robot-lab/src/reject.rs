@@ -129,6 +129,7 @@ fn error_code(err: &LabError) -> &'static str {
         LabError::Aerial(_) => "aerial",
         LabError::Ground(_) => "ground",
         LabError::Marine(_) => "marine",
+        LabError::Scene(_) => "scene",
     }
 }
 

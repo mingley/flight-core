@@ -49,6 +49,11 @@ impl WorldSession {
         World::named(name, seed).map(Self::from_world)
     }
 
+    /// Build from a [`robot_world::Scene`] (catalog or custom body table).
+    pub fn from_scene(scene: robot_world::Scene) -> Result<Self, robot_world::SceneError> {
+        Ok(Self::from_world(scene.build()?))
+    }
+
     pub fn aerial(&self, body_id: &'static str) -> WorldBackend {
         WorldBackend::from_session(self.clone(), body_id)
     }

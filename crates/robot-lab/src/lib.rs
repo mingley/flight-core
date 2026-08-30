@@ -19,8 +19,11 @@
 //! `ResearchRun::rejects`) with domain, phase/kind, attempted event, reject
 //! display, and remaining-spec id when the bounce is one of P1–P13.
 //! [`Observation::broken`] names the property ids from a refused `try_step`
-//! without an extra plant step. [`PROOF_SUMMARY`] is the checked-in Kani /
-//! Creusot digest [`Experiment`] copies into `run.json` (NEXT C1).
+//! without an extra plant step. Induced breaks belong on a [`Lab`] clone
+//! (NEXT C2); catalogs stay green. [`Lab::from_scene`] builds a catalog or a
+//! custom body table ([`Scene`]); reserved names stay P11 (NEXT C3).
+//! [`PROOF_SUMMARY`] is the checked-in Kani / Creusot digest [`Experiment`]
+//! copies into `run.json` (NEXT C1).
 //! [`Lab::update_nav`] feeds the complementary
 //! filter; unusable IMU clears kernel `estimator_valid` without writing the
 //! plant quaternion. [`Lab::fleet_hold_simultaneous`] is the B5 lab
@@ -86,6 +89,7 @@ pub use research::{
     TypedSurveyorDock, TypedSurveyorFailsafe, TypedSurveyorStationDock,
     TypedSurveyorStationFailsafe, TypedSurveyorStationResume, FLEET_HOLD_SIMULTANEOUS,
 };
+pub use robot_world::{Scene, SceneError};
 pub use runner::{git_head, named_agent, Experiment, ExperimentSummary, RunError, RunRecord};
 pub use schema::{validate_instance, AGENT_ACTION_SCHEMA, OBSERVATION_SCHEMA, TIMED_ACTION_SCHEMA};
 

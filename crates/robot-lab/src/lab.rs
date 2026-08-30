@@ -2,7 +2,7 @@ use flight_core::domain::Domain;
 use flight_core::vehicle::{
     aerial_kind, BackendError, GroundHandle, MarineHandle, VehicleBackend, VehicleHandle,
 };
-use robot_world::World;
+use robot_world::{Scene, SceneError, World};
 use serde::{Deserialize, Serialize};
 
 use crate::apply::apply_action_world;
@@ -15,6 +15,7 @@ use crate::{AerialKind, GroundWorldBackend, MarineWorldBackend, WorldBackend, Wo
 ///
 /// [`Lab::coastal`] / [`Lab::harbor`] / [`Lab::inland`] / [`Lab::open_water`]
 /// match the HITL / ROS 2 / PX4 catalogs. [`Lab::open`] is the same by name.
+/// [`Lab::from_scene`] builds a catalog or a custom body table ([`robot_world::Scene`]).
 ///
 /// Clone snapshots the plant. Handles from [`Lab::session`] share the live Mutex.
 #[derive(Debug)]
@@ -62,6 +63,11 @@ impl Lab {
         let world =
             World::named(name, seed).ok_or_else(|| LabError::UnknownScenario(name.into()))?;
         Ok(Self::from_world(world))
+    }
+
+    /// Catalog or custom body table ([`Scene`]). Reserved names stay P11.
+    pub fn from_scene(scene: Scene) -> Result<Self, LabError> {
+        Ok(Self::from_world(scene.build()?))
     }
 
     pub fn scenarios() -> &'static [&'static str] {
@@ -892,6 +898,7 @@ pub enum LabError {
     Aerial(flight_core::safety::Reject),
     Ground(flight_core::ground::GroundReject),
     Marine(flight_core::marine::MarineReject),
+    Scene(SceneError),
 }
 
 impl std::fmt::Display for LabError {
@@ -905,8 +912,15 @@ impl std::fmt::Display for LabError {
             LabError::Aerial(r) => write!(f, "aerial safety rejected: {r}"),
             LabError::Ground(r) => write!(f, "ground safety rejected: {r}"),
             LabError::Marine(r) => write!(f, "marine safety rejected: {r}"),
+            LabError::Scene(e) => write!(f, "{e}"),
         }
     }
 }
 
 impl std::error::Error for LabError {}
+
+impl From<SceneError> for LabError {
+    fn from(e: SceneError) -> Self {
+        LabError::Scene(e)
+    }
+}
