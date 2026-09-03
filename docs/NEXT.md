@@ -339,7 +339,10 @@ the backend. World failsafe on a sibling handle increments `Body.authority_epoch
 the old `Vehicle<Offboard>` is still typed Offboard and is `StaleAuthority`.
 An async PX4 disarm HEARTBEAT bumps the epoch; leftover `Vehicle<Armed>` cannot
 `enter_offboard_now` **or** `set_motor_thrust_now` (permit is checked **before**
-kernel `EnableActuators`). PX4 / ArduPilot / `NullBackend` / point-mass
+kernel `EnableActuators`). Leftover `Vehicle<Takeoff>` cannot
+`declare_airborne_now` (permit is checked **before** kernel `ReachedAltitude`;
+inland HITL / ROS 2 leftover binds Takeoff — `leftover_declare_airborne_stale`
+is the climb gate `leftover_commands_stale` does not cover). PX4 / ArduPilot / `NullBackend` / point-mass
 `SimBackend` refuse `enter_offboard`, climb, `enable_actuators`, setpoints,
 motor thrust, and yaw-rate at the backend after `actuation_revoked`. Trait
 default `takeoff_now` / `reached_altitude_now` refuse the same way, so leftover
