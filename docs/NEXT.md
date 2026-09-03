@@ -571,7 +571,12 @@ FC-CAP-AerialOffboard, FC-INV-001..003. `human_readable_spec()`.
 
 ## Suggested implementation order
 
-1. **A1–A6 landed. B1–B8 landed. E1 landed. F1–F10 landed. C1–C4 landed.** Next: live Gazebo if someone needs a world renderer, then **D\*** morphologies.
+1. **A1–A6 landed. B1–B8 landed. E1 landed. F1–F10 landed as v0 stamps. C1–C4 landed.**
+   The product end state is **not** those stamps. Subsequent agents execute
+   [`docs/civilization.md`](civilization.md) (permits → kernel TCB → temporal →
+   DSL → PX4 → fault lab → geometry → Copper → HITL metal → certification).
+   Do **not** start live Gazebo or **D\*** morphologies while G1–G6 in that
+   plan are still open.
 2. **D\*** morphologies last.
 
 When official MHS is open-sourced, translate `flight-mhs` onto that schema. Do not collapse P1–P14 to make a driver “easier.”

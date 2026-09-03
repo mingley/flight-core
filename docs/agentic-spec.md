@@ -281,6 +281,7 @@ CI already: fmt, clippy `-D warnings`, workspace tests, no_std check, gpu hydro,
 | [`docs/remaining-spec.md`](remaining-spec.md) | v0 **invariants** (P1–P14), landed evidence, process notes. §13 lists items that were **not** v0. |
 | This file | North star: agentic tooling, all domains, all aspects, Rust. |
 | [`docs/NEXT.md`](NEXT.md) | Ordered next work with acceptance. Former §13 items that belong in the north star (ground hold, marine DP, ESKF-as-bit, FCH1 metal, scenario scale) live there as phases, not as “never.” |
+| [`docs/civilization.md`](civilization.md) | Agent-executable plan for the verified capability/contract control boundary. Overrides NEXT “next is live Gazebo.” |
 
 v0 is **complete** as a slice. The product is not.
 

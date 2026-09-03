@@ -506,7 +506,8 @@ physical autonomy (agentic experiment / control / understand still applies):
 - [`docs/safety-contract.md`](docs/safety-contract.md) — generated-from-tables traceability
 - [`docs/generated/traceability.md`](docs/generated/traceability.md) — ID matrix
 - [`docs/copper.md`](docs/copper.md) — complement Copper; do not compete on runtime
-- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed; C1–C4 and B1–B8 landed)
+- [`docs/NEXT.md`](docs/NEXT.md) — ordered next steps (Phase F authority model landed as a v0 stamp; C1–C4 and B1–B8 landed)
+- [`docs/civilization.md`](docs/civilization.md) — agent-executable plan for the control-boundary end state (do not follow “next is Gazebo”)
 
 A live PX4 SITL binary is optional locally (`cargo run -p flight-px4 --example sitl_hover`). Default `cargo test` skips `sitl_live` (`#[ignore]`). GitHub CI runs fmt, clippy `-D warnings`, workspace tests, `flight-core --no-default-features`, a lavapipe GPU hydro job, `cargo kani -p flight-verify` (45 harnesses, kani-verifier 0.67.0), `cargo test -p flight-ros2 --features rclrs` (ROS 2 Jazzy), `cargo creusot prove -p flight-core` (Creusot 0.5.0, 81 libraries), and job `sitl` (PX4 SIH `px4io/px4-sitl:v1.18.0-beta2` + the ignored companion test). `docs/generated/proof-summary.txt` is the agent digest those counts lockstep; `Experiment` copies it into `run.json`.
 

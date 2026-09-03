@@ -8,8 +8,9 @@ That slice is **landed**. The product north star is larger — world-class **age
 
 - [`docs/agentic-spec.md`](agentic-spec.md) — north-star spec
 - [`docs/NEXT.md`](NEXT.md) — ordered next steps with acceptance
+- [`docs/civilization.md`](civilization.md) — agent-executable plan for the verified control-boundary end state (overrides NEXT “next is Gazebo”)
 
-Use **this** document as the invariant list (§2) and the v0 evidence log. Do not redefine v0 around a smaller subset that already passes. Do not “fix” §2. New feature work follows NEXT without collapsing P1–P14.
+Use **this** document as the invariant list (§2) and the v0 evidence log. Do not redefine v0 around a smaller subset that already passes. Do not “fix” §2. Control-boundary work follows [`docs/civilization.md`](civilization.md). Do not collapse P1–P14.
 
 Land work as atomic commits on `main`. Do not accumulate large diffs. Do not open pull requests unless someone asks.
 
@@ -37,7 +38,7 @@ The workspace already has a usable slice of that goal. In-scope functional items
 - Research loop: `Lab::observe` / `act_through_attach` / `research` / `replay_until` / `research_probe`, typed agents with `actions_applied == 0` for legal motion, JSONL + Foxglove-shaped MCAP. `WorldImu` + `FuzzedImu` read noisy samples without replacing `WorldSession::step`.
 - Live PX4 SIH companion path: `sitl_live --ignored` recorded pass (14.59s, `px4io/px4-sitl:v1.18.0-beta2`); CI job `sitl` (takeoff/hold/land **and** leftover Offboard after every live-safe leftover inject: gps-loss, heartbeat-stale, imu-loss; not `TriggerFailsafe`). `Px4Backend::inject_revoke` covers every `REVOKE_ON` event; `cargo run -p flight-px4 --bin flight-test-px4` is the leftover Offboard table plus `run_px4_leftover_contracts` (`AerialOffboard::LEFTOVER_CONTRACTS`). ArduPilot GUIDED companion: `cargo run -p flight-ardupilot --bin flight-test-ardupilot` leftover Offboard after every `REVOKE_ON` plus `run_ardupilot_leftover_contracts`; live Copter `sitl_live` is `#[ignore]` loopback-only (no CI sitl job; reuse `flight-mavlink`, no second stack). `cargo run -p flight-hitl --bin flight-test-hitl` is leftover OffboardControl `COMMANDS` after a rack deadline/`Rate` miss and after every `REVOKE_ON`, leftover contracts (`run_hitl_leftover_contracts`), plus `run_fch1_udp_mock` (faithful UDP card; recorded `crates/flight-hitl/corpus/fch1_udp_mock.jsonl`). `cargo run -p flight-ros2 --bin flight-test-ros2` is leftover OffboardControl after `apply_failsafe`, `apply_disarm`, and every `REVOKE_ON`, plus leftover contracts (`run_ros2_leftover_contracts`; no rclrs).
 
-**Not true yet (v0):** Nothing in-scope that this spec still treats as a feature gap. After demo HTML/`include_str` changes, re-run §8 D2. Do not “fix” §2. Agentic next work is [`docs/NEXT.md`](NEXT.md), not a silent reopen of this file’s landed sections.
+**Not true yet (v0):** Nothing in-scope that this spec still treats as a feature gap. After demo HTML/`include_str` changes, re-run §8 D2. Do not “fix” §2. Control-boundary work is [`docs/civilization.md`](civilization.md). Agentic Phase D morphologies stay in [`docs/NEXT.md`](NEXT.md). Do not silently reopen this file’s landed sections.
 
 ---
 
@@ -253,7 +254,7 @@ Hold, airborne, station, resume, dock, park, return, recover are walked on `Worl
 
 **Acceptance:**
 
-1. This file is the v0 invariant spec. README points here **and** at [`docs/agentic-spec.md`](agentic-spec.md) / [`docs/NEXT.md`](NEXT.md).
+1. This file is the v0 invariant spec. README points here **and** at [`docs/agentic-spec.md`](agentic-spec.md) / [`docs/NEXT.md`](NEXT.md) / [`docs/civilization.md`](civilization.md).
 2. Theorem lists in `flight-verify` and compile-fail names stay in lockstep when APIs change.
 3. Every typed agent in `examples/agent.rs` has a README `cargo run` line.
 4. Do not mention private remotes or temporary clone names in docs.
