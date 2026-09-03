@@ -560,6 +560,10 @@ impl<B: VehicleBackend> Vehicle<Takeoff, B> {
     /// Record that the climb completed (`Takeoff → Airborne`) without stepping
     /// the plant. Consumes Takeoff so attach and the live handle agree.
     /// Compiles only from Takeoff (`tests/ui/offboard_airborne.rs` and siblings).
+    ///
+    /// Checks the live permit **before** kernel `ReachedAltitude`, so a leftover
+    /// `Vehicle<Takeoff>` after failsafe, disarm, or reconnect cannot complete
+    /// climb while still typed Takeoff.
     pub fn declare_airborne_now(self) -> Result<Vehicle<Airborne, B>, TransitionError<Takeoff, B>> {
         apply_airborne(self)
     }
@@ -567,6 +571,23 @@ impl<B: VehicleBackend> Vehicle<Takeoff, B> {
     /// Same as [`Self::declare_airborne_now`].
     pub fn declare_airborne(self) -> Result<Vehicle<Airborne, B>, TransitionError<Takeoff, B>> {
         self.declare_airborne_now()
+    }
+
+    /// Leftover Takeoff after a revoke must not complete climb.
+    ///
+    /// Inland HITL / ROS 2 leftover binds Takeoff. `leftover_commands_stale`
+    /// covers OffboardControl `COMMANDS`; this is the Takeoff-only climb gate.
+    pub fn leftover_declare_airborne_stale(self) -> Result<Self, BackendError> {
+        match self.declare_airborne_now() {
+            Err(e)
+                if matches!(e.error, ErrorKind::StaleAuthority(_))
+                    && e.vehicle.phase() == Phase::Takeoff =>
+            {
+                Ok(e.vehicle)
+            }
+            Ok(_) => Err(BackendError::Rejected("leftover_takeoff_became_airborne")),
+            Err(_) => Err(BackendError::Rejected("leftover_takeoff_still_has_climb")),
+        }
     }
 }
 
@@ -756,6 +777,9 @@ fn error_from_backend(e: BackendError) -> ErrorKind {
 fn apply_airborne<S: State, B: VehicleBackend>(
     mut vehicle: Vehicle<S, B>,
 ) -> Result<Vehicle<Airborne, B>, TransitionError<S, B>> {
+    if let Err(error) = vehicle.require_live_permit() {
+        return Err(vehicle.fail(error));
+    }
     match vehicle.inner.backend.reached_altitude_now() {
         Ok(()) => {
             if let Err(error) = vehicle.apply_event(Event::ReachedAltitude) {
@@ -1569,5 +1593,32 @@ mod tests {
             ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
         ));
         assert!(err.vehicle.safety().offboard);
+    }
+
+    #[test]
+    fn stale_takeoff_handle_cannot_declare_airborne() {
+        let VehicleHandle::PreflightReady(drone) =
+            VehicleHandle::from_state(NullBackend::default(), ready_safety())
+        else {
+            panic!("ready maps to PreflightReady");
+        };
+        let mut climbing = drone
+            .arm_now()
+            .unwrap()
+            .enter_offboard_now()
+            .unwrap()
+            .start_takeoff_now()
+            .unwrap();
+        climbing.backend_mut().revoke_authority();
+        let err = climbing.declare_airborne_now().unwrap_err();
+        assert!(matches!(
+            err.error,
+            ErrorKind::StaleAuthority(AuthorityReject::StaleEpoch)
+        ));
+        assert_eq!(err.vehicle.phase(), Phase::Takeoff);
+        assert!(
+            !err.vehicle.safety().failsafe,
+            "stale Takeoff must not ReachedAltitude on the way to StaleEpoch"
+        );
     }
 }

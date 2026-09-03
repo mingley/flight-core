@@ -1072,6 +1072,34 @@ mod tests {
     }
 
     #[test]
+    fn unexpected_disarm_heartbeat_revokes_stale_takeoff_airborne() {
+        use flight_core::safety::{step, Event};
+        use flight_core::vehicle::VehicleHandle;
+        let mut backend = Px4Backend::new(Px4Config::default());
+        backend.armed = true;
+        backend.offboard = true;
+        backend.last_heartbeat = Some(Instant::now());
+        let safety = step(offboard_safety(), Event::Takeoff).expect("takeoff");
+        let VehicleHandle::Takeoff(mut leftover) = VehicleHandle::from_state(backend, safety)
+        else {
+            panic!("takeoff safety maps to Takeoff");
+        };
+        leftover
+            .leftover_commands_stale()
+            .expect_err("live Takeoff still has OffboardControl");
+        let MavMessage::HEARTBEAT(h) = px4_vehicle_heartbeat(false, 0) else {
+            panic!("heartbeat");
+        };
+        leftover.backend_mut().ingest_heartbeat(h);
+        leftover
+            .leftover_commands_stale()
+            .expect("leftover Takeoff COMMANDS after async PX4 disarm");
+        leftover
+            .leftover_declare_airborne_stale()
+            .expect("leftover Takeoff must not ReachedAltitude after async PX4 disarm");
+    }
+
+    #[test]
     fn unexpected_disarm_refuses_setpoint_at_the_backend() {
         let mut b = Px4Backend::new(Px4Config::default());
         b.armed = true;

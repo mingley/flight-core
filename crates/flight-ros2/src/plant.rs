@@ -240,12 +240,16 @@ pub fn leftover_after_failsafe(seed: u64) -> Result<(), BackendError> {
     leftover
         .leftover_commands_stale()
         .map_err(|_| BackendError::Rejected("leftover_offboard_still_has_authority"))?;
+    leftover
+        .leftover_declare_airborne_stale()
+        .map_err(|_| BackendError::Rejected("leftover_takeoff_still_has_climb"))?;
     Ok(())
 }
 
 /// Bind leftover OffboardControl (inland grant is Takeoff) before
 /// [`apply_disarm`]. After the attach trip, leftover `COMMANDS` are
-/// `StaleAuthority`. Disarm must not latch failsafe.
+/// `StaleAuthority` and leftover Takeoff cannot `declare_airborne_now`.
+/// Disarm must not latch failsafe.
 pub fn leftover_after_disarm(seed: u64) -> Result<(), BackendError> {
     let mut plant = FleetPlant::inland(seed);
     plant.grant_all()?;
@@ -268,6 +272,9 @@ pub fn leftover_after_disarm(seed: u64) -> Result<(), BackendError> {
     leftover
         .leftover_commands_stale()
         .map_err(|_| BackendError::Rejected("leftover_offboard_still_has_authority"))?;
+    leftover
+        .leftover_declare_airborne_stale()
+        .map_err(|_| BackendError::Rejected("leftover_takeoff_still_has_climb"))?;
     Ok(())
 }
 
@@ -343,6 +350,9 @@ pub fn run_ros2_revoke_table() -> Result<usize, String> {
         leftover
             .leftover_commands_stale()
             .map_err(|err| format!("leftover after {e:?}: {err}"))?;
+        leftover
+            .leftover_declare_airborne_stale()
+            .map_err(|err| format!("leftover climb after {e:?}: {err}"))?;
         n += 1;
     }
     Ok(n)
@@ -403,6 +413,9 @@ pub fn run_ros2_leftover_contract(
     leftover
         .leftover_commands_stale()
         .map_err(|err| format!("{} leftover after inject: {err}", contract.name))?;
+    leftover = leftover
+        .leftover_declare_airborne_stale()
+        .map_err(|err| format!("{} leftover climb after inject: {err}", contract.name))?;
     let after = drone_trace(leftover.backend())?;
     if !after.failsafe {
         return Err(format!(

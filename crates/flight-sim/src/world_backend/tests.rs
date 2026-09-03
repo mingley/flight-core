@@ -1379,6 +1379,48 @@ fn world_failsafe_revokes_attached_offboard_permit() {
 }
 
 #[test]
+fn world_failsafe_revokes_attached_takeoff_airborne() {
+    let session = WorldSession::inland(1);
+    session.attach_takeoff("drone").unwrap();
+    let VehicleHandle::Takeoff(mut leftover) = session.aerial("drone").attach().unwrap() else {
+        panic!("attach_takeoff must bind Takeoff");
+    };
+    leftover
+        .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+        .unwrap();
+    session.attach_failsafe("drone").unwrap();
+    leftover.leftover_commands_stale().unwrap();
+    leftover.leftover_declare_airborne_stale().unwrap();
+    assert!(
+        session
+            .world()
+            .body("drone")
+            .unwrap()
+            .aerial
+            .unwrap()
+            .failsafe
+    );
+}
+
+#[test]
+fn world_disarm_revokes_attached_takeoff_airborne() {
+    let session = WorldSession::inland(1);
+    session.attach_takeoff("drone").unwrap();
+    let VehicleHandle::Takeoff(mut leftover) = session.aerial("drone").attach().unwrap() else {
+        panic!("attach_takeoff must bind Takeoff");
+    };
+    leftover
+        .set_velocity_now(Velocity::<Ned>::ned(0.0, 0.0, -0.2))
+        .unwrap();
+    session.attach_disarm("drone").unwrap();
+    leftover.leftover_commands_stale().unwrap();
+    leftover.leftover_declare_airborne_stale().unwrap();
+    let aerial = session.world().body("drone").unwrap().aerial.unwrap();
+    assert!(!aerial.failsafe);
+    assert_eq!(aerial.phase, Phase::Ready);
+}
+
+#[test]
 fn inject_revoke_rejects_non_revoke_and_bumps_epoch() {
     let session = WorldSession::inland(1);
     session.attach_offboard("drone").unwrap();

@@ -695,8 +695,8 @@ impl WorldRack {
     /// Bind leftover OffboardControl (inland grant is Takeoff) before a rack
     /// deadline miss. After the miss trips failsafe, every generated
     /// `COMMANDS` method is `StaleAuthority` while the handle is still typed
-    /// OffboardControl. HITL-shaped leftover — not a clone of world
-    /// `run_revoke_table`.
+    /// OffboardControl, and leftover Takeoff cannot `declare_airborne_now`.
+    /// HITL-shaped leftover — not a clone of world `run_revoke_table`.
     pub fn leftover_after_deadline_miss(seed: u64) -> Result<(), BackendError> {
         let mut rack = Self::inland(seed)?;
         if rack.rate().period_ns() != rack.spec().period_ns {
@@ -720,6 +720,9 @@ impl WorldRack {
         leftover
             .leftover_commands_stale()
             .map_err(|_| BackendError::Rejected("leftover_offboard_still_has_authority"))?;
+        leftover
+            .leftover_declare_airborne_stale()
+            .map_err(|_| BackendError::Rejected("leftover_takeoff_still_has_climb"))?;
         Ok(())
     }
 
@@ -792,6 +795,9 @@ impl WorldRack {
             leftover
                 .leftover_commands_stale()
                 .map_err(|err| format!("leftover after {e:?}: {err}"))?;
+            leftover
+                .leftover_declare_airborne_stale()
+                .map_err(|err| format!("leftover climb after {e:?}: {err}"))?;
             n += 1;
         }
         Ok(n)
@@ -831,6 +837,9 @@ impl WorldRack {
         leftover
             .leftover_commands_stale()
             .map_err(|err| format!("{} leftover after inject: {err}", contract.name))?;
+        leftover
+            .leftover_declare_airborne_stale()
+            .map_err(|err| format!("{} leftover climb after inject: {err}", contract.name))?;
         let after = drone_trace(&rack.world())
             .map_err(|e| format!("{} trace after: {e}", contract.name))?;
         if !after.failsafe {
